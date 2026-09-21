@@ -1,0 +1,2 @@
+#!/bin/sh
+exec Rscript -e 'cdrgam.cli::cli_main(commandArgs(trailingOnly=TRUE))' --args "$@"

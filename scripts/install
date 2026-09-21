@@ -1,0 +1,73 @@
+#!/bin/sh
+set -eu
+
+reconfigure=${CDRGAM_RECONFIGURE:-0}
+if [ "${1:-}" = "--configure" ]; then
+    reconfigure=1
+    shift
+fi
+
+if [ "${R_BIN+x}" = x ]; then
+    r_bin=$R_BIN
+elif [ "$#" -gt 0 ]; then
+    r_bin=$1
+elif command -v R >/dev/null 2>&1; then
+    r_bin=$(command -v R)
+elif [ -x "$HOME/.local/bin/R" ]; then
+    r_bin=$HOME/.local/bin/R
+else
+    echo "R was not found; activate its environment or set R_BIN" >&2
+    exit 1
+fi
+
+script_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+checkout=$(dirname "$script_directory")
+"$r_bin" CMD INSTALL "$checkout"
+
+if [ ! -f "$checkout/.cdrgam/checkout.yml" ] || [ "$reconfigure" = 1 ]; then
+    if [ -z "${CDRGAM_ROOT:-}" ]; then
+        if [ ! -t 0 ]; then
+            echo "CDRGAM_ROOT is required when configuring noninteractively" >&2
+            exit 1
+        fi
+        printf 'CDR-GAM root: '
+        read -r CDRGAM_ROOT
+    fi
+    if [ -z "${CDRGAM_CONCURRENCY:-}" ]; then
+        printf 'Checkout-wide concurrency [1]: '
+        read -r CDRGAM_CONCURRENCY
+        CDRGAM_CONCURRENCY=${CDRGAM_CONCURRENCY:-1}
+    fi
+    if [ -t 0 ] && [ -z "${CDRGAM_SLURM_PARTITION:-}" ] && [ -z "${CDRGAM_SLURM_ACCOUNT:-}" ]; then
+        printf 'Slurm partition (blank for local execution): '
+        read -r CDRGAM_SLURM_PARTITION
+        if [ -n "$CDRGAM_SLURM_PARTITION" ]; then
+            printf 'Slurm account: '
+            read -r CDRGAM_SLURM_ACCOUNT
+        fi
+    fi
+    export CDRGAM_ROOT CDRGAM_CONCURRENCY
+    export CDRGAM_SLURM_PARTITION=${CDRGAM_SLURM_PARTITION:-}
+    export CDRGAM_SLURM_ACCOUNT=${CDRGAM_SLURM_ACCOUNT:-}
+    "$r_bin" --vanilla --slave -e '
+        optional <- function(name) {
+            value <- Sys.getenv(name, "")
+            if (nzchar(value)) value else NULL
+        }
+        cdrgam.cli::cdrgam_cli_configure(
+            checkout=commandArgs(TRUE)[[1L]],
+            cdrgam_root=Sys.getenv("CDRGAM_ROOT"),
+            concurrency=as.integer(Sys.getenv("CDRGAM_CONCURRENCY", "1")),
+            slurm_partition=optional("CDRGAM_SLURM_PARTITION"),
+            slurm_account=optional("CDRGAM_SLURM_ACCOUNT"),
+            slurm_cpus=if (nzchar(Sys.getenv("CDRGAM_SLURM_CPUS", ""))) as.integer(Sys.getenv("CDRGAM_SLURM_CPUS")) else NULL,
+            slurm_memory=optional("CDRGAM_SLURM_MEMORY"),
+            slurm_time=optional("CDRGAM_SLURM_TIME"),
+            slurm_qos=optional("CDRGAM_SLURM_QOS")
+        )
+    ' --args "$checkout"
+fi
+
+"$r_bin" --vanilla --slave -e \
+    'cdrgam.cli::install_cli(path=path.expand("~/.local/bin/cdrgam"), checkout=commandArgs(TRUE)[[1L]])' \
+    --args "$checkout"

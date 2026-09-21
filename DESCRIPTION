@@ -1,0 +1,21 @@
+Package: cdrgam.cli
+Title: Project Harness for Continuous-Time Deconvolutional Regression
+Version: 0.0.0.9000
+Authors@R:
+    person("Cory", "Shain", , "cory.shain@gmail.com", role = c("aut", "cre"),
+           comment = c(ORCID = "https://orcid.org/0000-0002-2704-7197"))
+Description: Manages schema-versioned analysis projects built around the
+    'cdrgam' package. A configured checkout validates named definitions,
+    constructs dependency graphs, runs work serially or through a shared Slurm
+    scheduler and generic worker pool, and publishes reproducible artifacts
+    beneath named projects.
+License: MIT + file LICENSE
+Imports:
+    cdrgam,
+    DBI,
+    ggplot2,
+    RSQLite,
+    yaml
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2

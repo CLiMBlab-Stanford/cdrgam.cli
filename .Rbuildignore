@@ -1,0 +1,7 @@
+^\.git$
+^\.agents$
+^\.codex$
+^config\.toml$
+^scripts$
+^\.cdrgam$
+^.*\.Rcheck$

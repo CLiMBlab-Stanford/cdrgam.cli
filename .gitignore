@@ -1,0 +1,39 @@
+# Agent working state and implementation plans. Policy files such as
+# AGENTS.md, AI_PROVENANCE.md, and WRITING_POLICY.md remain tracked.
+/.agents/
+/.codex/
+/config.toml
+IMPLEMENTATION_PLAN*.md
+*implementation-plan*.md
+*implementation_plan*.md
+
+# Checkout-local configuration and generated project state
+/.cdrgam/
+
+# R build and installation products
+*.Rcheck/
+*.tar.gz
+/library/
+/00LOCK*/
+*.o
+*.obj
+*.so
+*.dll
+*.dylib
+*.a
+
+# R session and IDE state
+/.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+
+# Editor, operating-system, and generic temporary files
+*~
+*.swp
+*.swo
+*.tmp
+*.temp
+.DS_Store
+/tmp/
+/temp/

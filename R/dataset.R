@@ -241,8 +241,11 @@
 .cdrgam_cli_prepare_model <- function(model, dataset, data) {
     columns <- dataset$columns
     fit <- model$fit
+    formula <- if (is.list(model$formula)) {
+        lapply(model$formula, .cdrgam_cli_formula)
+    } else .cdrgam_cli_formula(model$formula)
     arguments <- list(
-        formula=.cdrgam_cli_formula(model$formula),
+        formula=formula,
         impulses=data$impulses,
         responses=data$responses,
         series=.cdrgam_cli_null(columns$series, character()),

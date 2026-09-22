@@ -331,7 +331,24 @@
     )
     value$datasets <- lapply(value$datasets, .cdrgam_cli_name,
         field=paste0(path, ': datasets value'))
-    value$formula <- .cdrgam_cli_scalar_character(value$formula, paste0(path, ': formula'))
+    distributional_formula <- is.list(value$formula)
+    if (distributional_formula) {
+        if (!identical(names(value$formula), c('location', 'scale'))) {
+            .cdrgam_cli_abort(paste0(
+                path, ': distributional formula must be a mapping named ',
+                'location and scale, in that order'
+            ))
+        }
+        value$formula <- lapply(
+            value$formula,
+            .cdrgam_cli_scalar_character,
+            field=paste0(path, ': formula parameter')
+        )
+    } else {
+        value$formula <- .cdrgam_cli_scalar_character(
+            value$formula, paste0(path, ': formula')
+        )
+    }
     if (!is.null(value$window)) {
         value$window <- unlist(value$window, use.names=FALSE)
         if (!is.numeric(value$window) || length(value$window) != 2L ||
@@ -395,6 +412,24 @@
                 'or Gamma(log)'
             ))
         }
+    }
+    family_name <- .cdrgam_cli_null(value$fit$family, 'gaussian')
+    if (distributional_formula && !identical(family_name, 'gaulss')) {
+        .cdrgam_cli_abort(paste0(
+            path, ': a distributional formula requires fit.family gaulss'
+        ))
+    }
+    if (identical(family_name, 'gaulss') && !distributional_formula) {
+        .cdrgam_cli_abort(paste0(
+            path, ': fit.family gaulss requires location and scale formulas'
+        ))
+    }
+    if (identical(family_name, 'gaulss') &&
+            identical(value$fit$engine, 'bam')) {
+        .cdrgam_cli_abort(paste0(
+            path, ': mgcv does not support gaulss with fit.engine bam; ',
+            'use gam or omit fit.engine'
+        ))
     }
     attr(value, 'path') <- path
     value

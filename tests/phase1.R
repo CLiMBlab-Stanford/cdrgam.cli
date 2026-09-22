@@ -283,8 +283,41 @@ probit_sparse_error <- tryCatch({
     NA_character_
 }, error=function(error) conditionMessage(error))
 stopifnot(grepl('sparse currently supports', probit_sparse_error, fixed=TRUE))
+distributional_model <- model_definition
+distributional_model$model <- 'location-scale'
+distributional_model$formula <- list(
+    location=model_definition$formula,
+    scale='~ irf(x) - irf(1)'
+)
+distributional_model$fit <- list(
+    family='gaulss', backend='mgcv', engine='gam', method='REML'
+)
+validated_distributional <- getFromNamespace(
+    '.cdrgam_cli_validate_model', 'cdrgam.cli'
+)(distributional_model, 'location-scale.yml')
+stopifnot(
+    identical(names(validated_distributional$formula), c('location', 'scale')),
+    identical(validated_distributional$fit$family, 'gaulss')
+)
+invalid_distributional <- distributional_model
+invalid_distributional$fit$family <- 'gaussian'
+invalid_distributional_error <- tryCatch({
+    getFromNamespace('.cdrgam_cli_validate_model', 'cdrgam.cli')(
+        invalid_distributional, 'invalid-distributional.yml'
+    )
+    NA_character_
+}, error=function(error) conditionMessage(error))
+stopifnot(grepl(
+    'distributional formula requires fit.family gaulss',
+    invalid_distributional_error,
+    fixed=TRUE
+))
 yaml::write_yaml(
     model_definition, file.path(project, 'definitions', 'models', 'decay.yml')
+)
+yaml::write_yaml(
+    distributional_model,
+    file.path(project, 'definitions', 'models', 'location-scale.yml')
 )
 second_model <- model_definition
 second_model$model <- 'decay-two'
@@ -490,7 +523,7 @@ stopifnot(!any(file.exists(validation_copy_paths)))
 listed <- cdrgam_cli_list('test-project')$`test-project`
 stopifnot(
     identical(listed$datasets, c('training', 'validation')),
-    setequal(listed$models, c('decay', 'decay-two')),
+    setequal(listed$models, c('decay', 'decay-two', 'location-scale')),
     identical(listed$visualizations, 'diagnostics'),
     identical(listed$comparisons, 'alternatives')
 )
@@ -534,7 +567,7 @@ unlink(broken_definition_path)
 
 validation <- cdrgam_cli_validate('test-project', deep=TRUE)$`test-project`
 stopifnot(
-    validation$valid, validation$datasets == 2L, validation$models == 2L,
+    validation$valid, validation$datasets == 2L, validation$models == 3L,
     validation$visualizations == 1L, validation$comparisons == 1L
 )
 training_definition_path <- file.path(
@@ -644,6 +677,44 @@ stopifnot(
     all(is.finite(predictions$link_prediction_se)),
     max(abs(predictions$prediction - predictions$link_prediction)) < 1e-10,
     predictions$source_row[predictions$row_id == 75L] > 0L
+)
+
+cdrgam_cli_run(
+    projects='test-project', models='location-scale', predictions='val'
+)
+distributional_path <- file.path(
+    project, 'models', 'location-scale', 'predictions', 'validation'
+)
+distributional_predictions <- utils::read.csv(
+    file.path(distributional_path, 'predictions.csv'),
+    check.names=FALSE
+)
+distributional_manifest <- yaml::read_yaml(file.path(
+    project, 'models', 'location-scale', 'manifest.yml'
+))
+stopifnot(
+    identical(
+        names(distributional_manifest$result$formulas$user),
+        c('location', 'scale')
+    ),
+    all(c(
+        'location_prediction', 'location_prediction_se',
+        'location_link_prediction', 'location_link_prediction_se',
+        'scale_prediction', 'scale_prediction_se',
+        'scale_link_prediction', 'scale_link_prediction_se',
+        'standard_deviation_prediction',
+        'standard_deviation_prediction_se'
+    ) %in% names(distributional_predictions)),
+    all(is.finite(distributional_predictions$location_prediction)),
+    all(distributional_predictions$scale_prediction > 0),
+    max(abs(
+        distributional_predictions$standard_deviation_prediction -
+            1 / distributional_predictions$scale_prediction
+    )) < 1e-10,
+    max(abs(
+        distributional_predictions$prediction -
+            distributional_predictions$location_prediction
+    )) < 1e-10
 )
 
 fallback <- cdrgam_cli_plan(

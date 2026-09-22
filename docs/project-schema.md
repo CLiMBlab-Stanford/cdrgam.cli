@@ -287,7 +287,8 @@ interval increases representational resolution there without increasing
 Settings omitted from `fit` follow the installed core defaults. Completed fit
 manifests record both requested and effective settings.
 
-`fit.family` accepts `gaussian`, `binomial`, `poisson`, or `Gamma` through
+`fit.family` accepts `gaussian`, `binomial`, `poisson`, `Gamma`, or `gaulss`
+through
 the core package's validated family registry. `fit.link` is optional and
 selects an explicit link supported by that family; it requires `fit.family`.
 Noncanonical-link models currently require the native `mgcv` backend. The
@@ -296,6 +297,27 @@ and estimated-dispersion `Gamma(log)`; generalized sparse fitting uses
 streamed PIRLS and an exact Laplace score. Prediction artifacts store
 response-scale predictions (used for residuals and comparison metrics)
 alongside separately named link-scale predictions.
+
+`gaulss` fits a native `mgcv` Gaussian location--scale model. Its formula is
+a two-entry mapping; `location` supplies the response and `scale` may be
+one-sided:
+
+```yaml
+formula:
+  location: reading-time ~ irf(surprisal)
+  scale: ~ irf(word-length)
+fit:
+  family: gaulss
+  backend: mgcv
+```
+
+Distributional predictions retain the ordinary `prediction` and `residual`
+columns for the location parameter and add response- and link-scale estimate
+and standard-error columns for both `location` and `scale`. Following mgcv,
+the response-scale `scale_prediction` is reciprocal standard deviation; the
+artifact also includes the derived `standard_deviation_prediction` and its
+delta-method standard error. Predictor rescaling is not yet available for
+distributional formulas.
 
 ## Visualization definition
 

@@ -157,10 +157,18 @@
             message=.cdrgam_cli_null(fit$optimizer$message, '')
         )
     } else {
+        outer_message <- fit$outer.info$conv
+        converged <- if (!is.null(fit$converged)) {
+            isTRUE(fit$converged)
+        } else if (!is.null(outer_message)) {
+            tolower(outer_message) %in% c('full convergence', 'converged')
+        } else TRUE
         list(
-            converged=isTRUE(fit$converged),
-            code=if (isTRUE(fit$converged)) 0L else NA_integer_,
-            message='native mgcv convergence state'
+            converged=converged,
+            code=if (converged) 0L else NA_integer_,
+            message=.cdrgam_cli_null(
+                outer_message, 'native mgcv convergence state'
+            )
         )
     }
     keep <- c(
@@ -178,16 +186,27 @@
     rank <- fit$cdrgam$rank
     fitting <- list(
         family=fit$family$family, link=fit$family$link, method=fit$method,
-        engine=fit$cdrgam$engine, backend=fit$cdrgam$backend,
-        rank_action=rank$action, rank_tolerance=rank$tolerance,
-        rank_penalty=rank$regularization
+        engine=fit$cdrgam$engine, backend=fit$cdrgam$backend
     )
+    if (!is.null(rank)) fitting <- c(fitting, list(
+        rank_action=rank$action,
+        rank_tolerance=rank$tolerance,
+        rank_penalty=rank$regularization
+    ))
     if (inherits(fit, 'cdrgam_sparse')) fitting$sparse_control <- fit$sparse$control
     list(preparation=design$configuration, fitting=fitting)
 }
 
 .cdrgam_cli_fit_family <- function(name, link=NULL) {
     cdrgam::cdrgam_family(.cdrgam_cli_null(name, 'gaussian'), link=link)
+}
+
+.cdrgam_cli_formula_text <- function(value) {
+    if (inherits(value, 'formula')) {
+        return(paste(deparse(value), collapse=' '))
+    }
+    if (is.list(value)) return(lapply(value, .cdrgam_cli_formula_text))
+    as.character(value)
 }
 
 .cdrgam_cli_default_booklet <- function(fit, path) {
@@ -299,10 +318,9 @@
             effective=.cdrgam_cli_effective_model_configuration(fit, design)
         ),
         response_name=design$response_name,
-        formulas=list(
-            user=paste(deparse(fit$cdrgam$formula$user), collapse=' '),
-            normalized=paste(deparse(fit$cdrgam$formula$normalized), collapse=' '),
-            effective=paste(deparse(fit$cdrgam$formula$effective), collapse=' ')
+        formulas=lapply(
+            fit$cdrgam$formula[c('user', 'normalized', 'effective')],
+            .cdrgam_cli_formula_text
         ),
         simplifications=design$simplifications,
         booklet=booklet
@@ -327,8 +345,30 @@
         link_value <- link_prediction
         link_se <- rep.int(NA_real_, length(link_value))
     }
-    prediction_value <- fit$family$linkinv(link_value)
-    prediction_se <- link_se * abs(fit$family$mu.eta(link_value))
+    if (isTRUE(fit$cdrgam$distributional)) {
+        response_prediction <- stats::predict(
+            fit,
+            newdata=list(impulses=data$impulses, responses=data$responses),
+            type='response',
+            se.fit=TRUE
+        )
+        response_value <- response_prediction$fit
+        response_se <- response_prediction$se.fit
+        parameter_names <- fit$cdrgam$parameter_names
+        colnames(link_value) <- parameter_names
+        colnames(link_se) <- parameter_names
+        colnames(response_value) <- parameter_names
+        colnames(response_se) <- parameter_names
+        prediction_value <- response_value[, 'location']
+        prediction_se <- response_se[, 'location']
+        primary_link_value <- link_value[, 'location']
+        primary_link_se <- link_se[, 'location']
+    } else {
+        prediction_value <- fit$family$linkinv(link_value)
+        prediction_se <- link_se * abs(fit$family$mu.eta(link_value))
+        primary_link_value <- link_value
+        primary_link_se <- link_se
+    }
     fit_manifest <- .cdrgam_cli_read_yaml(file.path(item$fit$output, 'manifest.yml'))
     response_name <- fit_manifest$response_name
     if (!(response_name %in% names(data$responses))) {
@@ -343,12 +383,28 @@
         prediction=as.numeric(prediction_value),
         residual=data$responses[[response_name]] - as.numeric(prediction_value),
         prediction_se=as.numeric(prediction_se),
-        link_prediction=as.numeric(link_value),
-        link_prediction_se=as.numeric(link_se),
+        link_prediction=as.numeric(primary_link_value),
+        link_prediction_se=as.numeric(primary_link_se),
         model_identity=item$fit$identity,
         dataset_identity=item$dataset_identity$identity,
         prediction_scale='response', stringsAsFactors=FALSE
     )
+    if (isTRUE(fit$cdrgam$distributional)) {
+        for (parameter in parameter_names) {
+            table[[paste0(parameter, '_prediction')]] <-
+                response_value[, parameter]
+            table[[paste0(parameter, '_prediction_se')]] <-
+                response_se[, parameter]
+            table[[paste0(parameter, '_link_prediction')]] <-
+                link_value[, parameter]
+            table[[paste0(parameter, '_link_prediction_se')]] <-
+                link_se[, parameter]
+        }
+        table$standard_deviation_prediction <-
+            1 / response_value[, 'scale']
+        table$standard_deviation_prediction_se <-
+            response_se[, 'scale'] / response_value[, 'scale']^2
+    }
     row_id <- item$dataset$columns$row_id
     if (!is.null(row_id)) {
         table <- cbind(stats::setNames(data.frame(data$responses[[row_id]]), row_id), table)

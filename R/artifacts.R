@@ -237,6 +237,10 @@
     fit_control <- item$model$fit
     checkpoint <- file.path(stage, 'optimizer-checkpoint.rds')
     backend <- .cdrgam_cli_null(fit_control[['backend', exact=TRUE]], 'mgcv')
+    distributional <- identical(
+        .cdrgam_cli_null(fit_control[['family', exact=TRUE]], 'gaussian'),
+        'gaulss'
+    )
     arguments <- list(design=design)
     family <- fit_control[['family', exact=TRUE]]
     if (!is.null(family)) {
@@ -250,7 +254,7 @@
         if (!is.null(value)) arguments[[field]] <- value
     }
     if (backend %in% c('block', 'sparse')) {
-        arguments$checkpoint <- checkpoint
+        if (!distributional) arguments$checkpoint <- checkpoint
         arguments$solver_trace <- TRUE
         for (field in c('rank_action', 'rank_tol', 'rank_penalty')) {
             value <- fit_control[[field, exact=TRUE]]

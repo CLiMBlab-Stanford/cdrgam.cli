@@ -396,20 +396,21 @@
                 identical(resolved_family$link, 'log')) ||
             (identical(resolved_family$family, 'Gamma') &&
                 identical(resolved_family$link, 'log'))
+        distributional <- identical(resolved_family$family, 'gaulss')
         if (identical(backend, 'sparse') && !gaussian_identity &&
-                !block_generalized) {
+                !block_generalized && !distributional) {
             .cdrgam_cli_abort(paste0(
                 path, ': fit.backend sparse currently supports ',
                 'gaussian(identity), binomial(logit), poisson(log), ',
-                'or Gamma(log)'
+                'Gamma(log), or gaulss'
             ))
         }
         if (identical(backend, 'block') && !gaussian_identity &&
-                !block_generalized) {
+                !block_generalized && !distributional) {
             .cdrgam_cli_abort(paste0(
                 path, ': fit.backend block currently supports ',
                 'gaussian(identity), binomial(logit), poisson(log), ',
-                'or Gamma(log)'
+                'Gamma(log), or gaulss'
             ))
         }
     }

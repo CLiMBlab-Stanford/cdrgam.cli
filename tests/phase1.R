@@ -290,14 +290,20 @@ distributional_model$formula <- list(
     scale='~ irf(x) - irf(1)'
 )
 distributional_model$fit <- list(
-    family='gaulss', backend='mgcv', engine='gam', method='REML'
+    family='gaulss', backend='block', engine='gam', method='REML'
 )
 validated_distributional <- getFromNamespace(
     '.cdrgam_cli_validate_model', 'cdrgam.cli'
 )(distributional_model, 'location-scale.yml')
+distributional_sparse <- distributional_model
+distributional_sparse$fit$backend <- 'sparse'
+validated_distributional_sparse <- getFromNamespace(
+    '.cdrgam_cli_validate_model', 'cdrgam.cli'
+)(distributional_sparse, 'location-scale-sparse.yml')
 stopifnot(
     identical(names(validated_distributional$formula), c('location', 'scale')),
-    identical(validated_distributional$fit$family, 'gaulss')
+    identical(validated_distributional$fit$family, 'gaulss'),
+    identical(validated_distributional_sparse$fit$backend, 'sparse')
 )
 invalid_distributional <- distributional_model
 invalid_distributional$fit$family <- 'gaussian'

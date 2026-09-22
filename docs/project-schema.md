@@ -298,9 +298,11 @@ streamed PIRLS and an exact Laplace score. Prediction artifacts store
 response-scale predictions (used for residuals and comparison metrics)
 alongside separately named link-scale predictions.
 
-`gaulss` fits a native `mgcv` Gaussian location--scale model. Its formula is
-a two-entry mapping; `location` supplies the response and `scale` may be
-one-sided:
+`gaulss` fits a Gaussian location--scale model through native `mgcv`, the
+dense `block` reference backend, or the streamed `sparse` backend. The sparse
+solver uses an exact outer smoothing-parameter score. Its formula is a
+two-entry mapping; `location` supplies the
+response and `scale` may be one-sided:
 
 ```yaml
 formula:

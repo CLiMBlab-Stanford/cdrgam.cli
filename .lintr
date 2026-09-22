@@ -1,0 +1,14 @@
+linters: list(
+    duplicate_argument_linter=duplicate_argument_linter(),
+    equals_na_linter=equals_na_linter(),
+    missing_argument_linter=missing_argument_linter(),
+    namespace_linter=namespace_linter(),
+    object_usage_linter=object_usage_linter(),
+    package_hooks_linter=package_hooks_linter(),
+    sprintf_linter=sprintf_linter(),
+    T_and_F_symbol_linter=T_and_F_symbol_linter(),
+    vector_logic_linter=vector_logic_linter(),
+    line_length_linter=line_length_linter(100L),
+    trailing_whitespace_linter=trailing_whitespace_linter(),
+    trailing_blank_lines_linter=trailing_blank_lines_linter()
+  )

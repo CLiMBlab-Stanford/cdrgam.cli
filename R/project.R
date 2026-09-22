@@ -4,7 +4,7 @@
 #'
 #' @param project Atomic project directory name. When omitted, infer it from
 #'   the current directory if it lies beneath the configured projects directory.
-#' @param checkout Source checkout root.
+#' @param checkout Configured harness instance directory.
 #' @return The normalized project root.
 #' @export
 find_cdrgam_project <- function(project=NULL, checkout=NULL) {
@@ -167,7 +167,7 @@ find_cdrgam_project <- function(project=NULL, checkout=NULL) {
     .cdrgam_cli_atomic_write(file.path(stage, 'README.md'), function(path) {
         writeLines(.cdrgam_cli_project_readme(to), path, useBytes=TRUE)
     })
-    if (!file.rename(stage, destination)) {
+    if (!.cdrgam_cli_try_move_path(stage, destination)) {
         .cdrgam_cli_abort(paste0(
             'Could not atomically publish copied project ', sQuote(to)
         ))

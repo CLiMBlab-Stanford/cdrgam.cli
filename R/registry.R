@@ -23,6 +23,81 @@
     if (query) DBI::dbGetQuery(connection, sql) else DBI::dbExecute(connection, sql)
 }
 
+.cdrgam_cli_registry_keys_for_artifacts <- function(configuration, targets) {
+    targets <- unique(targets[file.exists(targets)])
+    if (!length(targets) ||
+            !file.exists(.cdrgam_cli_registry_path(configuration))) {
+        return(character())
+    }
+    records <- .cdrgam_cli_registry_exec(
+        configuration,
+        'SELECT work_key,artifact_path FROM work_items',
+        query=TRUE
+    )
+    if (!nrow(records)) return(character())
+    paths <- vapply(records$artifact_path, function(path) {
+        .cdrgam_cli_managed_resolve(
+            configuration, path, field='registry artifact path',
+            must_work=FALSE
+        )
+    }, character(1))
+    selected <- vapply(paths, function(path) {
+        any(vapply(targets, function(target) {
+            .cdrgam_cli_within(path, target)
+        }, logical(1)))
+    }, logical(1))
+    records$work_key[selected]
+}
+
+.cdrgam_cli_registry_assert_inactive <- function(configuration, work_keys) {
+    if (!length(work_keys)) return(invisible(TRUE))
+    active <- .cdrgam_cli_registry_exec(configuration, paste0(
+        'SELECT work_key FROM attempts WHERE work_key IN (',
+        paste(vapply(
+            work_keys, .cdrgam_cli_sql_quote, character(1)
+        ), collapse=','),
+        ") AND state IN ('submitting','submitted','running')"
+    ), query=TRUE)
+    if (nrow(active)) {
+        .cdrgam_cli_abort(paste0(
+            'Cannot purge an active workload: ', active$work_key[[1L]]
+        ))
+    }
+    invisible(TRUE)
+}
+
+.cdrgam_cli_registry_forget <- function(configuration, work_keys) {
+    if (!length(work_keys)) return(invisible(character()))
+    placeholders <- .cdrgam_cli_registry_placeholders(work_keys)
+    connection <- .cdrgam_cli_registry_connect(configuration)
+    on.exit(DBI::dbDisconnect(connection), add=TRUE)
+    paths <- DBI::dbWithTransaction(connection, {
+        paths <- DBI::dbGetQuery(connection, paste0(
+            'SELECT path FROM attempts WHERE work_key IN (', placeholders, ')'
+        ), params=as.list(work_keys))$path
+        DBI::dbExecute(connection, paste0(
+            'DELETE FROM request_items WHERE work_key IN (', placeholders, ')'
+        ), params=as.list(work_keys))
+        DBI::dbExecute(connection, paste0(
+            'DELETE FROM dependencies WHERE work_key IN (', placeholders,
+            ') OR dependency_key IN (', placeholders, ')'
+        ), params=c(as.list(work_keys), as.list(work_keys)))
+        DBI::dbExecute(connection, paste0(
+            'DELETE FROM attempts WHERE work_key IN (', placeholders, ')'
+        ), params=as.list(work_keys))
+        DBI::dbExecute(connection, paste0(
+            'DELETE FROM work_items WHERE work_key IN (', placeholders, ')'
+        ), params=as.list(work_keys))
+        DBI::dbExecute(connection, paste(
+            'DELETE FROM requests WHERE request_id NOT IN',
+            '(SELECT DISTINCT request_id FROM request_items)'
+        ))
+        paths
+    })
+    .cdrgam_cli_registry_remove_attempt_paths(configuration, paths)
+    invisible(work_keys)
+}
+
 .cdrgam_cli_registry_initialize <- function(configuration) {
     connection <- .cdrgam_cli_registry_connect(configuration)
     on.exit(DBI::dbDisconnect(connection), add=TRUE)

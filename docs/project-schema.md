@@ -2,9 +2,11 @@
 
 ## Checkout configuration
 
-Installation creates `.cdrgam/checkout.yml` relative to the source checkout.
-The installed launcher records that checkout path, so separate checkouts do not
-share configuration implicitly.
+Installation creates `.cdrgam/checkout.yml` relative to a writable harness
+instance directory. The source checkout is the default instance during
+development, but an installed package may use any writable directory. The
+launcher records the instance path, so separate instances do not share
+configuration implicitly.
 
 ```yaml
 schema: 1
@@ -23,8 +25,12 @@ selects Slurm execution. Their absence selects serial local execution. The
 remaining Slurm fields are optional defaults and may be overridden by
 `cdrgam run`.
 
-Use `cdrgam def site` to edit this checkout-local file. The edited YAML is
+Use `cdrgam def edit site` to edit this checkout-local file. The edited YAML is
 validated before it atomically replaces the current configuration.
+
+Local execution is supported on Linux, macOS, and Windows. Direct Slurm
+execution generates POSIX shell scripts and is unavailable on Windows. The
+Slurm fields may remain absent on platforms without Slurm.
 
 The root contains all projects and private orchestration state:
 
@@ -50,7 +56,7 @@ Project-owned references are stored relative to the project root and anchored
 by the generated project ID. Checkout-wide scheduler and worker references are
 stored relative to `cdrgam_root`. To move a root, first let the scheduler and
 workers stop, move the complete directory, and then update `cdrgam_root` with
-`cdrgam def site`.
+`cdrgam def edit site`.
 
 An inactive project may be renamed by renaming its directory under `projects/`.
 The directory name is the effective project name; the stable ID preserves work
@@ -120,17 +126,44 @@ The generated ID remains stable if the project directory moves or is renamed
 within its configured root. At runtime the directory name takes precedence
 over the descriptive `project.name` value.
 
-`cdrgam def PROJECT` creates a missing project or edits its project definition.
+`cdrgam def edit PROJECT` creates a missing project or edits its project definition.
 Definition selectors create or edit subordinate definitions, for example
-`cdrgam def PROJECT --dataset DATASET` and
-`cdrgam def PROJECT --model MODEL`. Existing definitions are edited through a
+`cdrgam def edit PROJECT --dataset DATASET` and
+`cdrgam def edit PROJECT --model MODEL`. Existing definitions are edited through a
 temporary file and replace the published YAML only after validation succeeds.
+If validation fails or the editor exits with an error, the edited content is
+saved under the project's `.cdrgam/drafts/` directory. Running the same command
+reopens that draft. Successful publication removes it. Site drafts use the
+checkout's `.cdrgam/drafts/` directory.
 
-`cdrgam def --copy-from-to SOURCE DESTINATION` creates a new project ID and
-copies the source project's complete `definitions/` tree. It does not copy
+`cdrgam def edit DESTINATION --source SOURCE` creates a new project ID and copies
+the source project's complete `definitions/` tree. It does not copy
 datasets, fitted models, predictions, visualizations, comparisons, analyses,
 logs, or private orchestration state. Relative source and preprocessing paths
 are preserved and may therefore need editing in the destination project.
+
+With a definition selector, `--source` instead initializes a new definition
+of the selected type in the target project. For example,
+`cdrgam def edit brown --model alternative --source main` copies `main.yml` to
+`alternative.yml` and changes its `model` field to `alternative`. The source
+and target must belong to the same project and the target must not exist.
+
+`cdrgam def del PROJECT --TYPE NAME` deletes one subordinate definition. It
+does not delete site or project definitions, generated results, or referenced
+definitions. If results exist, the diagnostic provides the matching
+`cdrgam purge` command to run before retrying deletion. `cdrgam purge` never
+selects files beneath `definitions/`.
+
+`cdrgam def val PROJECT` validates the complete project. A definition selector
+validates only that definition and its direct prerequisites, so an unrelated
+broken definition does not prevent focused diagnosis. Pass `--deep` to read
+referenced datasets and prepare model designs. `cdrgam def val site` validates
+the checkout configuration.
+
+Definition selectors accept multiple values after one option, or through a
+repeated option. `def edit` treats each value as a literal definition name and
+opens the files in order. `def val` and `def del` accept `*` patterns and apply
+to every match. Deletion checks every match before removing any file.
 
 ## Dataset definition
 
@@ -211,11 +244,16 @@ datasets:
   val: brown-val
   test: brown-test
 window: [0, 2]
+k_l: 10
+k_t: null
+k_p: 5
+bs_l: cr
+bs_t: cr
+bs_p: cr
 formula: >
-  reading-time ~ irf(surprisal, k_l=10, k_p=5)
+  reading-time ~ irf(surprisal)
 fit:
   backend: sparse
-  history_length: 8
   rescale_predictors: true
 ```
 
@@ -226,10 +264,14 @@ The resolved dataset name—not its partition alias—appears in the artifact pa
 and identity.
 
 `window` is optional and supplies the default lag window for every IRF in the
-model. An individual `irf()` can still override it. Axis-specific IRF controls
-are `k_l`, `k_t`, and `k_p` for lag, response time, and predictor basis
-dimensions, with corresponding `bs_l`, `bs_t`, and `bs_p` basis names. A
-`NULL` predictor dimension is linear; use an R list such as
+model. Every impulse in the applicable series and window contributes to the
+response-level design. An individual `irf()` can still override the window.
+The top-level `k_l`, `k_t`, and `k_p` fields similarly provide defaults for
+lag, response-time, and predictor basis dimensions; `bs_l`, `bs_t`, and `bs_p`
+provide their basis defaults. Arguments supplied by an individual `irf()`
+override them, including an explicit `NULL`. A scalar `k_p` or `bs_p` is
+recycled across a term's predictors. A `NULL` predictor dimension is linear;
+use an R list such as
 `k_p=list(NULL, 4)` to mix linear and smooth predictors.
 
 Settings omitted from `fit` follow the installed core defaults. Completed fit
@@ -397,12 +439,14 @@ registered downstream work that depended on it. An active workload must finish
 or fail before a new identity can replace it. Private work logs follow the same
 retention rule.
 
-In local mode the request graph executes serially. In Slurm mode an ephemeral
-`cdrgam-scheduler` job is the only parallel writer to the SQLite registry and
-enforces the checkout-wide concurrency limit across projects. It launches
-generic `cdrgam-worker` jobs that claim ready work over TCP. A worker may run
-multiple compatible items, even across projects. Workers validate the recorded
-R and package environment before loading inputs.
+In local mode the request graph executes serially, with each work item in an
+isolated R process. In Slurm mode an ephemeral `cdrgam-scheduler` job is the
+only parallel writer to the SQLite registry and enforces the checkout-wide
+concurrency limit across projects. It launches generic `cdrgam-worker` jobs
+that claim ready work over TCP. A worker may run multiple compatible items,
+even across projects. Workers validate the recorded R and package environment
+before loading inputs. Short checkout-level locks serialize configuration and
+scheduler publication; SQLite manages registry locking.
 
 If a worker disappears while it owns an item, that item becomes failed and its
 dependants become blocked. The scheduler does not retry terminal failures; a

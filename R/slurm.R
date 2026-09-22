@@ -22,6 +22,22 @@
     value
 }
 
+.cdrgam_cli_require_slurm_platform <- function() {
+    if (.cdrgam_cli_is_windows()) {
+        .cdrgam_cli_abort(
+            paste(
+                'Direct Slurm execution is not supported on Windows;',
+                'remove the Slurm fields to use local execution'
+            )
+        )
+    }
+    shell <- Sys.which('sh')
+    if (!length(shell) || !nzchar(shell[[1L]])) {
+        .cdrgam_cli_abort('Direct Slurm execution requires a POSIX sh executable')
+    }
+    invisible(TRUE)
+}
+
 .cdrgam_cli_resource_key <- function(resources) {
     .cdrgam_cli_short_hash(resources, length=20L)
 }
@@ -71,13 +87,14 @@
     if (!length(sbatch) || !nzchar(sbatch)) {
         .cdrgam_cli_abort('sbatch was not found on PATH')
     }
-    output <- suppressWarnings(system2(
-        sbatch, c(
-            '--parsable', '--chdir', configuration$cdrgam_root, script_path
-        ), stdout=TRUE, stderr=TRUE
+    result <- .cdrgam_cli_process_run(sbatch, c(
+        '--parsable', '--chdir', configuration$cdrgam_root, script_path
     ))
-    status <- .cdrgam_cli_null(attr(output, 'status'), 0L)
-    submitted <- if (length(output)) trimws(output[[1L]]) else ''
+    status <- if (is.null(result)) NA_integer_ else result$status
+    output <- if (is.null(result)) character() else c(result$stdout, result$stderr)
+    output <- output[nzchar(output)]
+    submitted <- if (is.null(result)) '' else trimws(result$stdout)
+    submitted <- strsplit(submitted, '\n', fixed=TRUE)[[1L]][[1L]]
     if (status != 0L || !grepl('^[0-9]+(;.*)?$', submitted)) {
         .cdrgam_cli_abort(paste0(
             'Slurm submission failed: ',
@@ -110,7 +127,15 @@
 }
 
 .cdrgam_cli_submit_scheduler <- function(configuration) {
+    .cdrgam_cli_require_slurm_platform()
     private <- file.path(configuration$cdrgam_root, '.cdrgam')
+    lock_path <- file.path(private, 'locks', 'scheduler.lock')
+    .cdrgam_cli_with_lock(lock_path, {
+        .cdrgam_cli_submit_scheduler_unlocked(configuration, private)
+    })
+}
+
+.cdrgam_cli_submit_scheduler_unlocked <- function(configuration, private) {
     scheduler_directory <- file.path(private, 'scheduler')
     if (!dir.exists(scheduler_directory)) dir.create(scheduler_directory, recursive=TRUE)
     metadata_path <- file.path(private, 'scheduler.yml')
@@ -178,6 +203,7 @@
 }
 
 .cdrgam_cli_submit_worker <- function(configuration, endpoint, resource_key, resources) {
+    .cdrgam_cli_require_slurm_platform()
     worker_id <- .cdrgam_cli_random_id('worker')
     directory <- file.path(configuration$cdrgam_root, '.cdrgam', 'workers', worker_id)
     if (!dir.exists(directory)) dir.create(directory, recursive=TRUE)

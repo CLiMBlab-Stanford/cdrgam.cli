@@ -9,6 +9,16 @@ Before a release, update `Version` in `DESCRIPTION`, run the complete tests,
 and run `R CMD check` on a clean source package. Document intentional schema
 or command-line incompatibilities and their migration path.
 
+Run the repository's correctness-focused R lint profile after installing the
+package and its dependencies:
+
+```sh
+Rscript -e 'lintr::lint_package(".")'
+```
+
+The profile preserves the established formatting conventions. New lint rules
+should identify actionable defects without requiring unrelated restyling.
+
 Material AI assistance must be disclosed in affected commits with an
 `Assisted-by: <tool-or-agent>:<model-identifier>` trailer. A human contributor
 remains the author and is responsible for review. Do not invent or modify Git

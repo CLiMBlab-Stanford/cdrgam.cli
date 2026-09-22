@@ -14,13 +14,96 @@ dir.create(checkout)
 cdrgam_cli_configure(checkout, root, concurrency=2L)
 options(cdrgam.cli.checkout=checkout)
 
+internal <- function(name) getFromNamespace(name, 'cdrgam.cli')
+stopifnot(
+    internal('.cdrgam_cli_absolute_path')('/tmp/example'),
+    internal('.cdrgam_cli_absolute_path')('C:\\example'),
+    internal('.cdrgam_cli_absolute_path')('\\\\server\\share'),
+    !internal('.cdrgam_cli_absolute_path')('relative/example'),
+    isTRUE(internal('.cdrgam_cli_process_alive')(Sys.getpid())),
+    isTRUE(internal('.cdrgam_cli_process_alive')(
+        Sys.getpid(), internal('.cdrgam_cli_process_started')()
+    )),
+    identical(internal('.cdrgam_cli_process_alive')(-1L), FALSE)
+)
+process_result <- internal('.cdrgam_cli_process_run')(
+    file.path(R.home('bin'), 'Rscript'),
+    c('--vanilla', '-e', 'cat("portable-process")')
+)
+stopifnot(
+    identical(process_result$status, 0L),
+    identical(process_result$stdout, 'portable-process')
+)
+lock_test <- file.path(temporary_parent, 'locks', 'test.lock')
+locked_value <- internal('.cdrgam_cli_with_lock')(lock_test, 42L)
+stopifnot(identical(locked_value, 42L), file.exists(lock_test))
+replacement <- file.path(temporary_parent, 'replace.txt')
+writeLines('old', replacement)
+replacement_source <- tempfile('.replace-', tmpdir=temporary_parent)
+writeLines('new', replacement_source)
+internal('.cdrgam_cli_replace_path')(replacement_source, replacement)
+stopifnot(identical(readLines(replacement), 'new'), !file.exists(replacement_source))
+replacement_directory <- file.path(temporary_parent, 'replace-directory')
+dir.create(replacement_directory)
+writeLines('old', file.path(replacement_directory, 'old.txt'))
+replacement_directory_source <- tempfile('.replace-directory-', tmpdir=temporary_parent)
+dir.create(replacement_directory_source)
+writeLines('new', file.path(replacement_directory_source, 'new.txt'))
+internal('.cdrgam_cli_replace_path')(
+    replacement_directory_source, replacement_directory
+)
+stopifnot(
+    file.exists(file.path(replacement_directory, 'new.txt')),
+    !file.exists(file.path(replacement_directory, 'old.txt')),
+    !dir.exists(replacement_directory_source),
+    internal('.cdrgam_cli_within')(
+        file.path(temporary_parent, 'child'), temporary_parent
+    ),
+    !internal('.cdrgam_cli_within')(
+        paste0(temporary_parent, '-sibling'), temporary_parent
+    )
+)
+if (.Platform$OS.type != 'windows') {
+    symlink_target <- file.path(temporary_parent, 'outside')
+    symlink_path <- file.path(temporary_parent, 'container', 'link')
+    dir.create(symlink_target)
+    dir.create(dirname(symlink_path))
+    fs::link_create(symlink_target, symlink_path)
+    stopifnot(!internal('.cdrgam_cli_within')(
+        file.path(symlink_path, 'missing'), dirname(symlink_path)
+    ))
+}
+old_os_type <- getOption('cdrgam.cli.os_type')
+options(cdrgam.cli.os_type='windows')
+windows_launcher <- internal('.cdrgam_cli_launcher_lines')(
+    'C:/cdrgam instance', 'C:/R/library', 'C:/R/bin/Rscript.exe'
+)
+windows_process_probe <- internal('.cdrgam_cli_process_alive')(Sys.getpid())
+windows_slurm <- tryCatch({
+    internal('.cdrgam_cli_require_slurm_platform')()
+    NULL
+}, error=identity)
+options(cdrgam.cli.os_type=old_os_type)
+stopifnot(
+    identical(windows_launcher[[1L]], '@echo off'),
+    any(grepl('CDRGAM_CHECKOUT', windows_launcher, fixed=TRUE)),
+    any(grepl('--args %*', windows_launcher, fixed=TRUE)),
+    isTRUE(windows_process_probe),
+    inherits(windows_slurm, 'error')
+)
+reserved_name <- tryCatch({
+    internal('.cdrgam_cli_name')('nul')
+    NULL
+}, error=identity)
+stopifnot(inherits(reserved_name, 'error'))
+
 invalid_name <- tryCatch(
     { cdrgam_cli_def('invalid_name'); NA_character_ },
     error=function(error) conditionMessage(error)
 )
 stopifnot(grepl('underscores are reserved', invalid_name, fixed=TRUE))
 
-stopifnot(identical(cli_main(c('def', 'test-project')), 0L))
+stopifnot(identical(cli_main(c('def', 'edit', 'test-project')), 0L))
 project <- file.path(root, 'projects', 'test-project')
 stopifnot(
     dir.exists(project),
@@ -32,19 +115,19 @@ writeLines(c('#!/bin/sh', 'exit 0'), editor_script)
 Sys.chmod(editor_script, mode='0755')
 old_visual <- Sys.getenv('VISUAL', unset=NA_character_)
 Sys.setenv(VISUAL=editor_script)
-stopifnot(identical(cli_main(c('def', 'site')), 0L))
-stopifnot(identical(cli_main(c('def', 'scaffold')), 0L))
+stopifnot(identical(cli_main(c('def', 'edit', 'site')), 0L))
+stopifnot(identical(cli_main(c('def', 'edit', 'scaffold')), 0L))
 stopifnot(identical(cli_main(c(
-    'def', 'scaffold', '--dataset', 'training'
+    'def', 'edit', 'scaffold', '--dataset', 'training'
 )), 0L))
 stopifnot(identical(cli_main(c(
-    'def', 'scaffold', '--model', 'main'
+    'def', 'edit', 'scaffold', '--model', 'main'
 )), 0L))
 stopifnot(file.exists(file.path(
     root, 'projects', 'scaffold', 'definitions', 'models', 'main.yml'
 )))
 stopifnot(identical(cli_main(c(
-    'def', 'scaffold', '--model', 'main'
+    'def', 'edit', 'scaffold', '--model', 'main'
 )), 0L))
 unlink(file.path(root, 'projects', 'scaffold'), recursive=TRUE)
 if (is.na(old_visual)) Sys.unsetenv('VISUAL') else Sys.setenv(VISUAL=old_visual)
@@ -139,11 +222,25 @@ model_definition <- list(
     schema=1L, model='decay',
     datasets=list(train='training', val='validation'),
     window=c(0, 1.5),
+    k_l=5L,
+    bs_l='cr',
     formula=paste(
         "response ~ s(item_id, bs='re') +",
-        'irf(x, k_l=5) - irf(1)'
+        'irf(x) - irf(1)'
     ),
     fit=list(family='gaussian', method='REML', backend='mgcv', engine='gam')
+)
+legacy_history_model <- model_definition
+legacy_history_model$fit$history_length <- 8L
+legacy_history_error <- tryCatch({
+    getFromNamespace('.cdrgam_cli_validate_model', 'cdrgam.cli')(
+        legacy_history_model, 'legacy-history.yml'
+    )
+    NA_character_
+}, error=function(error) conditionMessage(error))
+stopifnot(
+    grepl('history_length', legacy_history_error, fixed=TRUE),
+    grepl('unknown field', legacy_history_error, fixed=TRUE)
 )
 yaml::write_yaml(
     model_definition, file.path(project, 'definitions', 'models', 'decay.yml')
@@ -162,9 +259,10 @@ yaml::write_yaml(list(
     evaluation=list(dataset='val', row_id='row_id'), methods=c('mse', 'mae')
 ), file.path(project, 'definitions', 'comparisons', 'alternatives.yml'))
 
-# Existing definitions are edited through a staged file. Invalid edits do not
-# replace the published definition.
+# Invalid edits do not replace the published definition. Their draft is
+# reopened by the next edit and removed after successful publication.
 model_path <- file.path(project, 'definitions', 'models', 'decay.yml')
+model_draft <- file.path(project, '.cdrgam', 'drafts', 'model', 'decay.yml')
 model_before <- unname(tools::md5sum(model_path))
 cdrgam_cli_def(
     'test-project', type='model', name='decay',
@@ -184,10 +282,25 @@ invalid_edit <- tryCatch({
 }, error=function(error) conditionMessage(error))
 stopifnot(
     grepl('must remain', invalid_edit, fixed=TRUE),
-    identical(unname(tools::md5sum(model_path)), model_before)
+    grepl(model_draft, invalid_edit, fixed=TRUE),
+    identical(unname(tools::md5sum(model_path)), model_before),
+    identical(yaml::read_yaml(model_draft)$model, 'renamed')
 )
+cdrgam_cli_def(
+    'test-project', type='model', name='decay',
+    editor=function(path) {
+        value <- yaml::read_yaml(path)
+        stopifnot(identical(value$model, 'renamed'))
+        value$model <- 'decay'
+        yaml::write_yaml(value, path)
+    }
+)
+stopifnot(!file.exists(model_draft))
 ambiguous_path <- file.path(
     project, 'definitions', 'models', 'ambiguous.yml'
+)
+ambiguous_draft <- file.path(
+    project, '.cdrgam', 'drafts', 'model', 'ambiguous.yml'
 )
 ambiguous_error <- tryCatch({
     cdrgam_cli_def(
@@ -198,7 +311,8 @@ ambiguous_error <- tryCatch({
 }, error=function(error) conditionMessage(error))
 stopifnot(
     grepl('missing datasets', ambiguous_error, fixed=TRUE),
-    !file.exists(ambiguous_path)
+    !file.exists(ambiguous_path),
+    file.exists(ambiguous_draft)
 )
 cdrgam_cli_def(
     'test-project', type='model', name='ambiguous',
@@ -208,14 +322,14 @@ cdrgam_cli_def(
         yaml::write_yaml(value, path)
     }
 )
-stopifnot(file.exists(ambiguous_path))
+stopifnot(file.exists(ambiguous_path), !file.exists(ambiguous_draft))
 unlink(ambiguous_path)
 
 # Project copying republishes definitions with a fresh project identity and no
 # generated artifacts.
 writeLines('not a definition', file.path(project, 'analyses', 'sentinel.txt'))
 stopifnot(identical(cli_main(c(
-    'def', '--copy-from-to', 'test-project', 'test-copy'
+    'def', 'edit', 'test-copy', '--source', 'test-project'
 )), 0L))
 copied_project <- file.path(root, 'projects', 'test-copy')
 source_project_definition <- yaml::read_yaml(
@@ -237,14 +351,100 @@ stopifnot(
     !file.exists(file.path(copied_project, '.cdrgam'))
 )
 unlink(file.path(project, 'analyses', 'sentinel.txt'))
-copy_conflict <- tryCatch({
+existing_copy_error <- tryCatch({
+    cli_main(c('def', 'edit', 'test-copy', '--source', 'test-project'))
+    NA_character_
+}, error=function(error) conditionMessage(error))
+stopifnot(grepl('already exists', existing_copy_error, fixed=TRUE))
+
+# A source combined with a subordinate selector copies that definition within
+# the target project and assigns the requested target identity.
+stopifnot(identical(cli_main(c(
+    'def', 'edit', 'test-project', '--model',
+    'decay-copy-a', 'decay-copy-b',
+    '--source', 'decay'
+)), 0L))
+copied_model_paths <- file.path(
+    project, 'definitions', 'models',
+    paste0(c('decay-copy-a', 'decay-copy-b'), '.yml')
+)
+source_model <- yaml::read_yaml(model_path)
+for (index in seq_along(copied_model_paths)) {
+    copied_model <- yaml::read_yaml(copied_model_paths[[index]])
+    expected_model <- source_model
+    expected_model$model <- c('decay-copy-a', 'decay-copy-b')[[index]]
+    stopifnot(identical(copied_model, expected_model))
+}
+missing_source_error <- tryCatch({
     cli_main(c(
-        'def', '--copy-from-to', 'test-project', 'another-copy',
-        '--model', 'decay'
+        'def', 'edit', 'test-project', '--model', 'missing-copy',
+        '--source', 'missing'
     ))
     NA_character_
 }, error=function(error) conditionMessage(error))
-stopifnot(grepl('cannot be combined', copy_conflict, fixed=TRUE))
+stopifnot(
+    grepl('does not exist', missing_source_error, fixed=TRUE),
+    !file.exists(file.path(
+        project, 'definitions', 'models', 'missing-copy.yml'
+    ))
+)
+existing_definition_error <- tryCatch({
+    cli_main(c(
+        'def', 'edit', 'test-project', '--model', 'decay-copy-a',
+        '--source', 'decay'
+    ))
+    NA_character_
+}, error=function(error) conditionMessage(error))
+stopifnot(grepl(
+    'already exists', existing_definition_error, fixed=TRUE
+))
+copied_model_artifact <- file.path(project, 'models', 'decay-copy-b')
+dir.create(copied_model_artifact)
+writeLines('generated', file.path(copied_model_artifact, 'result.txt'))
+result_guard_error <- tryCatch({
+    cli_main(c(
+        'def', 'del', 'test-project', '--model', 'decay-copy-*'
+    ))
+    NA_character_
+}, error=function(error) conditionMessage(error))
+stopifnot(grepl(
+    'cdrgam purge -P test-project -m decay-copy-b --yes',
+    result_guard_error, fixed=TRUE
+))
+stopifnot(all(file.exists(copied_model_paths)))
+cdrgam_cli_purge(
+    projects='test-project', models='decay-copy-b', yes=TRUE
+)
+stopifnot(identical(cli_main(c(
+    'def', 'del', 'test-project', '--model', 'decay-copy-*'
+)), 0L))
+stopifnot(!any(file.exists(copied_model_paths)))
+referenced_definition_error <- tryCatch({
+    cli_main(c(
+        'def', 'del', 'test-project', '--dataset', 'training'
+    ))
+    NA_character_
+}, error=function(error) conditionMessage(error))
+stopifnot(
+    grepl('referenced by: model', referenced_definition_error, fixed=TRUE),
+    file.exists(file.path(
+        project, 'definitions', 'datasets', 'training.yml'
+    ))
+)
+stopifnot(identical(cli_main(c(
+    'def', 'edit', 'test-project', '--dataset',
+    'validation-copy-a', 'validation-copy-b',
+    '--source', 'validation'
+)), 0L))
+validation_copy_paths <- file.path(
+    project, 'definitions', 'datasets',
+    paste0(c('validation-copy-a', 'validation-copy-b'), '.yml')
+)
+stopifnot(all(file.exists(validation_copy_paths)))
+stopifnot(identical(cli_main(c(
+    'def', 'del', 'test-project', '--dataset', 'validation-copy-*'
+)), 0L))
+stopifnot(!any(file.exists(validation_copy_paths)))
 
 listed <- cdrgam_cli_list('test-project')$`test-project`
 stopifnot(
@@ -253,6 +453,43 @@ stopifnot(
     identical(listed$visualizations, 'diagnostics'),
     identical(listed$comparisons, 'alternatives')
 )
+
+stopifnot(identical(cli_main(c('def', 'val', 'site')), 0L))
+stopifnot(identical(cli_main(c(
+    'def', 'val', 'test-project', '--model', 'decay', '--deep'
+)), 0L))
+broken_definition_path <- file.path(
+    project, 'definitions', 'models',
+    paste0(c('externally-broken-a', 'externally-broken-b'), '.yml')
+)
+for (index in seq_along(broken_definition_path)) yaml::write_yaml(
+    list(
+        schema=1L,
+        model=c('externally-broken-a', 'externally-broken-b')[[index]]
+    ),
+    broken_definition_path[[index]]
+)
+stopifnot(identical(cli_main(c(
+    'def', 'val', 'test-project', '--dataset', 'training', 'validation'
+)), 0L))
+broken_definitions_error <- tryCatch({
+    cli_main(c(
+        'def', 'val', 'test-project', '--model', 'externally-*'
+    ))
+    NA_character_
+}, error=function(error) conditionMessage(error))
+stopifnot(all(vapply(
+    c('externally-broken-a', 'externally-broken-b'),
+    grepl, logical(1), x=broken_definitions_error, fixed=TRUE
+)))
+broken_project_error <- tryCatch({
+    cli_main(c('def', 'val', 'test-project'))
+    NA_character_
+}, error=function(error) conditionMessage(error))
+stopifnot(grepl(
+    'missing required fields', broken_project_error, fixed=TRUE
+))
+unlink(broken_definition_path)
 
 validation <- cdrgam_cli_validate('test-project', deep=TRUE)$`test-project`
 stopifnot(
@@ -547,6 +784,27 @@ preview <- cdrgam_cli_purge(
     projects='test-project', models='decay', yes=FALSE
 )
 stopifnot(identical(preview, file.path(project, 'models', 'decay')))
+prediction_preview <- cdrgam_cli_purge(
+    projects='test-project', models='decay', predictions='val', yes=FALSE
+)
+stopifnot(identical(
+    prediction_preview,
+    file.path(project, 'models', 'decay', 'predictions', 'validation')
+))
+visualization_preview <- cdrgam_cli_purge(
+    projects='test-project', visualizations='diagnostics', yes=FALSE
+)
+stopifnot(identical(
+    visualization_preview,
+    file.path(project, 'models', 'decay', 'visualizations', 'diagnostics')
+))
+comparison_preview <- cdrgam_cli_purge(
+    projects='test-project', comparisons='alternatives', yes=FALSE
+)
+stopifnot(identical(
+    comparison_preview,
+    file.path(project, 'comparisons', 'alternatives')
+))
 work_preview <- cdrgam_cli_purge(
     projects='test-project', work=TRUE, yes=FALSE
 )

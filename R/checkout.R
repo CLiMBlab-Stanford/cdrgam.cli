@@ -98,14 +98,16 @@
     value
 }
 
-#' Configure a source checkout
+#' Configure a harness instance
 #'
-#' @param checkout Source checkout root.
+#' @param checkout Writable harness instance directory. It is normally the
+#'   source checkout during development, but need not contain package code.
 #' @param cdrgam_root Root containing projects and private orchestration state.
-#' @param concurrency Maximum concurrent Slurm workers across the checkout.
+#' @param concurrency Maximum concurrent Slurm workers across the instance.
 #' @param slurm_partition,slurm_account Optional Slurm routing fields. Supply
 #'   both to enable Slurm, or neither for local execution.
 #' @param slurm_cpus,slurm_memory,slurm_time,slurm_qos Optional Slurm defaults.
+#' @details A checkout-level lock serializes configuration publication.
 #' @return The validated configuration, invisibly.
 #' @export
 cdrgam_cli_configure <- function(
@@ -128,7 +130,10 @@ cdrgam_cli_configure <- function(
     path <- file.path(checkout, .cdrgam_cli_checkout_marker)
     validated <- .cdrgam_cli_validate_checkout(value, path)
     validated$scheduler <- NULL
-    .cdrgam_cli_write_yaml(validated, path)
+    .cdrgam_cli_with_lock(
+        file.path(checkout, '.cdrgam', 'locks', 'checkout.lock'),
+        .cdrgam_cli_write_yaml(validated, path)
+    )
     options(cdrgam.cli.checkout=checkout)
     .cdrgam_cli_checkout(checkout, create_root=TRUE)
     message('Configured CDR-GAM checkout at ', checkout)

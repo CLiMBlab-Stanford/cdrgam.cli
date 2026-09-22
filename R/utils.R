@@ -47,6 +47,11 @@
             'lowercase letters, digits, and hyphens; underscores are reserved'
         ))
     }
+    if (grepl('^(con|prn|aux|nul|com[1-9]|lpt[1-9])$', value)) {
+        .cdrgam_cli_abort(paste0(
+            field, ' is reserved as a device name on Windows: ', value
+        ))
+    }
     value
 }
 
@@ -60,13 +65,160 @@
 }
 
 .cdrgam_cli_normalize_path <- function(path, must_work=FALSE) {
-    normalizePath(path, winslash='/', mustWork=must_work)
+    if (isTRUE(must_work)) return(as.character(fs::path_real(path)))
+    normalized <- vapply(path, function(value) {
+        absolute <- fs::path_abs(fs::path_expand(value))
+        current <- absolute
+        suffix <- character()
+        repeat {
+            exists <- fs::file_exists(current) || fs::dir_exists(current) ||
+                fs::link_exists(current)
+            if (exists) break
+            parent <- fs::path_dir(current)
+            if (identical(as.character(parent), as.character(current))) break
+            suffix <- c(as.character(fs::path_file(current)), suffix)
+            current <- parent
+        }
+        prefix <- if (exists) fs::path_real(current) else current
+        resolved <- if (length(suffix)) {
+            do.call(fs::path, c(list(prefix), as.list(suffix)))
+        } else {
+            prefix
+        }
+        as.character(fs::path_norm(resolved))
+    }, character(1), USE.NAMES=FALSE)
+    names(normalized) <- names(path)
+    normalized
+}
+
+.cdrgam_cli_os_type <- function() {
+    .cdrgam_cli_null(getOption('cdrgam.cli.os_type'), .Platform$OS.type)
+}
+
+.cdrgam_cli_is_windows <- function() {
+    identical(.cdrgam_cli_os_type(), 'windows')
+}
+
+.cdrgam_cli_host_name <- function() {
+    .cdrgam_cli_null(unname(Sys.info()[['nodename']]), '')
+}
+
+.cdrgam_cli_same_host <- function(left, right=.cdrgam_cli_host_name()) {
+    if (!is.character(left) || length(left) != 1L || is.na(left) ||
+            !is.character(right) || length(right) != 1L || is.na(right)) {
+        return(FALSE)
+    }
+    identical(tolower(left), tolower(right))
+}
+
+.cdrgam_cli_process_started <- function(pid=Sys.getpid()) {
+    tryCatch(
+        as.numeric(ps::ps_create_time(ps::ps_handle(as.integer(pid)))),
+        error=function(error) NA_real_
+    )
+}
+
+.cdrgam_cli_process_alive <- function(pid, started=NULL) {
+    pid <- suppressWarnings(as.integer(pid))
+    if (length(pid) != 1L || is.na(pid) || pid < 1L) return(FALSE)
+    tryCatch({
+        handle <- if (is.null(started)) {
+            ps::ps_handle(pid)
+        } else {
+            started <- suppressWarnings(as.numeric(started))
+            if (length(started) != 1L || is.na(started)) return(NA)
+            ps::ps_handle(pid, time=as.POSIXct(started, origin='1970-01-01', tz='GMT'))
+        }
+        isTRUE(ps::ps_is_running(handle))
+    }, error=function(error) {
+        if (inherits(error, 'no_such_process')) FALSE else NA
+    })
+}
+
+.cdrgam_cli_process_run <- function(
+        command, arguments=character(), timeout=Inf, stdin=NULL,
+        stdout='|', stderr='|', cleanup_tree=FALSE
+) {
+    tryCatch(
+        processx::run(
+            command, arguments, error_on_status=FALSE, timeout=timeout,
+            stdin=stdin, stdout=stdout, stderr=stderr,
+            cleanup_tree=cleanup_tree, windows_hide_window=TRUE
+        ),
+        error=function(error) NULL
+    )
+}
+
+.cdrgam_cli_absolute_path <- function(path) {
+    fs::is_absolute_path(path)
 }
 
 .cdrgam_cli_within <- function(path, root) {
-    root <- sub('/+$', '', .cdrgam_cli_normalize_path(root, must_work=FALSE))
+    root <- .cdrgam_cli_normalize_path(root, must_work=FALSE)
     path <- .cdrgam_cli_normalize_path(path, must_work=FALSE)
-    identical(path, root) || startsWith(path, paste0(root, '/'))
+    isTRUE(fs::path_has_parent(path, root))
+}
+
+.cdrgam_cli_try_move_path <- function(source, destination) {
+    tryCatch({
+        fs::file_move(source, destination)
+        TRUE
+    }, error=function(error) FALSE)
+}
+
+.cdrgam_cli_with_lock <- function(path, code, timeout=5000) {
+    directory <- fs::path_dir(path)
+    if (!fs::dir_exists(directory)) fs::dir_create(directory, recurse=TRUE)
+    handle <- filelock::lock(path, timeout=timeout)
+    if (is.null(handle)) {
+        .cdrgam_cli_abort(paste0(
+            'Timed out waiting for checkout lock ', sQuote(as.character(path))
+        ))
+    }
+    on.exit(filelock::unlock(handle), add=TRUE)
+    force(code)
+}
+
+.cdrgam_cli_replace_path <- function(source, destination) {
+    source_is_directory <- fs::dir_exists(source)
+    if (!fs::file_exists(source) && !source_is_directory) {
+        .cdrgam_cli_abort(paste0('Replacement source does not exist: ', source))
+    }
+    destination_is_directory <- fs::dir_exists(destination)
+    destination_exists <- fs::file_exists(destination) || destination_is_directory
+    if (!destination_is_directory) {
+        moved <- .cdrgam_cli_try_move_path(source, destination)
+        if (moved) return(invisible(destination))
+    }
+    if (!destination_exists) {
+        .cdrgam_cli_abort(paste0('Could not publish ', sQuote(destination)))
+    }
+    backup <- tempfile(
+        paste0('.', basename(destination), '-previous-'),
+        tmpdir=dirname(destination)
+    )
+    archived <- .cdrgam_cli_try_move_path(destination, backup)
+    if (!archived) {
+        .cdrgam_cli_abort(paste0(
+            'Could not replace ', sQuote(destination),
+            '; another process may have it open'
+        ))
+    }
+    published <- .cdrgam_cli_try_move_path(source, destination)
+    if (!published) {
+        restored <- .cdrgam_cli_try_move_path(backup, destination)
+        .cdrgam_cli_abort(paste0(
+            'Could not publish ', sQuote(destination),
+            if (restored) '' else '; the previous value remains at ',
+            if (restored) '' else sQuote(backup)
+        ))
+    }
+    if (fs::dir_exists(backup)) {
+        fs::dir_delete(backup)
+    } else if (fs::file_exists(backup) || fs::link_exists(backup)) {
+        fs::file_delete(backup)
+    }
+    invisible(destination)
 }
 
 .cdrgam_cli_atomic_write <- function(path, writer) {
@@ -77,9 +229,7 @@
     temporary <- tempfile(paste0('.', basename(path), '-'), tmpdir=directory)
     on.exit(unlink(temporary, recursive=TRUE, force=TRUE), add=TRUE)
     writer(temporary)
-    if (!file.rename(temporary, path)) {
-        .cdrgam_cli_abort(paste0('Could not publish ', sQuote(path)))
-    }
+    .cdrgam_cli_replace_path(temporary, path)
     invisible(path)
 }
 

@@ -46,6 +46,20 @@
     path
 }
 
+.cdrgam_cli_draft_path <- function(root, type, name) {
+    type <- .cdrgam_cli_scalar_character(type, 'draft type')
+    name <- .cdrgam_cli_scalar_character(name, 'draft name')
+    if (basename(type) != type || type %in% c('.', '..') ||
+            basename(name) != name || name %in% c('.', '..')) {
+        .cdrgam_cli_abort('Draft type and name must be safe path components')
+    }
+    path <- file.path(root, '.cdrgam', 'drafts', type, paste0(name, '.yml'))
+    if (!.cdrgam_cli_within(path, root)) {
+        .cdrgam_cli_abort('Draft path escapes its managed root')
+    }
+    path
+}
+
 .cdrgam_cli_store_relative <- function(configuration, path) {
     root <- sub('/+$', '', .cdrgam_cli_normalize_path(
         configuration$cdrgam_root, must_work=FALSE
@@ -63,7 +77,7 @@
         configuration, path, field='managed path', must_work=FALSE
 ) {
     path <- .cdrgam_cli_scalar_character(path, field)
-    if (grepl('^(/|[A-Za-z]:[/\\\\])', path) ||
+    if (.cdrgam_cli_absolute_path(path) ||
             any(strsplit(path, '[/\\\\]')[[1L]] == '..')) {
         .cdrgam_cli_abort(paste0(field, ' must be relative to cdrgam_root'))
     }

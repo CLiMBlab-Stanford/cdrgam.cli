@@ -251,9 +251,11 @@
         quiet=TRUE
     )
     if (!is.null(model$window)) arguments$window <- model$window
+    for (field in intersect(.cdrgam_cli_irf_default_keys, names(model))) {
+        arguments[field] <- model[field]
+    }
     for (field in c(
-            'history', 'history_length', 'chunk_size', 'rescale_predictors',
-            'drop.unused.levels'
+            'history', 'chunk_size', 'rescale_predictors', 'drop.unused.levels'
     )) {
         value <- fit[[field, exact=TRUE]]
         if (!is.null(value)) arguments[[field]] <- value

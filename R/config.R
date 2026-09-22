@@ -38,14 +38,14 @@
         .cdrgam_cli_scalar_character(value$format, paste0(field, '.format')),
         c('rds', 'csv', 'tsv')
     )
-    resolved <- if (grepl('^(/|[A-Za-z]:[/\\\\])', path_text)) {
+    resolved <- if (.cdrgam_cli_absolute_path(path_text)) {
         path.expand(path_text)
     } else {
         file.path(root, path_text)
     }
     resolved <- .cdrgam_cli_normalize_path(resolved, must_work=FALSE)
     store_root <- dirname(dirname(root))
-    if (grepl('^(/|[A-Za-z]:[/\\\\])', path_text) &&
+    if (.cdrgam_cli_absolute_path(path_text) &&
             .cdrgam_cli_within(resolved, store_root)) {
         .cdrgam_cli_abort(paste0(
             field, '.path points inside cdrgam_root and must be relative to the project'
@@ -206,9 +206,13 @@
         script <- .cdrgam_cli_scalar_character(
             value$preprocess$script, paste0(path, ': preprocess.script')
         )
-        script_path <- if (startsWith(script, '/')) script else file.path(root, script)
+        script_path <- if (.cdrgam_cli_absolute_path(script)) {
+            script
+        } else {
+            file.path(root, script)
+        }
         script_path <- .cdrgam_cli_normalize_path(script_path, must_work=FALSE)
-        if (grepl('^(/|[A-Za-z]:[/\\\\])', script) &&
+        if (.cdrgam_cli_absolute_path(script) &&
                 .cdrgam_cli_within(script_path, dirname(dirname(root)))) {
             .cdrgam_cli_abort(paste0(
                 path, ': preprocess.script points inside cdrgam_root and must be ',
@@ -228,15 +232,65 @@
 }
 
 .cdrgam_cli_fit_keys <- c(
-    'family', 'method', 'backend', 'engine', 'history', 'history_length',
-    'chunk_size', 'rescale_predictors', 'sparse_control', 'rank_action',
-    'rank_tol', 'rank_penalty', 'drop.unused.levels'
+    'family', 'method', 'backend', 'engine', 'history', 'chunk_size',
+    'rescale_predictors', 'sparse_control', 'rank_action', 'rank_tol',
+    'rank_penalty', 'drop.unused.levels'
 )
+
+.cdrgam_cli_irf_default_keys <- c(
+    'k_l', 'k_t', 'k_p', 'bs_l', 'bs_t', 'bs_p'
+)
+
+.cdrgam_cli_validate_irf_defaults <- function(value, path) {
+    scalar_dimension <- function(dimension, field, allow_null=FALSE) {
+        if (allow_null && is.null(dimension)) return(invisible(NULL))
+        if (!is.numeric(dimension) || length(dimension) != 1L ||
+                !is.finite(dimension) || dimension < 3 ||
+                dimension != as.integer(dimension)) {
+            .cdrgam_cli_abort(paste0(field, ' must be an integer of at least 3'))
+        }
+    }
+    for (field in intersect(c('k_l', 'k_t'), names(value))) {
+        scalar_dimension(
+            value[[field]], paste0(path, ': ', field),
+            allow_null=identical(field, 'k_t')
+        )
+    }
+    if ('k_p' %in% names(value) && !is.null(value$k_p)) {
+        dimensions <- if (is.list(value$k_p)) value$k_p else as.list(value$k_p)
+        if (!length(dimensions)) {
+            .cdrgam_cli_abort(paste0(path, ': k_p must not be empty'))
+        }
+        for (dimension in dimensions) {
+            scalar_dimension(dimension, paste0(path, ': k_p'), allow_null=TRUE)
+        }
+    }
+    scalar_basis <- function(basis, field) {
+        if (!is.character(basis) || length(basis) != 1L || is.na(basis) ||
+                !nzchar(basis)) {
+            .cdrgam_cli_abort(paste0(field, ' must be a nonempty basis name'))
+        }
+    }
+    for (field in intersect(c('bs_l', 'bs_t'), names(value))) {
+        scalar_basis(value[[field]], paste0(path, ': ', field))
+    }
+    if ('bs_p' %in% names(value)) {
+        bases <- if (is.list(value$bs_p)) value$bs_p else as.list(value$bs_p)
+        if (!length(bases)) {
+            .cdrgam_cli_abort(paste0(path, ': bs_p must not be empty'))
+        }
+        for (basis in bases) scalar_basis(basis, paste0(path, ': bs_p'))
+    }
+    invisible(value)
+}
 
 .cdrgam_cli_validate_model <- function(value, path) {
     .cdrgam_cli_validate_schema(value, path)
     .cdrgam_cli_check_keys(
-        value, c('schema', 'model', 'datasets', 'formula', 'window', 'fit'), path,
+        value, c(
+            'schema', 'model', 'datasets', 'formula', 'window',
+            .cdrgam_cli_irf_default_keys, 'fit'
+        ), path,
         c('schema', 'model', 'datasets', 'formula')
     )
     value$model <- .cdrgam_cli_name(value$model, paste0(path, ': model'))
@@ -264,6 +318,7 @@
             ))
         }
     }
+    .cdrgam_cli_validate_irf_defaults(value, path)
     if (is.null(value$fit)) value$fit <- list()
     .cdrgam_cli_check_keys(value$fit, .cdrgam_cli_fit_keys, paste0(path, ': fit'))
     if (!is.null(value$fit$backend) &&

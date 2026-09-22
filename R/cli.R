@@ -1,11 +1,17 @@
 .cdrgam_cli_usage <- function() {
     paste(
         'Usage:',
-        '  cdrgam def site',
-        '  cdrgam def PROJECT [--dataset DATASET | --model MODEL |',
-        '                      --visualization VISUALIZATION | --comparison COMPARISON]',
-        '  cdrgam def --copy-from-to SOURCE DESTINATION',
-        '  cdrgam validate [-P PROJECT ...] [--deep]',
+        '  cdrgam def edit site',
+        '  cdrgam def edit PROJECT [--dataset DATASET ... | --model MODEL ... |',
+        '                           --visualization VISUALIZATION ... |',
+        '                           --comparison COMPARISON ...] [--source SOURCE]',
+        '  cdrgam def del PROJECT (--dataset DATASET ... | --model MODEL ... |',
+        '                          --visualization VISUALIZATION ... |',
+        '                          --comparison COMPARISON ...)',
+        '  cdrgam def val site',
+        '  cdrgam def val PROJECT [--dataset DATASET ... | --model MODEL ... |',
+        '                          --visualization VISUALIZATION ... |',
+        '                          --comparison COMPARISON ...] [--deep]',
         '  cdrgam list [-P PROJECT ...]',
         '  cdrgam plan [-P PROJECT ...] [-m MODEL] [-p PARTITION ...]',
         '              [-v VISUALIZATION] [-c COMPARISON]',
@@ -15,7 +21,9 @@
         '  cdrgam status [-P PROJECT ...] [--no-pager]',
         '  cdrgam log [-P PROJECT ...] [-m MODEL ...] [-p PARTITION ...]',
         '             [-v VISUALIZATION ...] [-c COMPARISON ...] [--lines N]',
-        '  cdrgam purge [-P PROJECT ...] [-m MODEL ...] [--work] [--logs] [--yes]',
+        '  cdrgam purge [-P PROJECT ...] [-m MODEL ...] [-p PARTITION ...]',
+        '               [-v VISUALIZATION ...] [-c COMPARISON ...]',
+        '               [--dataset DATASET ...] [--work] [--logs] [--yes]',
         sep='\n'
     )
 }
@@ -32,23 +40,32 @@
     positional <- character()
     value_flags <- c(
         '--project', '--model', '--prediction', '--visualization', '--comparison',
-        '--lines', '--dataset', '--copy-from-to', '--attempt', '--request-file',
+        '--lines', '--dataset', '--source', '--attempt', '--request-file',
         '--work-key', '--controller-host', '--controller-port',
         '--controller-token', '--checkout', '--worker-id', '--resource-key',
         '--cpus', '--memory', '--time', '--qos'
+    )
+    multi_value_flags <- c(
+        '--project', '--model', '--prediction', '--visualization',
+        '--comparison', '--dataset'
     )
     boolean_flags <- c('--deep', '--dry-run',
         '--work', '--logs', '--yes', '--no-pager')
     i <- 1L
     while (i <= length(arguments)) {
         argument <- arguments[[i]]
-        if (identical(argument, '--copy-from-to')) {
-            if (i + 2L > length(arguments) ||
-                    any(startsWith(arguments[c(i + 1L, i + 2L)], '-'))) {
-                .cdrgam_cli_abort('--copy-from-to requires source and destination projects')
+        if (argument %in% multi_value_flags) {
+            end <- i + 1L
+            while (end <= length(arguments) &&
+                    !startsWith(arguments[[end]], '-')) {
+                end <- end + 1L
             }
-            flags$`copy-from-to` <- arguments[c(i + 1L, i + 2L)]
-            i <- i + 3L
+            if (end == i + 1L) {
+                .cdrgam_cli_abort(paste0(argument, ' requires a value'))
+            }
+            key <- substring(argument, 3L)
+            flags[[key]] <- c(flags[[key]], arguments[seq.int(i + 1L, end - 1L)])
+            i <- end
         } else if (argument %in% value_flags) {
             if (i == length(arguments)) .cdrgam_cli_abort(paste0(argument, ' requires a value'))
             key <- substring(argument, 3L)
@@ -86,25 +103,36 @@
 .cdrgam_cli_def_command <- function(parsed) {
     positional <- parsed$positional
     flags <- parsed$flags
-    if ('copy-from-to' %in% names(flags)) {
-        if (length(positional) || length(flags) != 1L) {
-            .cdrgam_cli_abort('--copy-from-to cannot be combined with other arguments')
-        }
-        return(cdrgam_cli_def(copy_from_to=flags$`copy-from-to`))
+    operations <- c('edit', 'del', 'val')
+    if (length(positional) != 2L || !(positional[[1L]] %in% operations)) {
+        .cdrgam_cli_abort(
+            'def requires edit, del, or val followed by site or one project name'
+        )
     }
-    if (length(positional) != 1L) {
-        .cdrgam_cli_abort('def requires site or one project name')
-    }
+    operation <- positional[[1L]]
+    project <- positional[[2L]]
     supported <- c('dataset', 'model', 'visualization', 'comparison')
-    .cdrgam_cli_check_flags(flags, supported, 'def')
+    allowed <- switch(
+        operation,
+        edit=c(supported, 'source'), del=supported, val=c(supported, 'deep')
+    )
+    .cdrgam_cli_check_flags(flags, allowed, paste('def', operation))
     selected <- intersect(names(flags), supported)
-    if (length(selected) > 1L) {
-        .cdrgam_cli_abort('def accepts at most one definition selector')
+    expected <- if (identical(operation, 'del')) 1L else c(0L, 1L)
+    if (!(length(selected) %in% expected)) {
+        .cdrgam_cli_abort(paste0(
+            'def ', operation, ' accepts ',
+            if (identical(operation, 'del')) 'exactly' else 'at most',
+            ' one definition selector'
+        ))
     }
     type <- if (length(selected)) selected[[1L]] else NULL
-    name <- if (is.null(type)) NULL else
-        .cdrgam_cli_one(flags[[type]], paste0('--', type), required=TRUE)
-    cdrgam_cli_def(positional[[1L]], type=type, name=name)
+    name <- if (is.null(type)) NULL else flags[[type]]
+    source <- .cdrgam_cli_one(flags$source, '--source')
+    cdrgam_cli_def(
+        project, type=type, name=name, source=source, operation=operation,
+        deep=isTRUE(flags$deep)
+    )
 }
 
 .cdrgam_cli_selector_arguments <- function(flags) list(
@@ -155,10 +183,7 @@ cli_main <- function(args=commandArgs(trailingOnly=TRUE)) {
         .cdrgam_cli_abort('Project paths are not accepted; use -P/--project')
     }
     selectors <- .cdrgam_cli_selector_arguments(flags)
-    if (identical(command, 'validate')) {
-        .cdrgam_cli_check_flags(flags, c('project', 'deep'), 'validate')
-        cdrgam_cli_validate(flags$project, deep=isTRUE(flags$deep))
-    } else if (identical(command, 'list')) {
+    if (identical(command, 'list')) {
         .cdrgam_cli_check_flags(flags, 'project', 'list')
         cdrgam_cli_list(flags$project)
     } else if (identical(command, 'plan')) {
@@ -174,7 +199,9 @@ cli_main <- function(args=commandArgs(trailingOnly=TRUE)) {
         ), 'run')
         arguments <- c(selectors, list(
             dry_run=isTRUE(flags$`dry-run`),
-            cpus=if (length(flags$cpus)) as.integer(.cdrgam_cli_one(flags$cpus, '--cpus')) else NULL,
+            cpus=if (length(flags$cpus)) {
+                as.integer(.cdrgam_cli_one(flags$cpus, '--cpus'))
+            } else NULL,
             memory=.cdrgam_cli_one(flags$memory, '--memory'),
             time=.cdrgam_cli_one(flags$time, '--time'),
             qos=.cdrgam_cli_one(flags$qos, '--qos')
@@ -201,11 +228,18 @@ cli_main <- function(args=commandArgs(trailingOnly=TRUE)) {
         do.call(cdrgam_cli_log, arguments)
     } else if (identical(command, 'purge')) {
         .cdrgam_cli_check_flags(
-            flags, c('project', 'model', 'work', 'logs', 'yes'), 'purge'
+            flags, c(
+                'project', 'model', 'prediction', 'visualization',
+                'comparison', 'dataset', 'work', 'logs', 'yes'
+            ), 'purge'
         )
         cdrgam_cli_purge(
-            projects=flags$project, models=flags$model, work=isTRUE(flags$work),
-            logs=isTRUE(flags$logs), yes=isTRUE(flags$yes)
+            projects=flags$project, models=flags$model,
+            predictions=flags$prediction,
+            visualizations=flags$visualization,
+            comparisons=flags$comparison, datasets=flags$dataset,
+            work=isTRUE(flags$work), logs=isTRUE(flags$logs),
+            yes=isTRUE(flags$yes)
         )
     } else {
         .cdrgam_cli_abort(paste0('Unknown command: ', command, '\n', .cdrgam_cli_usage()))

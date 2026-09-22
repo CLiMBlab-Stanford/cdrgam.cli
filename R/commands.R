@@ -19,7 +19,7 @@
 #'
 #' @param projects Project selectors. The default is the current project when
 #'   inside one, otherwise every configured project.
-#' @param checkout Source checkout root.
+#' @param checkout Configured harness instance directory.
 #' @return Definitions grouped by project, invisibly.
 #' @export
 cdrgam_cli_list <- function(projects=NULL, checkout=NULL) {
@@ -102,7 +102,7 @@ cdrgam_cli_list <- function(projects=NULL, checkout=NULL) {
 #'
 #' @param projects,models,predictions,visualizations,comparisons Conjunctive
 #'   selectors. Repeated prediction selectors expand model partitions.
-#' @param checkout Source checkout root.
+#' @param checkout Configured harness instance directory.
 #' @return A data frame describing the dependency-closed work plan.
 #' @export
 cdrgam_cli_plan <- function(
@@ -137,7 +137,19 @@ cdrgam_cli_plan <- function(
         )
         .cdrgam_cli_registry_state(definitions$checkout, item, 'running')
         result <- tryCatch(
-            .cdrgam_cli_run_item(definitions, item, attempt_path=attempt$path),
+            callr::r(
+                function(definitions, item, attempt_path) {
+                    utils::getFromNamespace('.cdrgam_cli_run_item', 'cdrgam.cli')(
+                        definitions, item, attempt_path=attempt_path
+                    )
+                },
+                args=list(
+                    definitions=definitions, item=item,
+                    attempt_path=attempt$path
+                ),
+                libpath=.libPaths(), stdout='', stderr='',
+                user_profile=FALSE, system_profile=FALSE
+            ),
             error=function(error) {
                 .cdrgam_cli_registry_state(definitions$checkout, item, 'failed')
                 .cdrgam_cli_registry_attempt_state(
@@ -158,6 +170,9 @@ cdrgam_cli_plan <- function(
 #' @inheritParams cdrgam_cli_plan
 #' @param dry_run Print the resolved graph without executing it.
 #' @param cpus,memory,time,qos Optional Slurm resource overrides.
+#' @details Local execution is serial and isolates each work item in its own R
+#'   process. Slurm execution uses the checkout-wide controller and concurrency
+#'   limit.
 #' @return Work results, invisibly.
 #' @export
 cdrgam_cli_run <- function(
@@ -204,15 +219,25 @@ cdrgam_cli_run <- function(
 }
 
 .cdrgam_cli_paint <- function(text, style, color) {
-    if (isTRUE(color)) paste0(style, text, '\033[0m') else text
+    if (!isTRUE(color)) return(text)
+    switch(
+        style,
+        header=cli::style_bold(cli::col_cyan(text)),
+        success=cli::col_green(text),
+        active=cli::col_cyan(text),
+        queued=cli::col_blue(text),
+        warning=cli::col_yellow(text),
+        error=cli::style_bold(cli::col_red(text)),
+        detail=cli::style_dim(text),
+        text
+    )
 }
 
 .cdrgam_cli_status_report <- function(output, color=FALSE) {
     styles <- list(
-        header='\033[1m\033[96m', Success='\033[92m', Running='\033[96m',
-        Queued='\033[94m', Waiting='\033[94m', Blocked='\033[93m',
-        Nonconverged='\033[91m\033[1m', Error='\033[91m\033[1m',
-        Stale='\033[93m', detail='\033[2m', error='\033[91m'
+        header='header', Success='success', Running='active', Queued='queued',
+        Waiting='queued', Blocked='warning', Nonconverged='error', Error='error',
+        Stale='warning', detail='detail', error='error'
     )
     columns <- list(
         PROJECT=if (nrow(output)) output$project else character(),
@@ -318,6 +343,15 @@ cdrgam_cli_run <- function(
         cat(text)
         return(invisible(text))
     }
+    if (is.null(pager) && .cdrgam_cli_is_windows()) {
+        temporary <- tempfile('cdrgam-status-', fileext='.txt')
+        writeLines(text, temporary, useBytes=TRUE)
+        base::file.show(
+            temporary, title='cdrgam status', delete.file=TRUE,
+            pager=getOption('pager')
+        )
+        return(invisible(text))
+    }
     pager <- .cdrgam_cli_null(pager, Sys.which('less'))
     if (!length(pager) || !nzchar(pager[[1L]])) {
         cat(text)
@@ -328,18 +362,16 @@ cdrgam_cli_run <- function(
     if (!nzchar(executable)) .cdrgam_cli_abort(paste0('Pager was not found: ', pager))
     arguments <- '-R'
     if (header_lines > 0L) {
-        help <- suppressWarnings(system2(
-            executable, '--help', stdout=TRUE, stderr=TRUE
-        ))
-        if (any(grepl('--header', help, fixed=TRUE))) {
+        help <- .cdrgam_cli_process_run(executable, '--help')
+        if (!is.null(help) && grepl('--header', help$stdout, fixed=TRUE)) {
             arguments <- c(arguments, '--header', as.character(header_lines))
         }
     }
     input <- strsplit(sub('\n$', '', text), '\n', fixed=TRUE)[[1L]]
-    tryCatch(
-        system2(executable, arguments, input=input),
-        interrupt=function(condition) invisible(130L)
-    )
+    tryCatch(.cdrgam_cli_process_run(
+        executable, arguments, stdin=paste0(paste(input, collapse='\n'), '\n'),
+        stdout='', stderr=''
+    ), interrupt=function(condition) NULL)
     invisible(text)
 }
 
@@ -427,7 +459,7 @@ cdrgam_cli_run <- function(
 #' Report checkout work state
 #'
 #' @param projects Project selectors.
-#' @param checkout Source checkout root.
+#' @param checkout Configured harness instance directory.
 #' @param pager Optional pager executable or function.
 #' @param use_pager Whether interactive output may open the pager.
 #' @return The current registry work-item state, invisibly. `display_state`
@@ -583,6 +615,10 @@ cdrgam_cli_status <- function(
             destination
         }, character(1))
     }
+    if (is.null(pager) && isatty(stdout()) && .cdrgam_cli_is_windows()) {
+        base::file.show(shown, header=labels, pager=getOption('pager'))
+        return(invisible(paths))
+    }
     if (is.null(pager) && isatty(stdout())) pager <- Sys.which('less')
     if (is.function(pager)) {
         pager(shown, labels)
@@ -593,8 +629,12 @@ cdrgam_cli_status <- function(
         message(
             'Opening ', length(paths), ' log(s); use :n and :p to switch files, q to quit.'
         )
-        status <- system2(executable, shQuote(shown))
-        if (!identical(status, 0L)) .cdrgam_cli_abort('Pager exited unsuccessfully')
+        result <- .cdrgam_cli_process_run(
+            executable, shown, stdout='', stderr=''
+        )
+        if (is.null(result) || !identical(result$status, 0L)) {
+            .cdrgam_cli_abort('Pager exited unsuccessfully')
+        }
     } else {
         for (index in seq_along(paths)) {
             cat('==> ', labels[[index]], ' <==\n', sep='')
@@ -612,7 +652,7 @@ cdrgam_cli_status <- function(
 #' @param projects,models,predictions,visualizations,comparisons Log selectors.
 #'   Omitted selector dimensions match all logged workloads.
 #' @param lines Optional maximum number of trailing lines from each log.
-#' @param checkout Source checkout root.
+#' @param checkout Configured harness instance directory.
 #' @param pager Optional pager executable or function. Interactive terminals
 #'   use `less` by default; non-interactive calls print labeled sections.
 #' @return The selected log paths, newest first, invisibly.
@@ -645,31 +685,159 @@ cdrgam_cli_log <- function(
 
 #' Preview or remove generated artifacts
 #'
-#' @param projects,models Project and model selectors.
+#' @param projects,models,predictions,visualizations,comparisons,datasets
+#'   Conjunctive selectors for generated results. Dataset selectors address
+#'   dataset artifacts directly.
 #' @param work,logs Include private attempts or logs.
 #' @param yes Remove selected paths. The default previews them.
-#' @param checkout Source checkout root.
+#' @param checkout Configured harness instance directory.
 #' @return Selected generated paths, invisibly.
 #' @export
 cdrgam_cli_purge <- function(
-        projects=NULL, models=NULL, work=FALSE, logs=FALSE, yes=FALSE,
-        checkout=NULL
+        projects=NULL, models=NULL, predictions=NULL, visualizations=NULL,
+        comparisons=NULL, datasets=NULL, work=FALSE, logs=FALSE,
+        yes=FALSE, checkout=NULL
 ) {
-    selected <- .cdrgam_cli_select_projects(projects, checkout)
-    if (!length(models) && !isTRUE(work) && !isTRUE(logs)) {
-        .cdrgam_cli_abort('Purge requires --model, --work, or --logs')
+    workload_selected <- any(c(
+        length(models), length(predictions), length(visualizations),
+        length(comparisons), length(datasets)
+    ) > 0L)
+    if (!workload_selected && !isTRUE(work) && !isTRUE(logs) &&
+            (is.null(projects) || !length(projects))) {
+        inferred <- tryCatch(
+            .cdrgam_cli_infer_project(checkout),
+            error=function(error) NULL
+        )
+        if (is.null(inferred)) {
+            .cdrgam_cli_abort(paste(
+                'Purge requires a project or workload selector when run',
+                'outside a configured project'
+            ))
+        }
+        projects <- inferred
     }
+    selected <- .cdrgam_cli_select_projects(projects, checkout)
     targets <- character()
+    artifact_targets <- character()
     for (project in selected) {
         definitions <- .cdrgam_cli_read_definitions(
             project, check_sources=FALSE, checkout=checkout
         )
-        if (length(models)) {
-            names <- .cdrgam_cli_match_names(models, names(definitions$models), 'model')
-            targets <- c(targets, vapply(names, function(name) {
+        model_names <- if (length(models)) {
+            .cdrgam_cli_match_names(
+                models, names(definitions$models), 'model'
+            )
+        } else names(definitions$models)
+        typed <- any(c(
+            length(predictions), length(visualizations), length(comparisons),
+            length(datasets)
+        ) > 0L)
+        project_targets <- character()
+        if (length(models) && !typed) {
+            project_targets <- c(project_targets, vapply(
+                model_names, function(name) {
                 .cdrgam_cli_path(definitions, 'model', name)
             }, character(1)))
         }
+        if (length(predictions)) {
+            for (model_name in model_names) {
+                model <- definitions$models[[model_name]]
+                choices <- unique(c(
+                    names(model$datasets), names(definitions$datasets)
+                ))
+                prediction_names <- .cdrgam_cli_match_names(
+                    predictions, choices, 'prediction'
+                )
+                dataset_names <- unique(vapply(
+                    prediction_names,
+                    function(selector) .cdrgam_cli_resolve_prediction_dataset(
+                        definitions, model, selector
+                    ),
+                    character(1)
+                ))
+                project_targets <- c(project_targets, vapply(
+                    dataset_names, function(dataset_name) {
+                        .cdrgam_cli_path(
+                            definitions, 'prediction', model_name,
+                            dataset=dataset_name
+                        )
+                    }, character(1)
+                ))
+            }
+        }
+        if (length(visualizations)) {
+            visualization_names <- .cdrgam_cli_match_names(
+                visualizations, names(definitions$visualizations),
+                'visualization'
+            )
+            if (length(models)) {
+                visualization_names <- visualization_names[vapply(
+                    definitions$visualizations[visualization_names],
+                    function(value) value$model %in% model_names,
+                    logical(1)
+                )]
+                if (!length(visualization_names)) {
+                    .cdrgam_cli_abort(paste(
+                        'Combined model and visualization selectors',
+                        'matched nothing'
+                    ))
+                }
+            }
+            project_targets <- c(project_targets, vapply(
+                visualization_names, function(name) {
+                    value <- definitions$visualizations[[name]]
+                    .cdrgam_cli_path(
+                        definitions, 'visualization', value$model,
+                        dataset=name
+                    )
+                }, character(1)
+            ))
+        }
+        if (length(comparisons)) {
+            comparison_names <- .cdrgam_cli_match_names(
+                comparisons, names(definitions$comparisons), 'comparison'
+            )
+            if (length(models)) {
+                comparison_names <- comparison_names[vapply(
+                    definitions$comparisons[comparison_names],
+                    function(value) all(model_names %in% value$models),
+                    logical(1)
+                )]
+                if (!length(comparison_names)) {
+                    .cdrgam_cli_abort(paste(
+                        'Combined model and comparison selectors matched',
+                        'nothing'
+                    ))
+                }
+            }
+            project_targets <- c(project_targets, vapply(
+                comparison_names, function(name) {
+                    .cdrgam_cli_path(definitions, 'comparison', name)
+                }, character(1)
+            ))
+        }
+        if (length(datasets)) {
+            dataset_names <- .cdrgam_cli_match_names(
+                datasets, names(definitions$datasets), 'dataset'
+            )
+            project_targets <- c(project_targets, vapply(
+                dataset_names, function(name) {
+                    .cdrgam_cli_path(definitions, 'dataset', name)
+                }, character(1)
+            ))
+        }
+        if (!workload_selected && !isTRUE(work) && !isTRUE(logs)) {
+            roots <- file.path(definitions$root, c(
+                'datasets', 'models', 'comparisons', 'analyses'
+            ))
+            project_targets <- c(project_targets, unlist(lapply(
+                roots[dir.exists(roots)], function(root) {
+                    list.files(root, full.names=TRUE, all.files=TRUE, no..=TRUE)
+                }
+            ), use.names=FALSE))
+        }
+        artifact_targets <- c(artifact_targets, project_targets)
+        targets <- c(targets, project_targets)
         for (kind in c(if (work) 'work', if (logs) 'log')) {
             directory <- .cdrgam_cli_path(definitions, kind)
             if (dir.exists(directory)) targets <- c(targets, directory)
@@ -685,11 +853,17 @@ cdrgam_cli_purge <- function(
         message('Preview only; pass --yes to remove these targets')
         return(invisible(targets))
     }
+    configuration <- .cdrgam_cli_checkout(checkout, create_root=TRUE)
+    registry_keys <- .cdrgam_cli_registry_keys_for_artifacts(
+        configuration, artifact_targets
+    )
+    .cdrgam_cli_registry_assert_inactive(configuration, registry_keys)
     for (target in targets) unlink(target, recursive=TRUE, force=FALSE)
     remaining <- targets[file.exists(targets)]
     if (length(remaining)) .cdrgam_cli_abort(paste0(
         'Could not remove: ', paste(remaining, collapse=', ')
     ))
+    .cdrgam_cli_registry_forget(configuration, registry_keys)
     message('Removed ', length(targets), ' generated artifact target(s)')
     invisible(targets)
 }

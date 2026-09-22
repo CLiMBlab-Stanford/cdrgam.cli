@@ -38,12 +38,18 @@
             format(Sys.time(), '%Y%m%dT%H%M%S')
         )
         if (!dir.exists(dirname(archived))) dir.create(dirname(archived), recursive=TRUE)
-        if (!file.rename(destination, archived)) {
+        if (!.cdrgam_cli_try_move_path(destination, archived)) {
             .cdrgam_cli_abort(paste0('Could not archive previous artifact ', destination))
         }
     }
-    if (!file.rename(stage, destination)) {
-        if (!is.null(archived) && !file.exists(destination)) file.rename(archived, destination)
+    published <- tryCatch({
+        .cdrgam_cli_replace_path(stage, destination)
+        TRUE
+    }, error=function(error) FALSE)
+    if (!published) {
+        if (!is.null(archived) && !file.exists(destination)) {
+            .cdrgam_cli_try_move_path(archived, destination)
+        }
         .cdrgam_cli_abort(paste0('Could not atomically publish ', sQuote(destination)))
     }
     if (!is.null(archived)) unlink(archived, recursive=TRUE, force=TRUE)
@@ -57,8 +63,13 @@
         metadata <- if (file.exists(metadata_path)) tryCatch(
             .cdrgam_cli_read_yaml(metadata_path), error=function(error) NULL
         ) else NULL
+        alive <- if (!is.null(metadata$pid)) {
+            .cdrgam_cli_process_alive(metadata$pid)
+        } else {
+            FALSE
+        }
         active <- !is.null(metadata) && identical(metadata$status, 'running') &&
-            !is.null(metadata$pid) && file.exists(file.path('/proc', metadata$pid))
+            !identical(alive, FALSE)
         if (active) .cdrgam_cli_abort(paste0(
             'A superseded attempt still appears active: ', path
         ))
@@ -93,8 +104,13 @@
         if (!file.exists(metadata_path)) next
         metadata <- tryCatch(.cdrgam_cli_read_yaml(metadata_path), error=function(error) NULL)
         if (is.null(metadata) || !(metadata$status %in% c('running', 'failed'))) next
-        active <- identical(metadata$status, 'running') && !is.null(metadata$pid) &&
-            file.exists(file.path('/proc', metadata$pid))
+        alive <- if (!is.null(metadata$pid)) {
+            .cdrgam_cli_process_alive(metadata$pid)
+        } else {
+            FALSE
+        }
+        active <- identical(metadata$status, 'running') &&
+            !identical(alive, FALSE)
         if (active) .cdrgam_cli_abort(paste0('Work item appears active: ', item$key))
         if (is.null(resume)) resume <- path
     }

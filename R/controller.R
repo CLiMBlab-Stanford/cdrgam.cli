@@ -8,8 +8,10 @@
     value <- tryCatch(.cdrgam_cli_read_yaml(path), error=function(error) NULL)
     required <- c('host', 'port', 'pid', 'token', 'startup')
     if (is.null(value) || !all(required %in% names(value))) return(NULL)
-    if (identical(value$host, unname(Sys.info()[['nodename']])) &&
-            !file.exists(file.path('/proc', value$pid))) return(NULL)
+    if (.cdrgam_cli_same_host(value$host)) {
+        alive <- .cdrgam_cli_process_alive(value$pid, value$process_started)
+        if (identical(alive, FALSE)) return(NULL)
+    }
     value
 }
 
@@ -85,20 +87,19 @@
 # TRUE and FALSE are authoritative; NULL means Slurm could not answer.
 .cdrgam_cli_slurm_active_many <- function(job_ids) {
     job_ids <- unique(as.character(job_ids))
-    if (!length(job_ids)) return(setNames(logical(), character()))
+    if (!length(job_ids)) return(stats::setNames(logical(), character()))
     squeue <- getOption('cdrgam.cli.squeue', Sys.which('squeue'))
     if (!length(squeue) || !nzchar(squeue)) return(NULL)
-    timeout <- getOption('cdrgam.cli.timeout', Sys.which('timeout'))
-    if (!length(timeout) || !nzchar(timeout)) return(NULL)
     arguments <- c('-h', '-j', paste(job_ids, collapse=','), '-o', '%i')
-    arguments <- c('2s', squeue, arguments)
-    output <- suppressWarnings(system2(
-        timeout, arguments,
-        stdout=TRUE, stderr=TRUE
-    ))
-    if (!identical(.cdrgam_cli_null(attr(output, 'status'), 0L), 0L)) return(NULL)
-    active <- trimws(output)
-    setNames(job_ids %in% active, job_ids)
+    result <- .cdrgam_cli_process_run(
+        squeue, arguments, timeout=2000, cleanup_tree=TRUE
+    )
+    if (is.null(result) || !identical(result$status, 0L) || isTRUE(result$timeout)) {
+        return(NULL)
+    }
+    active <- trimws(strsplit(result$stdout, '\n', fixed=TRUE)[[1L]])
+    active <- active[nzchar(active)]
+    stats::setNames(job_ids %in% active, job_ids)
 }
 
 .cdrgam_cli_slurm_active <- function(job_id) {
@@ -112,13 +113,12 @@
     bound <- .cdrgam_cli_controller_bind()
     on.exit(close(bound$server), add=TRUE)
     startup <- .cdrgam_cli_random_id('scheduler')
-    advertised_host <- Sys.getenv(
-        'CDRGAM_CONTROLLER_HOST', unname(Sys.info()[['nodename']])
-    )
+    advertised_host <- Sys.getenv('CDRGAM_CONTROLLER_HOST', .cdrgam_cli_host_name())
     endpoint <- list(
         schema=1L, host=advertised_host, port=bound$port,
         pid=Sys.getpid(), job_id=Sys.getenv('SLURM_JOB_ID', NA_character_),
         token=.cdrgam_cli_random_id('token'), startup=startup,
+        process_started=.cdrgam_cli_process_started(),
         started_at=.cdrgam_cli_timestamp()
     )
     discovery <- .cdrgam_cli_controller_discovery(configuration)
@@ -316,7 +316,9 @@
                             'wait'
                         } else 'stop'
                         if (identical(response$action, 'wait')) response$seconds <- 1
-                        worker$status <- if (identical(response$action, 'wait')) 'idle' else 'stopping'
+                        worker$status <- if (identical(response$action, 'wait')) {
+                            'idle'
+                        } else 'stopping'
                         worker$current_work_key <- NULL
                         worker$updated_at <- .cdrgam_cli_timestamp()
                         workers[[message$worker_id]] <- worker

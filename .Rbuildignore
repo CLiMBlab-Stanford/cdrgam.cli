@@ -1,4 +1,6 @@
 ^\.git$
+^\.github$
+^\.lintr$
 ^\.agents$
 ^\.codex$
 ^config\.toml$

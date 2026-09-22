@@ -222,13 +222,17 @@ model_definition <- list(
     schema=1L, model='decay',
     datasets=list(train='training', val='validation'),
     window=c(0, 1.5),
+    knots_l=c(0, 0.1, 0.3, 0.8, 1.5),
     k_l=5L,
     bs_l='cr',
     formula=paste(
         "response ~ s(item_id, bs='re') +",
         'irf(x) - irf(1)'
     ),
-    fit=list(family='gaussian', method='REML', backend='mgcv', engine='gam')
+    fit=list(
+        family='gaussian', link='identity', method='REML',
+        backend='mgcv', engine='gam'
+    )
 )
 legacy_history_model <- model_definition
 legacy_history_model$fit$history_length <- 8L
@@ -242,6 +246,43 @@ stopifnot(
     grepl('history_length', legacy_history_error, fixed=TRUE),
     grepl('unknown field', legacy_history_error, fixed=TRUE)
 )
+poisson_block_model <- model_definition
+poisson_block_model$fit <- list(
+    family='poisson', link='log', backend='block', method='REML'
+)
+stopifnot(inherits(
+    getFromNamespace('.cdrgam_cli_validate_model', 'cdrgam.cli')(
+        poisson_block_model, 'poisson-block.yml'
+    ),
+    'list'
+))
+poisson_sparse_model <- poisson_block_model
+poisson_sparse_model$fit$backend <- 'sparse'
+stopifnot(inherits(
+    getFromNamespace('.cdrgam_cli_validate_model', 'cdrgam.cli')(
+        poisson_sparse_model, 'poisson-sparse.yml'
+    ),
+    'list'
+))
+gamma_sparse_model <- poisson_sparse_model
+gamma_sparse_model$fit$family <- 'Gamma'
+stopifnot(inherits(
+    getFromNamespace('.cdrgam_cli_validate_model', 'cdrgam.cli')(
+        gamma_sparse_model, 'gamma-sparse.yml'
+    ),
+    'list'
+))
+probit_sparse_model <- poisson_sparse_model
+probit_sparse_model$fit <- list(
+    family='binomial', link='probit', backend='sparse', method='REML'
+)
+probit_sparse_error <- tryCatch({
+    getFromNamespace('.cdrgam_cli_validate_model', 'cdrgam.cli')(
+        probit_sparse_model, 'probit-sparse.yml'
+    )
+    NA_character_
+}, error=function(error) conditionMessage(error))
+stopifnot(grepl('sparse currently supports', probit_sparse_error, fixed=TRUE))
 yaml::write_yaml(
     model_definition, file.path(project, 'definitions', 'models', 'decay.yml')
 )
@@ -599,6 +640,9 @@ stopifnot(
     nrow(predictions) == nrow(expected_responses),
     identical(predictions$row_id, expected_responses$row_id),
     all(is.finite(predictions$prediction)),
+    all(is.finite(predictions$link_prediction)),
+    all(is.finite(predictions$link_prediction_se)),
+    max(abs(predictions$prediction - predictions$link_prediction)) < 1e-10,
     predictions$source_row[predictions$row_id == 75L] > 0L
 )
 

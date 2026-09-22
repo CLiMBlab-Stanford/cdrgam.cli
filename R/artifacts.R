@@ -186,13 +186,8 @@
     list(preparation=design$configuration, fitting=fitting)
 }
 
-.cdrgam_cli_fit_family <- function(name) {
-    switch(
-        .cdrgam_cli_null(name, 'gaussian'),
-        gaussian=stats::gaussian(), binomial=stats::binomial(),
-        poisson=stats::poisson(), Gamma=stats::Gamma(),
-        .cdrgam_cli_abort(paste0('Unsupported family: ', name))
-    )
+.cdrgam_cli_fit_family <- function(name, link=NULL) {
+    cdrgam::cdrgam_family(.cdrgam_cli_null(name, 'gaussian'), link=link)
 }
 
 .cdrgam_cli_default_booklet <- function(fit, path) {
@@ -225,7 +220,12 @@
     backend <- .cdrgam_cli_null(fit_control[['backend', exact=TRUE]], 'mgcv')
     arguments <- list(design=design)
     family <- fit_control[['family', exact=TRUE]]
-    if (!is.null(family)) arguments$family <- .cdrgam_cli_fit_family(family)
+    if (!is.null(family)) {
+        arguments$family <- .cdrgam_cli_fit_family(
+            family,
+            fit_control[['link', exact=TRUE]]
+        )
+    }
     for (field in c('method', 'engine', 'backend')) {
         value <- fit_control[[field, exact=TRUE]]
         if (!is.null(value)) arguments[[field]] <- value
@@ -313,18 +313,22 @@
     fit <- readRDS(file.path(item$fit$output, 'fit.rds'))
     data <- .cdrgam_cli_load_dataset(item$dataset)
     .cdrgam_cli_check_dataset_columns(item$dataset, data)
-    prediction <- stats::predict(
+    link_prediction <- stats::predict(
         fit,
         newdata=list(impulses=data$impulses, responses=data$responses),
+        type='link',
         se.fit=TRUE
     )
-    if (is.list(prediction) && all(c('fit', 'se.fit') %in% names(prediction))) {
-        prediction_value <- prediction$fit
-        prediction_se <- prediction$se.fit
+    if (is.list(link_prediction) &&
+            all(c('fit', 'se.fit') %in% names(link_prediction))) {
+        link_value <- link_prediction$fit
+        link_se <- link_prediction$se.fit
     } else {
-        prediction_value <- prediction
-        prediction_se <- rep.int(NA_real_, length(prediction_value))
+        link_value <- link_prediction
+        link_se <- rep.int(NA_real_, length(link_value))
     }
+    prediction_value <- fit$family$linkinv(link_value)
+    prediction_se <- link_se * abs(fit$family$mu.eta(link_value))
     fit_manifest <- .cdrgam_cli_read_yaml(file.path(item$fit$output, 'manifest.yml'))
     response_name <- fit_manifest$response_name
     if (!(response_name %in% names(data$responses))) {
@@ -339,6 +343,8 @@
         prediction=as.numeric(prediction_value),
         residual=data$responses[[response_name]] - as.numeric(prediction_value),
         prediction_se=as.numeric(prediction_se),
+        link_prediction=as.numeric(link_value),
+        link_prediction_se=as.numeric(link_se),
         model_identity=item$fit$identity,
         dataset_identity=item$dataset_identity$identity,
         prediction_scale='response', stringsAsFactors=FALSE

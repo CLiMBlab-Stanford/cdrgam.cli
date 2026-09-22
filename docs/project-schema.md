@@ -244,6 +244,7 @@ datasets:
   val: brown-val
   test: brown-test
 window: [0, 2]
+knots_l: [0, 0.025, 0.05, 0.1, 0.2, 0.4, 0.75, 1.2, 1.6, 2]
 k_l: 10
 k_t: null
 k_p: 5
@@ -253,6 +254,8 @@ bs_p: cr
 formula: >
   reading-time ~ irf(surprisal)
 fit:
+  family: gaussian
+  link: identity
   backend: sparse
   rescale_predictors: true
 ```
@@ -274,8 +277,25 @@ recycled across a term's predictors. A `NULL` predictor dimension is linear;
 use an R list such as
 `k_p=list(NULL, 4)` to mix linear and smooth predictors.
 
+`knots_l` optionally supplies exactly `k_l` strictly increasing lag-basis
+construction points in the original lag units. They must lie inside `window`
+and span the linked training lags. Concentrating interior points in a narrow
+interval increases representational resolution there without increasing
+`k_l`. Individual `irf()` terms may override the model-level value.
+`knots_l` is unavailable with `bs_l: ps`, whose knot contract differs.
+
 Settings omitted from `fit` follow the installed core defaults. Completed fit
 manifests record both requested and effective settings.
+
+`fit.family` accepts `gaussian`, `binomial`, `poisson`, or `Gamma` through
+the core package's validated family registry. `fit.link` is optional and
+selects an explicit link supported by that family; it requires `fit.family`.
+Noncanonical-link models currently require the native `mgcv` backend. The
+`block` and `sparse` backends also support `binomial(logit)`, `poisson(log)`,
+and estimated-dispersion `Gamma(log)`; generalized sparse fitting uses
+streamed PIRLS and an exact Laplace score. Prediction artifacts store
+response-scale predictions (used for residuals and comparison metrics)
+alongside separately named link-scale predictions.
 
 ## Visualization definition
 

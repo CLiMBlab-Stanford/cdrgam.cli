@@ -232,13 +232,13 @@
 }
 
 .cdrgam_cli_fit_keys <- c(
-    'family', 'method', 'backend', 'engine', 'history', 'chunk_size',
+    'family', 'link', 'method', 'backend', 'engine', 'history', 'chunk_size',
     'rescale_predictors', 'sparse_control', 'rank_action', 'rank_tol',
     'rank_penalty', 'drop.unused.levels'
 )
 
 .cdrgam_cli_irf_default_keys <- c(
-    'k_l', 'k_t', 'k_p', 'bs_l', 'bs_t', 'bs_p'
+    'knots_l', 'k_l', 'k_t', 'k_p', 'bs_l', 'bs_t', 'bs_p'
 )
 
 .cdrgam_cli_validate_irf_defaults <- function(value, path) {
@@ -280,6 +280,30 @@
             .cdrgam_cli_abort(paste0(path, ': bs_p must not be empty'))
         }
         for (basis in bases) scalar_basis(basis, paste0(path, ': bs_p'))
+    }
+    if ('knots_l' %in% names(value) && !is.null(value$knots_l)) {
+        knots <- unlist(value$knots_l, use.names=FALSE)
+        effective_k <- .cdrgam_cli_null(value$k_l, 10L)
+        if (!is.numeric(knots) || length(knots) != effective_k ||
+                any(!is.finite(knots)) || any(diff(knots) <= 0)) {
+            .cdrgam_cli_abort(paste0(
+                path, ': knots_l must contain exactly k_l strictly ',
+                'increasing finite values'
+            ))
+        }
+        if (identical(.cdrgam_cli_null(value$bs_l, 'cr'), 'ps')) {
+            .cdrgam_cli_abort(paste0(
+                path, ': knots_l is not supported with bs_l ps'
+            ))
+        }
+        if (!is.null(value$window) &&
+                (knots[[1L]] < value$window[[1L]] ||
+                knots[[length(knots)]] > value$window[[2L]])) {
+            .cdrgam_cli_abort(paste0(
+                path, ': knots_l values must lie inside window'
+            ))
+        }
+        value$knots_l <- knots
     }
     invisible(value)
 }
@@ -333,9 +357,44 @@
             path, ': fit.drop.unused.levels must be true or false'
         ))
     }
-    if (!is.null(value$fit$family) &&
-            !(value$fit$family %in% c('gaussian', 'binomial', 'poisson', 'Gamma'))) {
-        .cdrgam_cli_abort(paste0(path, ': unsupported fit.family'))
+    if (!is.null(value$fit$link) && is.null(value$fit$family)) {
+        .cdrgam_cli_abort(paste0(
+            path, ': fit.link requires an explicit fit.family'
+        ))
+    }
+    if (!is.null(value$fit$family)) {
+        resolved_family <- tryCatch(
+            cdrgam::cdrgam_family(value$fit$family, value$fit$link),
+            error=function(error) .cdrgam_cli_abort(paste0(
+                path, ': ', conditionMessage(error)
+            ))
+        )
+        backend <- .cdrgam_cli_null(value$fit$backend, 'mgcv')
+        gaussian_identity <- identical(resolved_family$family, 'gaussian') &&
+            identical(resolved_family$link, 'identity')
+        block_generalized <-
+            (identical(resolved_family$family, 'binomial') &&
+                identical(resolved_family$link, 'logit')) ||
+            (identical(resolved_family$family, 'poisson') &&
+                identical(resolved_family$link, 'log')) ||
+            (identical(resolved_family$family, 'Gamma') &&
+                identical(resolved_family$link, 'log'))
+        if (identical(backend, 'sparse') && !gaussian_identity &&
+                !block_generalized) {
+            .cdrgam_cli_abort(paste0(
+                path, ': fit.backend sparse currently supports ',
+                'gaussian(identity), binomial(logit), poisson(log), ',
+                'or Gamma(log)'
+            ))
+        }
+        if (identical(backend, 'block') && !gaussian_identity &&
+                !block_generalized) {
+            .cdrgam_cli_abort(paste0(
+                path, ': fit.backend block currently supports ',
+                'gaussian(identity), binomial(logit), poisson(log), ',
+                'or Gamma(log)'
+            ))
+        }
     }
     attr(value, 'path') <- path
     value

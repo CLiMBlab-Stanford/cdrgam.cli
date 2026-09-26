@@ -127,50 +127,47 @@
 
 .cdrgam_cli_capture_conditions <- function(expression, path) {
     connection <- file(path, open='at', encoding='UTF-8')
-    on.exit(close(connection), add=TRUE)
+    output_sinks <- sink.number(type='output')
+    message_sinks <- sink.number(type='message')
+    sink(connection, type='output')
+    sink(connection, type='message')
+    on.exit({
+        while (sink.number(type='message') > message_sinks) sink(type='message')
+        while (sink.number(type='output') > output_sinks) sink(type='output')
+        close(connection)
+    }, add=TRUE)
     withCallingHandlers(
         expression,
         message=function(condition) {
             writeLines(paste0(
                 .cdrgam_cli_timestamp(), ' MESSAGE ', conditionMessage(condition)
             ), connection, useBytes=TRUE)
-            cat(conditionMessage(condition), file=stderr())
             invokeRestart('muffleMessage')
         },
         warning=function(condition) {
             writeLines(paste0(
                 .cdrgam_cli_timestamp(), ' WARNING ', conditionMessage(condition)
             ), connection, useBytes=TRUE)
-            cat('Warning: ', conditionMessage(condition), '\n', sep='', file=stderr())
             invokeRestart('muffleWarning')
         }
     )
 }
 
-.cdrgam_cli_diagnostics <- function(fit) {
-    convergence <- if (inherits(fit, 'cdrgam_sparse')) {
-        fit$sparse$convergence
-    } else if (inherits(fit, 'cdrgam_block')) {
-        list(
-            converged=identical(fit$optimizer$convergence, 0L),
-            code=fit$optimizer$convergence,
-            message=.cdrgam_cli_null(fit$optimizer$message, '')
-        )
-    } else {
-        outer_message <- fit$outer.info$conv
-        converged <- if (!is.null(fit$converged)) {
-            isTRUE(fit$converged)
-        } else if (!is.null(outer_message)) {
-            tolower(outer_message) %in% c('full convergence', 'converged')
-        } else TRUE
-        list(
-            converged=converged,
-            code=if (converged) 0L else NA_integer_,
-            message=.cdrgam_cli_null(
-                outer_message, 'native mgcv convergence state'
-            )
-        )
+.cdrgam_cli_start_work_log <- function(definitions, item, started) {
+    path <- .cdrgam_cli_work_log_path(definitions, item$kind, item$name)
+    if (!dir.exists(dirname(path)) &&
+            !dir.create(dirname(path), recursive=TRUE)) {
+        .cdrgam_cli_abort('Could not create the work-item log directory')
     }
+    writeLines(paste0(
+        started, ' START ', item$kind, ' ', item$name,
+        ' [', item$identity, ']'
+    ), path, useBytes=TRUE)
+    path
+}
+
+.cdrgam_cli_diagnostics <- function(fit) {
+    convergence <- cdrgam::fit_diagnostics(fit)
     keep <- c(
         'converged', 'code', 'message', 'total_objective_evaluations',
         'gradient_norm', 'boundary', 'hessian_positive_definite',
@@ -254,7 +251,9 @@
         if (!is.null(value)) arguments[[field]] <- value
     }
     if (backend %in% c('block', 'sparse')) {
-        if (!distributional) arguments$checkpoint <- checkpoint
+        if (!distributional || identical(backend, 'sparse')) {
+            arguments$checkpoint <- checkpoint
+        }
         arguments$solver_trace <- TRUE
         for (field in c('rank_action', 'rank_tol', 'rank_penalty')) {
             value <- fit_control[[field, exact=TRUE]]
@@ -292,9 +291,19 @@
     smooths <- if (is.null(fit_summary$s.table)) {
         data.frame()
     } else {
+        test_status <- fit_summary$s.test
+        if (is.null(test_status) ||
+                length(test_status) != nrow(fit_summary$s.table)) {
+            test_status <- ifelse(
+                is.finite(fit_summary$s.table[, ncol(fit_summary$s.table)]),
+                'approximate',
+                'not computed'
+            )
+        }
         data.frame(
             term=rownames(fit_summary$s.table),
             fit_summary$s.table,
+            test_status=unname(test_status),
             row.names=NULL,
             check.names=FALSE
         )
@@ -486,6 +495,8 @@
     )
     job_id <- Sys.getenv('SLURM_JOB_ID', '')
     if (nzchar(job_id)) metadata$job_id <- job_id
+    log_path <- .cdrgam_cli_start_work_log(definitions, item, started)
+    metadata$log <- .cdrgam_cli_project_relative(definitions, log_path)
     .cdrgam_cli_write_yaml(metadata, file.path(stage, 'attempt.yml'))
     published <- FALSE
     on.exit({
@@ -495,8 +506,10 @@
             .cdrgam_cli_write_yaml(metadata, file.path(stage, 'attempt.yml'))
         }
     }, add=TRUE)
-    message('Running ', item$kind, ' ', item$name, ' -> ', item$identity)
-    log_path <- file.path(stage, 'run.log')
+    message(
+        .cdrgam_cli_timestamp(), ' Running ', item$kind, ' ', item$name,
+        ' -> ', item$identity
+    )
     result <- tryCatch(
         .cdrgam_cli_capture_conditions(switch(
             item$kind,
@@ -521,6 +534,9 @@
     metadata$status <- 'complete'
     metadata$completed_at <- .cdrgam_cli_timestamp()
     .cdrgam_cli_write_yaml(metadata, file.path(stage, 'attempt.yml'))
+    write(paste0(
+        metadata$completed_at, ' COMPLETE ', item$kind, ' ', item$name
+    ), file=log_path, append=TRUE)
     relative_outputs <- setdiff(list.files(
         stage, recursive=TRUE, all.files=FALSE, include.dirs=FALSE
     ), 'manifest.yml')
@@ -531,6 +547,7 @@
         inputs=item$dependencies,
         execution=.cdrgam_cli_execution_envelope(definitions),
         started_at=started, completed_at=.cdrgam_cli_timestamp(),
+        log=.cdrgam_cli_project_relative(definitions, log_path),
         result=result,
         outputs=.cdrgam_cli_output_manifest(stage, relative_outputs)
     )

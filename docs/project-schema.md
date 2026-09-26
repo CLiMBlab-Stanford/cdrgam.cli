@@ -43,14 +43,16 @@ cdrgam-root/
     controller.yml
     scheduler.yml
     scheduler/
+    logs/
+      workers/
     work/
     workers/
 ```
 
 The controller discovery document contains the short-lived scheduler TCP
 endpoint and authentication token. It is created with user-only permissions
-and removed when the scheduler exits. Scheduler and generic worker scripts and
-logs remain as private execution records.
+and removed when the scheduler exits. Scheduler scripts and logs, generic
+worker scripts, and worker lifecycle logs remain as private execution records.
 
 Project-owned references are stored relative to the project root and anchored
 by the generated project ID. Checkout-wide scheduler and worker references are
@@ -78,6 +80,10 @@ names must match:
 
 Underscores are reserved for generated compound labels.
 
+Each subordinate definition is named exclusively by its filename stem. For
+example, `definitions/models/main.yml` defines `main`; it does not contain a
+redundant model identity field.
+
 ## Project layout
 
 ```text
@@ -104,14 +110,19 @@ projects/PROJECT/
   analyses/
     ANALYSIS/
   .cdrgam/
+    logs/
+      KIND/
+        WORKLOAD.log
     work/
 ```
 
 Definitions are user-owned inputs. The other top-level directories contain
 published artifacts and may be recreated. Attempts and checkpoints live under
 the project's `.cdrgam/work` directory so that large temporary files share the
-artifact filesystem. Checkout-wide request records, scheduler scripts, worker
-scripts, and scheduler logs remain under the root-level `.cdrgam` directory.
+artifact filesystem. Each logical work item has one project-private process
+log that is overwritten when that workload starts again. Checkout-wide request
+records, scheduler scripts, worker scripts, scheduler logs, and one lifecycle
+log per generic worker remain under the root-level `.cdrgam` directory.
 
 ## Project definition
 
@@ -135,6 +146,8 @@ If validation fails or the editor exits with an error, the edited content is
 saved under the project's `.cdrgam/drafts/` directory. Running the same command
 reopens that draft. Successful publication removes it. Site drafts use the
 checkout's `.cdrgam/drafts/` directory.
+Closing the editor without saving cancels the edit: no target is published and
+no draft is created.
 
 `cdrgam def edit DESTINATION --source SOURCE` creates a new project ID and copies
 the source project's complete `definitions/` tree. It does not copy
@@ -144,15 +157,37 @@ are preserved and may therefore need editing in the destination project.
 
 With a definition selector, `--source` instead initializes a new definition
 of the selected type in the target project. For example,
-`cdrgam def edit brown --model alternative --source main` copies `main.yml` to
-`alternative.yml` and changes its `model` field to `alternative`. The source
-and target must belong to the same project and the target must not exist.
+`cdrgam def edit brown --model alternative --source main` opens a staged copy
+of `main.yml` in the editor and publishes it as `alternative.yml` after
+validation. Staging copies the source bytes directly, preserving comments and
+formatting unless the editor changes them. The source and target must belong
+to the same project and the target must not exist.
 
-`cdrgam def del PROJECT --TYPE NAME` deletes one subordinate definition. It
-does not delete site or project definitions, generated results, or referenced
+The filename stem is the sole name of a dataset, model, visualization, or
+comparison definition. For example, `definitions/models/main.yml` defines the
+model named `main`; subordinate definitions must omit redundant `dataset`,
+`model`, `visualization`, and `comparison` identity fields. A `model` field in
+a visualization remains an upstream model reference, rather than the
+visualization's own name.
+
+`cdrgam def rm PROJECT --TYPE NAME` removes one subordinate definition. It
+does not remove site or project definitions, generated results, or referenced
 definitions. If results exist, the diagnostic provides the matching
-`cdrgam purge` command to run before retrying deletion. `cdrgam purge` never
-selects files beneath `definitions/`.
+`cdrgam purge` command to run before retrying removal. `cdrgam purge` never
+selects files beneath `definitions/`. Removal selects targets by filename and
+does not parse or validate their contents. It parses only the fields of other
+definitions needed to identify references; those references still prevent
+removal. An unreadable definition that could refer to the target also prevents
+removal because dependency safety cannot be established.
+
+Bare `cdrgam def ls` lists every available project in the checkout.
+`cdrgam def ls PROJECT` lists the project definition and every subordinate
+definition. Dataset, model, visualization, and comparison selectors accept
+multiple names and `*` patterns. Multiple selector types may be combined; the
+result contains the matching definitions from each supplied type. Listing
+uses definition filenames and does not require the YAML contents to validate.
+A selector without values selects every definition of that type, as in
+`cdrgam def ls brown --model`.
 
 `cdrgam def val PROJECT` validates the complete project. A definition selector
 validates only that definition and its direct prerequisites, so an unrelated
@@ -162,14 +197,13 @@ the checkout configuration.
 
 Definition selectors accept multiple values after one option, or through a
 repeated option. `def edit` treats each value as a literal definition name and
-opens the files in order. `def val` and `def del` accept `*` patterns and apply
-to every match. Deletion checks every match before removing any file.
+opens the files in order. `def ls`, `def val`, and `def rm` accept `*` patterns
+and apply to every match. Removal checks every match before removing any file.
 
 ## Dataset definition
 
 ```yaml
 schema: 1
-dataset: brown-train
 sources:
   impulses:
     path: data/impulses.csv
@@ -238,7 +272,6 @@ dataset identity.
 
 ```yaml
 schema: 1
-model: main
 datasets:
   train: brown-train
   val: brown-val
@@ -265,6 +298,11 @@ model-internal prediction partitions. A prediction selector first resolves as
 a partition key and then, if no key matches, as an exact dataset definition.
 The resolved dataset name—not its partition alias—appears in the artifact path
 and identity.
+
+Formula values may use YAML block syntax for readability. The harness parses
+and deparses each formula into a single canonical string in the resolved model
+definition, so line wrapping and indentation do not affect artifact identity.
+The YAML file itself retains the user's formatting.
 
 `window` is optional and supplies the default lag window for every IRF in the
 model. Every impulse in the applicable series and window contributes to the
@@ -325,7 +363,6 @@ distributional formulas.
 
 ```yaml
 schema: 1
-visualization: main-effects
 model: main
 query:
   terms:
@@ -425,7 +462,6 @@ The legacy default model booklet remains available explicitly:
 
 ```yaml
 schema: 1
-visualization: diagnostic-booklet
 model: main
 kind: booklet
 pages: 1
@@ -435,7 +471,6 @@ pages: 1
 
 ```yaml
 schema: 1
-comparison: alternatives
 models: [baseline, main]
 evaluation:
   dataset: test
@@ -480,8 +515,12 @@ output checksums. Reuse requires both identity equality and valid checksums.
 The registry retains one current identity and one last-run attempt for each
 logical workload. Replacing an identity removes its inactive attempt and any
 registered downstream work that depended on it. An active workload must finish
-or fail before a new identity can replace it. Private work logs follow the same
-retention rule.
+or fail before a new identity can replace it. Each logical workload has one
+process log, regardless of identity or attempt count; a restart truncates that
+log before execution. Each generic worker has one lifecycle log containing its
+timestamped sequence of claimed, completed, and failed work items. `cdrgam log`
+shows work-item logs, including live logs, while `cdrgam log --worker` shows
+worker lifecycle logs.
 
 In local mode the request graph executes serially, with each work item in an
 isolated R process. In Slurm mode an ephemeral `cdrgam-scheduler` job is the

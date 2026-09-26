@@ -74,17 +74,9 @@ cdrgam_cli_validate <- function(projects=NULL, deep=FALSE, checkout=NULL) {
             visualization=.cdrgam_cli_validate_visualization(value, path),
             comparison=.cdrgam_cli_validate_comparison(value, path)
         )
-        identity_field <- switch(
-            kind, dataset='dataset', model='model',
-            visualization='visualization', comparison='comparison'
+        .cdrgam_cli_assign_definition_identity(
+            validated, kind, definition_name, path
         )
-        if (!identical(validated[[identity_field]], definition_name)) {
-            .cdrgam_cli_abort(paste0(
-                path, ': ', identity_field, ' must match the file name ',
-                sQuote(definition_name)
-            ))
-        }
-        validated
     }
     read_dataset <- function(dataset_name) {
         if (!exists(dataset_name, envir=datasets, inherits=FALSE)) {

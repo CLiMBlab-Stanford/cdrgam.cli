@@ -2,7 +2,6 @@
         definitions, kind, name=NULL, dataset=NULL, product=NULL, identity=NULL
 ) {
     root <- definitions$root
-    project <- definitions$project$project$name
     configuration <- definitions$checkout
     if (identical(kind, 'dataset')) {
         parts <- c(root, 'datasets', name)
@@ -21,9 +20,7 @@
         if (!is.null(name)) parts <- c(parts, name)
         if (!is.null(identity)) parts <- c(parts, identity)
     } else if (identical(kind, 'log')) {
-        parts <- c(configuration$cdrgam_root, '.cdrgam', 'logs', project)
-        if (!is.null(name)) parts <- c(parts, name)
-        if (!is.null(identity)) parts <- c(parts, identity)
+        parts <- c(root, '.cdrgam', 'logs')
     } else if (identical(kind, 'registry')) {
         parts <- c(configuration$cdrgam_root, '.cdrgam', 'registry.sqlite3')
     } else if (identical(kind, 'controller')) {
@@ -42,6 +39,39 @@
     allowed <- c(root, file.path(configuration$cdrgam_root, '.cdrgam'))
     if (!any(vapply(allowed, function(parent) .cdrgam_cli_within(path, parent), logical(1)))) {
         .cdrgam_cli_abort('Managed path escapes the configured roots')
+    }
+    path
+}
+
+.cdrgam_cli_work_log_path <- function(definitions, kind, name) {
+    kind <- .cdrgam_cli_scalar_character(kind, 'work log kind')
+    name <- .cdrgam_cli_scalar_character(name, 'work log name')
+    if (!(kind %in% c(
+            'fit', 'prediction', 'effect', 'visualization',
+            'comparison', 'analysis'
+        )) || basename(name) != name || name %in% c('.', '..')) {
+        .cdrgam_cli_abort('Work log kind and name must be safe path components')
+    }
+    path <- file.path(
+        definitions$root, '.cdrgam', 'logs', kind, paste0(name, '.log')
+    )
+    if (!.cdrgam_cli_within(path, definitions$root)) {
+        .cdrgam_cli_abort('Work log path escapes its project root')
+    }
+    path
+}
+
+.cdrgam_cli_worker_log_path <- function(configuration, worker_id) {
+    worker_id <- .cdrgam_cli_scalar_character(worker_id, 'worker ID')
+    if (basename(worker_id) != worker_id || worker_id %in% c('.', '..')) {
+        .cdrgam_cli_abort('Worker ID must be one safe path component')
+    }
+    path <- file.path(
+        configuration$cdrgam_root, '.cdrgam', 'logs', 'workers',
+        paste0(worker_id, '.log')
+    )
+    if (!.cdrgam_cli_within(path, configuration$cdrgam_root)) {
+        .cdrgam_cli_abort('Worker log path escapes cdrgam_root')
     }
     path
 }
@@ -129,7 +159,8 @@
 }
 
 .cdrgam_cli_managed_resolve <- function(
-        configuration, path, field='managed path', must_work=FALSE
+        configuration, path, field='managed path', must_work=FALSE,
+        project_roots=NULL
 ) {
     path <- .cdrgam_cli_scalar_character(path, field)
     prefix <- 'cdrgam-project://'
@@ -145,7 +176,10 @@
             any(strsplit(relative, '[/\\\\]')[[1L]] == '..')) {
         .cdrgam_cli_abort(paste0(field, ' is not a valid project-relative path'))
     }
-    root <- .cdrgam_cli_project_roots(configuration)[[id]]
+    if (is.null(project_roots)) {
+        project_roots <- .cdrgam_cli_project_roots(configuration)
+    }
+    root <- project_roots[[id]]
     if (is.null(root)) {
         .cdrgam_cli_abort(paste0(field, ' refers to unknown project.id ', sQuote(id)))
     }

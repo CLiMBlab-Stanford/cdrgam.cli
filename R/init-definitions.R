@@ -14,7 +14,6 @@
     if (identical(type, 'dataset')) {
         return(list(
             schema=1L,
-            dataset=name,
             sources=list(
                 impulses=list(
                     path=file.path('data', paste0(name, '-impulses.rds')), format='rds'
@@ -34,7 +33,6 @@
             'choose-dataset'
         return(list(
             schema=1L,
-            model=name,
             datasets=list(train=training),
             window=c(0, 2),
             k_l=10L,
@@ -46,7 +44,7 @@
         models <- names(definitions$models)
         model <- if (length(models) == 1L) models[[1L]] else 'choose-model'
         return(list(
-            schema=1L, visualization=name, model=model,
+            schema=1L, model=model,
             query=list(
                 terms=list(predictors='*', grouped=FALSE),
                 composition='total', grouping='population',
@@ -71,7 +69,6 @@
             c('choose-model-one', 'choose-model-two')
         return(list(
             schema=1L,
-            comparison=name,
             models=selected,
             methods='mse'
         ))
@@ -103,7 +100,8 @@
 }
 
 .cdrgam_cli_edit_yaml <- function(
-        target, initial=NULL, validate, editor=NULL, draft=NULL
+        target, initial=NULL, validate, editor=NULL, draft=NULL,
+        initial_path=NULL
 ) {
     directory <- dirname(target)
     if (!dir.exists(directory) && !dir.create(directory, recursive=TRUE)) {
@@ -113,17 +111,41 @@
         paste0('.', basename(target), '-'), tmpdir=directory, fileext='.yml'
     )
     on.exit(unlink(temporary, force=TRUE), add=TRUE)
-    source <- if (!is.null(draft) && file.exists(draft)) draft else target
-    if (file.exists(source)) {
+    recovering_draft <- !is.null(draft) && file.exists(draft)
+    source <- if (recovering_draft) {
+        draft
+    } else if (file.exists(target)) {
+        target
+    } else {
+        initial_path
+    }
+    if (!is.null(source)) {
+        if (!file.exists(source)) {
+            .cdrgam_cli_abort(paste0('Initial definition does not exist: ', source))
+        }
         if (!file.copy(source, temporary, overwrite=TRUE)) {
             .cdrgam_cli_abort(paste0('Could not stage ', sQuote(source)))
         }
-        if (!identical(source, target)) message('Recovered draft from ', draft)
+        if (recovering_draft) message('Recovered draft from ', draft)
     } else {
         yaml::write_yaml(initial, temporary)
     }
-    tryCatch({
+    baseline_time <- Sys.time() - 2
+    Sys.setFileTime(temporary, baseline_time)
+    baseline_hash <- .cdrgam_cli_source_hash(temporary)
+    baseline_mtime <- file.info(temporary)$mtime
+    editor_error <- tryCatch({
         .cdrgam_cli_run_editor(temporary, editor)
+        NULL
+    }, error=identity)
+    saved <- !identical(.cdrgam_cli_source_hash(temporary), baseline_hash) ||
+        !identical(file.info(temporary)$mtime, baseline_mtime)
+    if (!saved) {
+        if (inherits(editor_error, 'error')) stop(editor_error)
+        return(invisible(FALSE))
+    }
+    tryCatch({
+        if (inherits(editor_error, 'error')) stop(editor_error)
         validate(temporary)
     }, error=function(error) {
         if (is.null(draft)) stop(error)
@@ -151,7 +173,7 @@
         }
     })
     if (!is.null(draft) && file.exists(draft)) unlink(draft, force=TRUE)
-    invisible(target)
+    invisible(TRUE)
 }
 
 .cdrgam_cli_validate_definition_candidate <- function(
@@ -167,15 +189,9 @@
         visualization=.cdrgam_cli_validate_visualization(value, path),
         comparison=.cdrgam_cli_validate_comparison(value, path)
     )
-    identity_field <- switch(
-        type, dataset='dataset', model='model',
-        visualization='visualization', comparison='comparison'
+    validated <- .cdrgam_cli_assign_definition_identity(
+        validated, type, name, path
     )
-    if (!identical(validated[[identity_field]], name)) {
-        .cdrgam_cli_abort(paste0(
-            path, ': ', identity_field, ' must remain ', sQuote(name)
-        ))
-    }
     if (identical(type, 'model')) {
         missing <- setdiff(unlist(validated$datasets, use.names=FALSE),
             names(definitions$datasets))
@@ -198,18 +214,40 @@
     invisible(validated)
 }
 
+.cdrgam_cli_definition_edit_context <- function(root) {
+    catalog <- function(directory) {
+        files <- .cdrgam_cli_definition_files(root, directory)
+        names <- sub('\\.ya?ml$', '', basename(files))
+        stats::setNames(vector('list', length(names)), names)
+    }
+    list(
+        root=root,
+        datasets=catalog('datasets'),
+        models=catalog('models')
+    )
+}
+
 .cdrgam_cli_define_definition <- function(
         project, type, name, source=NULL, checkout=NULL, editor=NULL
 ) {
     name <- .cdrgam_cli_name(name, paste0(type, ' name'))
-    definitions <- .cdrgam_cli_read_definitions(
-        project, check_sources=FALSE, checkout=checkout
-    )
-    target <- .cdrgam_cli_definition_target(definitions$root, type, name)
+    root <- find_cdrgam_project(project, checkout)
+    target <- .cdrgam_cli_definition_target(root, type, name)
+    if (is.null(source) && file.exists(target)) {
+        definitions <- .cdrgam_cli_definition_edit_context(root)
+        saved <- .cdrgam_cli_edit_yaml(
+            target,
+            validate=function(path) .cdrgam_cli_validate_definition_candidate(
+                type, name, path, definitions
+            ),
+            editor=editor,
+            draft=.cdrgam_cli_draft_path(root, type, name)
+        )
+        message(if (saved) 'Updated ' else 'No changes to ', type,
+            ' definition at ', target)
+        return(invisible(target))
+    }
     if (!is.null(source)) {
-        if (!is.null(editor)) {
-            .cdrgam_cli_abort('source cannot be combined with editor')
-        }
         source <- .cdrgam_cli_name(source, paste0('source ', type, ' name'))
         if (file.exists(target)) {
             .cdrgam_cli_abort(paste0(
@@ -217,54 +255,43 @@
             ))
         }
         source_path <- .cdrgam_cli_definition_target(
-            definitions$root, type, source
+            root, type, source
         )
         if (!file.exists(source_path)) {
             .cdrgam_cli_abort(paste0(
                 'Source ', type, ' definition does not exist: ', source
             ))
         }
-        value <- .cdrgam_cli_read_yaml(source_path)
-        identity_field <- switch(
-            type, dataset='dataset', model='model',
-            visualization='visualization', comparison='comparison'
-        )
-        value[[identity_field]] <- name
-        .cdrgam_cli_write_yaml(value, target)
-        complete <- FALSE
-        on.exit({
-            if (!complete) unlink(target, force=TRUE)
-        }, add=TRUE)
-        .cdrgam_cli_read_definitions(
-            project, check_sources=FALSE, checkout=checkout
-        )
-        complete <- TRUE
-        message(
-            'Copied ', type, ' definition ', source, ' to ', name, ' at ',
-            target
-        )
-        return(invisible(target))
-    }
-    if (file.exists(target)) {
-        .cdrgam_cli_edit_yaml(
+        definitions <- .cdrgam_cli_definition_edit_context(root)
+        saved <- .cdrgam_cli_edit_yaml(
             target,
             validate=function(path) .cdrgam_cli_validate_definition_candidate(
                 type, name, path, definitions
             ),
             editor=editor,
-            draft=.cdrgam_cli_draft_path(
-                definitions$root, type, name
-            )
+            draft=.cdrgam_cli_draft_path(root, type, name),
+            initial_path=source_path
         )
-        message('Updated ', type, ' definition at ', target)
+        if (saved) {
+            message(
+                'Initialized ', type, ' definition ', name, ' from ', source,
+                ' at ', target
+            )
+        } else {
+            message('No definition created for ', type, ' ', name)
+        }
         return(invisible(target))
     }
+    definitions <- .cdrgam_cli_read_definitions(
+        project, check_sources=FALSE, checkout=checkout
+    )
+    target <- .cdrgam_cli_definition_target(definitions$root, type, name)
     value <- .cdrgam_cli_starter_definition(type, name, definitions)
     unresolved <- any(grepl(
         '^choose-', unlist(value, use.names=FALSE), perl=TRUE
     ))
     if (unresolved) {
-        .cdrgam_cli_edit_yaml(
+        saved <- .cdrgam_cli_edit_yaml(
             target, value,
             validate=function(path) .cdrgam_cli_validate_definition_candidate(
                 type, name, path, definitions
@@ -274,6 +301,10 @@
                 definitions$root, type, name
             )
         )
+        if (!saved) {
+            message('No definition created for ', type, ' ', name)
+            return(invisible(target))
+        }
     } else {
         .cdrgam_cli_write_yaml(value, target)
     }
@@ -287,20 +318,55 @@
     invisible(target)
 }
 
-.cdrgam_cli_definition_references <- function(definitions, type, name) {
+.cdrgam_cli_reference_definitions <- function(root, directory, target) {
+    files <- .cdrgam_cli_definition_files(root, directory)
+    values <- lapply(files, function(path) {
+        value <- tryCatch(
+            .cdrgam_cli_read_yaml(path),
+            error=function(error) .cdrgam_cli_abort(paste0(
+                'Cannot determine whether ', sQuote(target),
+                ' can be removed because ', sQuote(path),
+                ' could not be read: ', conditionMessage(error)
+            ))
+        )
+        if (!is.list(value)) {
+            .cdrgam_cli_abort(paste0(
+                'Cannot determine whether ', sQuote(target),
+                ' can be removed because ', sQuote(path),
+                ' is not a definition mapping'
+            ))
+        }
+        value
+    })
+    names(values) <- sub('\\.ya?ml$', '', basename(files))
+    values
+}
+
+.cdrgam_cli_definition_references <- function(root, type, name) {
     if (identical(type, 'dataset')) {
+        definitions <- .cdrgam_cli_reference_definitions(
+            root, 'models', paste('dataset', name)
+        )
         models <- names(Filter(function(model) {
-            name %in% unlist(model$datasets, use.names=FALSE)
-        }, definitions$models))
+            name %in% as.character(unlist(model$datasets, use.names=FALSE))
+        }, definitions))
         return(if (length(models)) paste0('model ', models) else character())
     }
     if (identical(type, 'model')) {
+        visualizations <- .cdrgam_cli_reference_definitions(
+            root, 'visualizations', paste('model', name)
+        )
+        comparisons <- .cdrgam_cli_reference_definitions(
+            root, 'comparisons', paste('model', name)
+        )
         visualizations <- names(Filter(function(visualization) {
-            identical(visualization$model, name)
-        }, definitions$visualizations))
+            name %in% as.character(unlist(
+                visualization$model, use.names=FALSE
+            ))
+        }, visualizations))
         comparisons <- names(Filter(function(comparison) {
-            name %in% comparison$models
-        }, definitions$comparisons))
+            name %in% as.character(unlist(comparison$models, use.names=FALSE))
+        }, comparisons))
         return(c(
             if (length(visualizations)) {
                 paste0('visualization ', visualizations)
@@ -313,16 +379,25 @@
     character()
 }
 
-.cdrgam_cli_definition_artifact <- function(definitions, type, name) {
+.cdrgam_cli_definition_artifacts <- function(definitions, type, name) {
     switch(
         type,
         dataset=.cdrgam_cli_path(definitions, 'dataset', name),
         model=.cdrgam_cli_path(definitions, 'model', name),
         visualization={
-            model <- definitions$visualizations[[name]]$model
-            .cdrgam_cli_path(
-                definitions, 'visualization', model, dataset=name
-            )
+            models_root <- file.path(definitions$root, 'models')
+            model_names <- if (dir.exists(models_root)) {
+                basename(list.dirs(
+                    models_root, recursive=FALSE, full.names=TRUE
+                ))
+            } else {
+                character()
+            }
+            vapply(model_names, function(model) {
+                .cdrgam_cli_path(
+                    definitions, 'visualization', model, dataset=name
+                )
+            }, character(1))
         },
         comparison=.cdrgam_cli_path(definitions, 'comparison', name)
     )
@@ -354,48 +429,167 @@
     result$n[[1L]] > 0L
 }
 
-.cdrgam_cli_delete_definitions <- function(
+.cdrgam_cli_list_definitions <- function(
+        project, selectors=list(), checkout=NULL
+) {
+    supported <- c('dataset', 'model', 'visualization', 'comparison')
+    unexpected <- setdiff(names(selectors), supported)
+    if (length(unexpected)) {
+        .cdrgam_cli_abort(paste0(
+            'Unsupported definition selectors: ',
+            paste(unexpected, collapse=', ')
+        ))
+    }
+    if (is.null(project)) {
+        if (length(selectors)) {
+            .cdrgam_cli_abort(
+                'Definition selectors require one project name'
+            )
+        }
+        configuration <- .cdrgam_cli_checkout(checkout, create_root=TRUE)
+        projects_root <- file.path(configuration$cdrgam_root, 'projects')
+        available <- if (dir.exists(projects_root)) {
+            basename(list.dirs(
+                projects_root, recursive=FALSE, full.names=TRUE
+            ))
+        } else {
+            character()
+        }
+        available <- sort(available[vapply(available, function(name) {
+            tryCatch({
+                .cdrgam_cli_name(name, 'project')
+                file.exists(file.path(projects_root, name, .cdrgam_cli_marker))
+            }, error=function(error) FALSE)
+        }, logical(1))])
+        paths <- vapply(available, function(name) {
+            marker <- file.path(
+                .cdrgam_cli_project_root(name, checkout, must_work=FALSE),
+                .cdrgam_cli_marker
+            )
+            as.character(fs::path_rel(
+                marker, start=configuration$cdrgam_root
+            ))
+        }, character(1))
+        output <- data.frame(
+            type=rep('project', length(available)),
+            name=available, path=paths, stringsAsFactors=FALSE
+        )
+        print(output, row.names=FALSE)
+        return(invisible(output))
+    }
+    if (identical(project, 'site')) {
+        if (length(selectors)) {
+            .cdrgam_cli_abort('def ls site does not accept definition selectors')
+        }
+        checkout_root <- .cdrgam_cli_checkout_root(checkout)
+        output <- data.frame(
+            type='site', name='site',
+            path=as.character(fs::path_rel(
+                file.path(checkout_root, .cdrgam_cli_checkout_marker),
+                start=checkout_root
+            )),
+            stringsAsFactors=FALSE
+        )
+        print(output, row.names=FALSE)
+        return(invisible(output))
+    }
+    project <- .cdrgam_cli_name(project, 'project')
+    root <- find_cdrgam_project(project, checkout)
+    selected_types <- if (length(selectors)) names(selectors) else supported
+    rows <- list()
+    if (!length(selectors)) {
+        rows[[length(rows) + 1L]] <- data.frame(
+            type='project', name=project, path=.cdrgam_cli_marker,
+            stringsAsFactors=FALSE
+        )
+    }
+    directories <- c(
+        dataset='datasets', model='models',
+        visualization='visualizations', comparison='comparisons'
+    )
+    for (type in selected_types) {
+        files <- .cdrgam_cli_definition_files(root, directories[[type]])
+        available <- sub('\\.ya?ml$', '', basename(files))
+        names <- if (length(selectors)) {
+            .cdrgam_cli_match_names(selectors[[type]], available, type)
+        } else {
+            available
+        }
+        if (!length(names)) next
+        targets <- vapply(names, function(name) {
+            .cdrgam_cli_definition_target(root, type, name)
+        }, character(1))
+        rows[[length(rows) + 1L]] <- data.frame(
+            type=type, name=names,
+            path=vapply(targets, function(path) {
+                as.character(fs::path_rel(path, start=root))
+            }, character(1)),
+            stringsAsFactors=FALSE
+        )
+    }
+    output <- do.call(rbind, rows)
+    rownames(output) <- NULL
+    print(output, row.names=FALSE)
+    invisible(output)
+}
+
+.cdrgam_cli_remove_definitions <- function(
         project, type, names, checkout=NULL
 ) {
-    definitions <- .cdrgam_cli_read_definitions(
-        project, check_sources=FALSE, checkout=checkout
+    root <- find_cdrgam_project(project, checkout)
+    directory <- switch(
+        type,
+        dataset='datasets', model='models',
+        visualization='visualizations', comparison='comparisons'
     )
-    available <- names(definitions[[paste0(type, 's')]])
+    files <- .cdrgam_cli_definition_files(root, directory)
+    available <- sub('\\.ya?ml$', '', basename(files))
     names <- .cdrgam_cli_match_names(names, available, type)
     targets <- vapply(names, function(name) {
-        .cdrgam_cli_definition_target(definitions$root, type, name)
+        .cdrgam_cli_definition_target(root, type, name)
     }, character(1))
+    project_path <- file.path(root, .cdrgam_cli_marker)
+    project_definition <- .cdrgam_cli_validate_project(
+        .cdrgam_cli_read_yaml(project_path), project_path
+    )
+    project_definition$project$name <- basename(root)
+    definitions <- list(
+        root=root, project=project_definition,
+        checkout=.cdrgam_cli_checkout(checkout)
+    )
     for (name in names) {
         references <- .cdrgam_cli_definition_references(
-            definitions, type, name
+            root, type, name
         )
         if (length(references)) {
             .cdrgam_cli_abort(paste0(
-                'Cannot delete ', type, ' definition ', sQuote(name),
+                'Cannot remove ', type, ' definition ', sQuote(name),
                 '; it is referenced by: ', paste(references, collapse=', '),
-                '. Delete or edit those definitions first.'
+                '. Remove or edit those definitions first.'
             ))
         }
-        artifact <- .cdrgam_cli_definition_artifact(definitions, type, name)
-        if (file.exists(artifact)) {
+        artifacts <- .cdrgam_cli_definition_artifacts(definitions, type, name)
+        existing_artifacts <- artifacts[file.exists(artifacts)]
+        if (length(existing_artifacts)) {
             command <- .cdrgam_cli_definition_purge_command(
                 project, type, name
             )
             .cdrgam_cli_abort(paste0(
-                'Cannot delete ', type, ' definition ', sQuote(name),
-                ' while results exist at ', artifact, '. First run `',
+                'Cannot remove ', type, ' definition ', sQuote(name),
+                ' while results exist at ',
+                paste(existing_artifacts, collapse=', '), '. First run `',
                 command, '`, then retry this command.'
             ))
         }
     }
     if (.cdrgam_cli_project_has_active_work(definitions)) {
         .cdrgam_cli_abort(
-            'Cannot delete definitions while this project has active work'
+            'Cannot remove definitions while this project has active work'
         )
     }
-    staged <- tempfile('.deleted-definitions-', tmpdir=dirname(targets[[1L]]))
+    staged <- tempfile('.removed-definitions-', tmpdir=dirname(targets[[1L]]))
     if (!dir.create(staged)) {
-        .cdrgam_cli_abort('Could not create a definition deletion stage')
+        .cdrgam_cli_abort('Could not create a definition removal stage')
     }
     staged_targets <- file.path(staged, basename(targets))
     moved <- logical(length(targets))
@@ -415,14 +609,11 @@
                 targets[[index]], staged_targets[[index]]
         )) {
             .cdrgam_cli_abort(paste0(
-                'Could not stage definition deletion: ', targets[[index]]
+                'Could not stage definition removal: ', targets[[index]]
             ))
         }
         moved[[index]] <- TRUE
     }
-    .cdrgam_cli_read_definitions(
-        project, check_sources=FALSE, checkout=checkout
-    )
     if (!unlink(staged, recursive=TRUE, force=FALSE) && dir.exists(staged)) {
         .cdrgam_cli_abort(paste0(
             'Could not remove staged definitions: ', staged
@@ -430,7 +621,7 @@
     }
     complete <- TRUE
     message(
-        'Deleted ', length(names), ' ', type,
+        'Removed ', length(names), ' ', type,
         if (length(names) == 1L) ' definition: ' else ' definitions: ',
         paste(names, collapse=', ')
     )
@@ -462,7 +653,7 @@
         ),
         concurrency=1L
     )
-    .cdrgam_cli_edit_yaml(
+    saved <- .cdrgam_cli_edit_yaml(
         target, initial,
         validate=function(path) .cdrgam_cli_validate_checkout(
             .cdrgam_cli_read_yaml(path), path
@@ -470,33 +661,38 @@
         editor=editor,
         draft=.cdrgam_cli_draft_path(checkout, 'site', 'checkout')
     )
+    if (!saved && !file.exists(target)) {
+        message('No site definition created')
+        return(invisible(target))
+    }
     options(cdrgam.cli.checkout=checkout)
     .cdrgam_cli_checkout(checkout, create_root=TRUE)
-    message('Updated site definition at ', target)
+    message(if (saved) 'Updated' else 'No changes to', ' site definition at ', target)
     invisible(target)
 }
 
-#' Create, edit, copy, or delete CDR-GAM definitions
+#' Create, edit, copy, or remove CDR-GAM definitions
 #'
 #' @param project Project name, or `"site"` for checkout configuration.
 #' @param type Optional definition type.
 #' @param name One or more definition names when `type` is supplied. Validation
-#'   and deletion accept `*` patterns; editing treats names literally.
+#'   and removal accept `*` patterns; editing treats names literally.
 #' @param source Optional source project or subordinate definition name. The
-#'   source is copied to the requested target without generated artifacts.
+#'   source initializes the requested target without generated artifacts;
+#'   subordinate definitions are opened in the editor before publication.
 #' @param operation Either `"edit"` to create or edit a definition, or
-#'   `"del"` to delete a subordinate definition after safety checks, or
+#'   `"rm"` to remove a subordinate definition after safety checks, or
 #'   `"val"` to validate definitions without changing them.
 #' @param deep Whether `operation="val"` should read data and prepare model
 #'   designs.
 #' @param checkout Configured harness instance directory.
 #' @param editor Editor command or callback. The default uses `VISUAL`, then
 #'   `EDITOR`, then the R `editor` option.
-#' @return The created, updated, or deleted path, invisibly.
+#' @return The created, updated, or removed path, invisibly.
 #' @export
 cdrgam_cli_def <- function(
         project=NULL, type=NULL, name=NULL, source=NULL,
-        checkout=NULL, editor=NULL, operation=c('edit', 'del', 'val'),
+        checkout=NULL, editor=NULL, operation=c('edit', 'rm', 'val'),
         deep=FALSE
 ) {
     operation <- match.arg(operation)
@@ -505,17 +701,17 @@ cdrgam_cli_def <- function(
         .cdrgam_cli_abort('deep applies only to def val')
     }
     project <- .cdrgam_cli_scalar_character(project, 'project')
-    if (identical(operation, 'del')) {
+    if (identical(operation, 'rm')) {
         if (identical(project, 'site')) {
-            .cdrgam_cli_abort('def del does not delete checkout configuration')
+            .cdrgam_cli_abort('def rm does not remove checkout configuration')
         }
         if (is.null(type) || is.null(name)) {
             .cdrgam_cli_abort(
-                'def del requires exactly one subordinate definition selector'
+                'def rm requires exactly one subordinate definition selector'
             )
         }
         if (!is.null(source) || !is.null(editor)) {
-            .cdrgam_cli_abort('def del does not accept source or editor')
+            .cdrgam_cli_abort('def rm does not accept source or editor')
         }
     }
     if (identical(project, 'site')) {
@@ -590,7 +786,7 @@ cdrgam_cli_def <- function(
         original <- .cdrgam_cli_validate_project(
             .cdrgam_cli_read_yaml(target), target
         )
-        .cdrgam_cli_edit_yaml(
+        saved <- .cdrgam_cli_edit_yaml(
             target,
             validate=function(path) {
                 candidate <- .cdrgam_cli_validate_project(
@@ -605,11 +801,12 @@ cdrgam_cli_def <- function(
             editor=editor,
             draft=.cdrgam_cli_draft_path(root, 'project', 'project')
         )
-        message('Updated project definition at ', target)
+        message(if (saved) 'Updated' else 'No changes to',
+            ' project definition at ', target)
         return(invisible(target))
     }
-    if (identical(operation, 'del')) {
-        return(.cdrgam_cli_delete_definitions(
+    if (identical(operation, 'rm')) {
+        return(.cdrgam_cli_remove_definitions(
             project, type, name, checkout
         ))
     }

@@ -1,6 +1,42 @@
 library(cdrgam)
 library(cdrgam.cli)
 
+root_help <- paste(capture.output(
+    stopifnot(identical(cli_main('--help'), 0L))
+), collapse='\n')
+short_help <- paste(capture.output(
+    stopifnot(identical(cli_main('-h'), 0L))
+), collapse='\n')
+help_command <- paste(capture.output(
+    stopifnot(identical(cli_main('help'), 0L))
+), collapse='\n')
+run_help <- paste(capture.output(
+    stopifnot(identical(cli_main(c('run', '--help')), 0L))
+), collapse='\n')
+def_help <- paste(capture.output(
+    stopifnot(identical(cli_main(c('def', '--help')), 0L))
+), collapse='\n')
+edit_help <- paste(capture.output(
+    stopifnot(identical(cli_main(c('help', 'def', 'edit')), 0L))
+), collapse='\n')
+stopifnot(
+    identical(root_help, short_help),
+    identical(root_help, help_command),
+    grepl('Usage: cdrgam <COMMAND>', root_help, fixed=TRUE),
+    grepl('Commands:', root_help, fixed=TRUE),
+    !grepl('scheduler', root_help, fixed=TRUE),
+    !grepl('worker', root_help, fixed=TRUE),
+    grepl('Usage: cdrgam run', run_help, fixed=TRUE),
+    grepl('-P, --project PROJECT ...', run_help, fixed=TRUE),
+    grepl('--dry-run', run_help, fixed=TRUE),
+    grepl('edit', def_help, fixed=TRUE),
+    grepl('ls', def_help, fixed=TRUE),
+    grepl('rm', def_help, fixed=TRUE),
+    grepl('val', def_help, fixed=TRUE),
+    grepl('Usage: cdrgam def edit TARGET', edit_help, fixed=TRUE),
+    grepl('--source SOURCE', edit_help, fixed=TRUE)
+)
+
 temporary_parent <- tempfile('cdrgam-cli-test-')
 dir.create(temporary_parent)
 if (!nzchar(Sys.getenv('CDRGAM_TEST_KEEP', ''))) {
@@ -15,7 +51,44 @@ cdrgam_cli_configure(checkout, root, concurrency=2L)
 options(cdrgam.cli.checkout=checkout)
 
 internal <- function(name) getFromNamespace(name, 'cdrgam.cli')
+nonconverged_distributional_fit <- structure(list(
+    converged=FALSE,
+    optimizer=list(
+        convergence=1L,
+        message='test distributional nonconvergence',
+        gradient=c(0.25, -0.5)
+    ),
+    distributional=list(evaluations=12L, gradient_norm=0.01)
+), class=c('cdrgam_distributional_sparse', 'cdrgam_sparse', 'cdrgam'))
+nonconverged_distributional_diagnostics <- internal(
+    '.cdrgam_cli_diagnostics'
+)(nonconverged_distributional_fit)
+idle_now <- as.POSIXct('2026-01-01 00:05:00', tz='UTC')
+idle_started <- as.POSIXct('2026-01-01 00:00:00', tz='UTC')
+idle_fresh <- internal('.cdrgam_cli_worker_idle_state')(
+    now=idle_now, timeout=300
+)
+idle_waiting <- internal('.cdrgam_cli_worker_idle_state')(
+    idle_started, idle_now - 1, timeout=300
+)
+idle_expired <- internal('.cdrgam_cli_worker_idle_state')(
+    idle_started, idle_now, timeout=300
+)
 stopifnot(
+    identical(nonconverged_distributional_diagnostics$converged, FALSE),
+    identical(nonconverged_distributional_diagnostics$code, 1L),
+    identical(nonconverged_distributional_diagnostics$gradient_norm, 0.5),
+    identical(
+        nonconverged_distributional_diagnostics$message,
+        'test distributional nonconvergence'
+    ),
+    identical(idle_fresh$started, idle_now),
+    !idle_fresh$expired,
+    identical(idle_fresh$remaining, 300),
+    !idle_waiting$expired,
+    identical(idle_waiting$remaining, 1),
+    idle_expired$expired,
+    identical(idle_expired$remaining, 0),
     internal('.cdrgam_cli_absolute_path')('/tmp/example'),
     internal('.cdrgam_cli_absolute_path')('C:\\example'),
     internal('.cdrgam_cli_absolute_path')('\\\\server\\share'),
@@ -33,6 +106,22 @@ process_result <- internal('.cdrgam_cli_process_run')(
 stopifnot(
     identical(process_result$status, 0L),
     identical(process_result$stdout, 'portable-process')
+)
+pager_call <- NULL
+pager_result <- internal('.cdrgam_cli_process_pager')(
+    'pager', c('-R', 'example file.txt'),
+    runner=function(command, arguments) {
+        pager_call <<- list(command=command, arguments=arguments)
+        0L
+    }
+)
+stopifnot(
+    identical(pager_result$status, 0L),
+    identical(pager_call$command, 'pager'),
+    identical(
+        pager_call$arguments,
+        vapply(c('-R', 'example file.txt'), shQuote, character(1))
+    )
 )
 lock_test <- file.path(temporary_parent, 'locks', 'test.lock')
 locked_value <- internal('.cdrgam_cli_with_lock')(lock_test, 42L)
@@ -111,7 +200,7 @@ stopifnot(
 )
 
 editor_script <- file.path(temporary_parent, 'editor')
-writeLines(c('#!/bin/sh', 'exit 0'), editor_script)
+writeLines(c('#!/bin/sh', 'touch "$1"', 'exit 0'), editor_script)
 Sys.chmod(editor_script, mode='0755')
 old_visual <- Sys.getenv('VISUAL', unset=NA_character_)
 Sys.setenv(VISUAL=editor_script)
@@ -187,7 +276,7 @@ saveRDS(
 )
 
 dataset_definition <- list(
-    schema=1L, dataset='training',
+    schema=1L,
     sources=list(
         impulses=list(path='data/impulses.rds', format='rds'),
         responses=list(path='data/responses.rds', format='rds')
@@ -211,7 +300,6 @@ yaml::write_yaml(
     file.path(project, 'definitions', 'datasets', 'training.yml')
 )
 validation_definition <- dataset_definition
-validation_definition$dataset <- 'validation'
 validation_definition$sources$responses$path <-
     'data/validation-responses.rds'
 yaml::write_yaml(
@@ -219,7 +307,7 @@ yaml::write_yaml(
     file.path(project, 'definitions', 'datasets', 'validation.yml')
 )
 model_definition <- list(
-    schema=1L, model='decay',
+    schema=1L,
     datasets=list(train='training', val='validation'),
     window=c(0, 1.5),
     knots_l=c(0, 0.1, 0.3, 0.8, 1.5),
@@ -233,6 +321,26 @@ model_definition <- list(
         family='gaussian', link='identity', method='REML',
         backend='mgcv', engine='gam'
     )
+)
+multiline_model <- model_definition
+multiline_model$formula <- paste(
+    'response ~',
+    "  s(item_id, bs='re') +",
+    '  irf(x) -',
+    '  irf(1)',
+    sep='\n'
+)
+single_line_model <- multiline_model
+single_line_model$formula <- "response ~ s(item_id, bs='re') + irf(x) - irf(1)"
+validated_multiline <- getFromNamespace(
+    '.cdrgam_cli_validate_model', 'cdrgam.cli'
+)(multiline_model, 'multiline.yml')
+validated_single_line <- getFromNamespace(
+    '.cdrgam_cli_validate_model', 'cdrgam.cli'
+)(single_line_model, 'single-line.yml')
+stopifnot(
+    identical(validated_multiline$formula, validated_single_line$formula),
+    !grepl('\n', validated_multiline$formula, fixed=TRUE)
 )
 legacy_history_model <- model_definition
 legacy_history_model$fit$history_length <- 8L
@@ -284,7 +392,6 @@ probit_sparse_error <- tryCatch({
 }, error=function(error) conditionMessage(error))
 stopifnot(grepl('sparse currently supports', probit_sparse_error, fixed=TRUE))
 distributional_model <- model_definition
-distributional_model$model <- 'location-scale'
 distributional_model$formula <- list(
     location=model_definition$formula,
     scale='~ irf(x) - irf(1)'
@@ -326,18 +433,96 @@ yaml::write_yaml(
     file.path(project, 'definitions', 'models', 'location-scale.yml')
 )
 second_model <- model_definition
-second_model$model <- 'decay-two'
 yaml::write_yaml(
     second_model, file.path(project, 'definitions', 'models', 'decay-two.yml')
 )
 yaml::write_yaml(list(
-    schema=1L, visualization='diagnostics', model='decay',
+    schema=1L, model='decay',
     kind='booklet', pages=1L
 ), file.path(project, 'definitions', 'visualizations', 'diagnostics.yml'))
 yaml::write_yaml(list(
-    schema=1L, comparison='alternatives', models=c('decay', 'decay-two'),
+    schema=1L, models=c('decay', 'decay-two'),
     evaluation=list(dataset='val', row_id='row_id'), methods=c('mse', 'mae')
 ), file.path(project, 'definitions', 'comparisons', 'alternatives.yml'))
+
+# Filename stems are authoritative, so redundant identity fields are invalid
+# even when their value happens to match the stem.
+expect_redundant_definition_name <- function(path, field) {
+    original <- yaml::read_yaml(path)
+    on.exit(yaml::write_yaml(original, path), add=TRUE)
+    changed <- original
+    changed[[field]] <- sub('\\.ya?ml$', '', basename(path))
+    yaml::write_yaml(changed, path)
+    message <- tryCatch({
+        getFromNamespace('.cdrgam_cli_read_definitions', 'cdrgam.cli')(
+            'test-project', checkout=checkout
+        )
+        NA_character_
+    }, error=function(error) conditionMessage(error))
+    stopifnot(
+        grepl(field, message, fixed=TRUE),
+        grepl('derived from the file name', message, fixed=TRUE),
+        grepl('must be omitted', message, fixed=TRUE)
+    )
+}
+expect_redundant_definition_name(
+    file.path(project, 'definitions', 'datasets', 'training.yml'),
+    'dataset'
+)
+expect_redundant_definition_name(
+    file.path(project, 'definitions', 'models', 'decay.yml'),
+    'model'
+)
+expect_redundant_definition_name(
+    file.path(project, 'definitions', 'visualizations', 'diagnostics.yml'),
+    'visualization'
+)
+expect_redundant_definition_name(
+    file.path(project, 'definitions', 'comparisons', 'alternatives.yml'),
+    'comparison'
+)
+
+# An externally invalid definition remains editable. Only the staged result is
+# validated before it replaces the file.
+training_path <- file.path(project, 'definitions', 'datasets', 'training.yml')
+invalid_training <- yaml::read_yaml(training_path)
+invalid_training$dataset <- 'training'
+yaml::write_yaml(invalid_training, training_path)
+cdrgam_cli_def(
+    'test-project', type='dataset', name='training',
+    editor=function(path) {
+        value <- yaml::read_yaml(path)
+        stopifnot(identical(value$dataset, 'training'))
+        value$dataset <- NULL
+        yaml::write_yaml(value, path)
+    }
+)
+stopifnot(
+    !('dataset' %in% names(yaml::read_yaml(training_path))),
+    identical(
+        getFromNamespace('.cdrgam_cli_read_definitions', 'cdrgam.cli')(
+            'test-project', checkout=checkout
+        )$datasets$training$dataset,
+        'training'
+    )
+)
+cancelled_path <- file.path(
+    project, 'definitions', 'models', 'cancelled-invalid.yml'
+)
+cancelled_draft <- file.path(
+    project, '.cdrgam', 'drafts', 'model', 'cancelled-invalid.yml'
+)
+writeLines(c('schema: 1', 'model: cancelled-invalid'), cancelled_path)
+cancelled_hash <- unname(tools::md5sum(cancelled_path))
+cdrgam_cli_def(
+    'test-project', type='model', name='cancelled-invalid',
+    editor=function(path) invisible(path)
+)
+stopifnot(
+    identical(unname(tools::md5sum(cancelled_path)), cancelled_hash),
+    !file.exists(cancelled_draft)
+)
+unlink(cancelled_path)
 
 # Invalid edits do not replace the published definition. Their draft is
 # reopened by the next edit and removed after successful publication.
@@ -361,7 +546,8 @@ invalid_edit <- tryCatch({
     NA_character_
 }, error=function(error) conditionMessage(error))
 stopifnot(
-    grepl('must remain', invalid_edit, fixed=TRUE),
+    grepl('derived from the file name', invalid_edit, fixed=TRUE),
+    grepl('must be omitted', invalid_edit, fixed=TRUE),
     grepl(model_draft, invalid_edit, fixed=TRUE),
     identical(unname(tools::md5sum(model_path)), model_before),
     identical(yaml::read_yaml(model_draft)$model, 'renamed')
@@ -371,7 +557,7 @@ cdrgam_cli_def(
     editor=function(path) {
         value <- yaml::read_yaml(path)
         stopifnot(identical(value$model, 'renamed'))
-        value$model <- 'decay'
+        value$model <- NULL
         yaml::write_yaml(value, path)
     }
 )
@@ -385,7 +571,10 @@ ambiguous_draft <- file.path(
 ambiguous_error <- tryCatch({
     cdrgam_cli_def(
         'test-project', type='model', name='ambiguous',
-        editor=function(path) invisible(path)
+        editor=function(path) {
+            Sys.setFileTime(path, Sys.time())
+            invisible(path)
+        }
     )
     NA_character_
 }, error=function(error) conditionMessage(error))
@@ -407,6 +596,8 @@ unlink(ambiguous_path)
 
 # Project copying republishes definitions with a fresh project identity and no
 # generated artifacts.
+old_source_visual <- Sys.getenv('VISUAL', unset=NA_character_)
+Sys.setenv(VISUAL=editor_script)
 writeLines('not a definition', file.path(project, 'analyses', 'sentinel.txt'))
 stopifnot(identical(cli_main(c(
     'def', 'edit', 'test-copy', '--source', 'test-project'
@@ -437,8 +628,30 @@ existing_copy_error <- tryCatch({
 }, error=function(error) conditionMessage(error))
 stopifnot(grepl('already exists', existing_copy_error, fixed=TRUE))
 
-# A source combined with a subordinate selector copies that definition within
-# the target project and assigns the requested target identity.
+# A source combined with a subordinate selector initializes an editable target
+# without rewriting the source YAML. The target filename supplies its identity.
+source_model_lines <- readLines(model_path, warn=FALSE)
+writeLines(c(
+    '# Formatting and comments survive source initialization.',
+    source_model_lines
+), model_path, useBytes=TRUE)
+source_model_bytes <- readBin(
+    model_path, what='raw', n=file.info(model_path)$size
+)
+cancelled_source_path <- file.path(
+    project, 'definitions', 'models', 'decay-copy-cancelled.yml'
+)
+cancelled_source_draft <- file.path(
+    project, '.cdrgam', 'drafts', 'model', 'decay-copy-cancelled.yml'
+)
+cdrgam_cli_def(
+    'test-project', type='model', name='decay-copy-cancelled', source='decay',
+    editor=function(path) invisible(path)
+)
+stopifnot(
+    !file.exists(cancelled_source_path),
+    !file.exists(cancelled_source_draft)
+)
 stopifnot(identical(cli_main(c(
     'def', 'edit', 'test-project', '--model',
     'decay-copy-a', 'decay-copy-b',
@@ -451,10 +664,32 @@ copied_model_paths <- file.path(
 source_model <- yaml::read_yaml(model_path)
 for (index in seq_along(copied_model_paths)) {
     copied_model <- yaml::read_yaml(copied_model_paths[[index]])
-    expected_model <- source_model
-    expected_model$model <- c('decay-copy-a', 'decay-copy-b')[[index]]
-    stopifnot(identical(copied_model, expected_model))
+    copied_model_bytes <- readBin(
+        copied_model_paths[[index]], what='raw',
+        n=file.info(copied_model_paths[[index]])$size
+    )
+    stopifnot(
+        identical(copied_model, source_model),
+        identical(copied_model_bytes, source_model_bytes)
+    )
 }
+source_editor_ran <- FALSE
+cdrgam_cli_def(
+    'test-project', type='model', name='decay-copy-edited', source='decay',
+    editor=function(path) {
+        source_editor_ran <<- TRUE
+        value <- yaml::read_yaml(path)
+        value$formula <- paste(value$formula, '+ 0')
+        yaml::write_yaml(value, path)
+    }
+)
+edited_copy <- yaml::read_yaml(file.path(
+    project, 'definitions', 'models', 'decay-copy-edited.yml'
+))
+stopifnot(
+    source_editor_ran,
+    identical(edited_copy$formula, paste(source_model$formula, '+ 0'))
+)
 missing_source_error <- tryCatch({
     cli_main(c(
         'def', 'edit', 'test-project', '--model', 'missing-copy',
@@ -483,7 +718,7 @@ dir.create(copied_model_artifact)
 writeLines('generated', file.path(copied_model_artifact, 'result.txt'))
 result_guard_error <- tryCatch({
     cli_main(c(
-        'def', 'del', 'test-project', '--model', 'decay-copy-*'
+        'def', 'rm', 'test-project', '--model', 'decay-copy-*'
     ))
     NA_character_
 }, error=function(error) conditionMessage(error))
@@ -496,12 +731,12 @@ cdrgam_cli_purge(
     projects='test-project', models='decay-copy-b', yes=TRUE
 )
 stopifnot(identical(cli_main(c(
-    'def', 'del', 'test-project', '--model', 'decay-copy-*'
+    'def', 'rm', 'test-project', '--model', 'decay-copy-*'
 )), 0L))
 stopifnot(!any(file.exists(copied_model_paths)))
 referenced_definition_error <- tryCatch({
     cli_main(c(
-        'def', 'del', 'test-project', '--dataset', 'training'
+        'def', 'rm', 'test-project', '--dataset', 'training'
     ))
     NA_character_
 }, error=function(error) conditionMessage(error))
@@ -522,9 +757,14 @@ validation_copy_paths <- file.path(
 )
 stopifnot(all(file.exists(validation_copy_paths)))
 stopifnot(identical(cli_main(c(
-    'def', 'del', 'test-project', '--dataset', 'validation-copy-*'
+    'def', 'rm', 'test-project', '--dataset', 'validation-copy-*'
 )), 0L))
 stopifnot(!any(file.exists(validation_copy_paths)))
+if (is.na(old_source_visual)) {
+    Sys.unsetenv('VISUAL')
+} else {
+    Sys.setenv(VISUAL=old_source_visual)
+}
 
 listed <- cdrgam_cli_list('test-project')$`test-project`
 stopifnot(
@@ -533,6 +773,62 @@ stopifnot(
     identical(listed$visualizations, 'diagnostics'),
     identical(listed$comparisons, 'alternatives')
 )
+
+list_definitions <- getFromNamespace(
+    '.cdrgam_cli_list_definitions', 'cdrgam.cli'
+)
+project_list_output <- capture.output(stopifnot(identical(
+    cli_main(c('def', 'ls')), 0L
+)))
+stopifnot(
+    any(grepl('test-project', project_list_output, fixed=TRUE)),
+    !any(grepl('training', project_list_output, fixed=TRUE))
+)
+all_definitions_output <- capture.output(
+    all_definitions <- list_definitions('test-project', checkout=checkout)
+)
+selected_definitions_output <- capture.output(
+    selected_definitions <- list_definitions(
+        'test-project',
+        list(dataset='train*', model=c('decay', 'location-*')),
+        checkout=checkout
+    )
+)
+stopifnot(
+    identical(
+        all_definitions$type,
+        c(
+            'project', 'dataset', 'dataset', 'model', 'model', 'model',
+            'visualization', 'comparison'
+        )
+    ),
+    identical(
+        paste(selected_definitions$type, selected_definitions$name),
+        c('dataset training', 'model decay', 'model location-scale')
+    ),
+    any(grepl('definitions/models/decay.yml', selected_definitions_output,
+        fixed=TRUE)),
+    length(all_definitions_output) > 1L,
+    identical(cli_main(c(
+        'def', 'ls', 'test-project', '--dataset', 'train*',
+        '--model', 'decay', 'location-*'
+    )), 0L)
+)
+models_only_output <- capture.output(stopifnot(identical(
+    cli_main(c('def', 'ls', 'test-project', '--model')), 0L
+)))
+stopifnot(
+    any(grepl('decay', models_only_output, fixed=TRUE)),
+    any(grepl('location-scale', models_only_output, fixed=TRUE)),
+    !any(grepl('training', models_only_output, fixed=TRUE))
+)
+old_del_error <- tryCatch({
+    cli_main(c('def', 'del', 'test-project', '--model', 'decay'))
+    NA_character_
+}, error=function(error) conditionMessage(error))
+stopifnot(grepl(
+    'Unknown command: cdrgam def del', old_del_error, fixed=TRUE
+))
 
 stopifnot(identical(cli_main(c('def', 'val', 'site')), 0L))
 stopifnot(identical(cli_main(c(
@@ -543,10 +839,7 @@ broken_definition_path <- file.path(
     paste0(c('externally-broken-a', 'externally-broken-b'), '.yml')
 )
 for (index in seq_along(broken_definition_path)) yaml::write_yaml(
-    list(
-        schema=1L,
-        model=c('externally-broken-a', 'externally-broken-b')[[index]]
-    ),
+    list(schema=1L),
     broken_definition_path[[index]]
 )
 stopifnot(identical(cli_main(c(
@@ -596,6 +889,23 @@ stopifnot(grepl(
 loaded_definition <- getFromNamespace(
     '.cdrgam_cli_read_definitions', 'cdrgam.cli'
 )('test-project')$datasets$training
+loaded_definitions <- getFromNamespace(
+    '.cdrgam_cli_read_definitions', 'cdrgam.cli'
+)('test-project')
+stopifnot(
+    identical(loaded_definitions$datasets$training$dataset, 'training'),
+    identical(loaded_definitions$models$decay$model, 'decay'),
+    identical(
+        loaded_definitions$visualizations$diagnostics$visualization,
+        'diagnostics'
+    ),
+    identical(
+        loaded_definitions$comparisons$alternatives$comparison,
+        'alternatives'
+    ),
+    !('dataset' %in% names(yaml::read_yaml(training_definition_path))),
+    !('model' %in% names(yaml::read_yaml(model_path)))
+)
 loaded_data <- getFromNamespace(
     '.cdrgam_cli_load_dataset', 'cdrgam.cli'
 )(loaded_definition)
@@ -650,7 +960,11 @@ stopifnot(
     nrow(coefficient_table) < length(stats::coef(readRDS(
         file.path(project, 'models', 'decay', 'fit.rds')
     ))),
-    identical(names(smooth_table), c('term', 'edf', 'Ref.df', 'F', 'p-value')),
+    identical(
+        names(smooth_table),
+        c('term', 'edf', 'Ref.df', 'F', 'p-value', 'test_status')
+    ),
+    all(nzchar(smooth_table$test_status)),
     dir.exists(file.path(work_root, 'fit_decay', fit_identity)),
     !dir.exists(file.path(root, '.cdrgam', 'works', 'test-project')),
     !dir.exists(file.path(project, 'models', 'decay', 'predictions'))
@@ -747,7 +1061,7 @@ stopifnot(file.exists(file.path(
 )))
 
 effect_definition <- list(
-    schema=1L, visualization='effects', model='decay',
+    schema=1L, model='decay',
     query=list(
         terms=list(predictors='*'), composition='total',
         axes=list(
@@ -792,7 +1106,6 @@ stopifnot(
 # Presentation changes create a new visualization while retaining the same
 # deduplicated statistical effect-grid dependency.
 alternate_effect <- effect_definition
-alternate_effect$visualization <- 'effects-minimal'
 alternate_effect$render$theme <- 'minimal'
 alternate_effect_path <- file.path(
     project, 'definitions', 'visualizations', 'effects-minimal.yml'
@@ -808,7 +1121,6 @@ stopifnot(
 unlink(alternate_effect_path)
 
 surface_definition <- effect_definition
-surface_definition$visualization <- 'effect-surface'
 surface_definition$query$axes$lag$n <- 17L
 surface_definition$query$axes$predictors <- list(
     x=list(quantiles=c(0.1, 0.3, 0.5, 0.7, 0.9))
@@ -863,6 +1175,16 @@ stopifnot(
     grepl('Success', status_text, fixed=TRUE),
     grepl('Summary:', status_text, fixed=TRUE)
 )
+status_model_source <- readLines(model_path, warn=FALSE)
+writeLines('invalid: [', model_path)
+marker_only_status <- cdrgam_cli_status(
+    'test-project', pager=function(text) invisible(text)
+)
+writeLines(status_model_source, model_path, useBytes=TRUE)
+stopifnot(
+    nrow(marker_only_status) == nrow(status),
+    identical(marker_only_status$work_key, status$work_key)
+)
 fit_manifest_path <- file.path(project, 'models', 'decay', 'manifest.yml')
 fit_manifest <- yaml::read_yaml(fit_manifest_path)
 converged_manifest <- fit_manifest
@@ -883,6 +1205,35 @@ stopifnot(
 yaml::write_yaml(converged_manifest, fit_manifest_path)
 log_paths <- cdrgam_cli_log('test-project', models='decay', lines=5L)
 stopifnot(length(log_paths) >= 3L, all(file.exists(log_paths)))
+current_definitions <- internal('.cdrgam_cli_read_definitions')(
+    'test-project', check_sources=FALSE, checkout=checkout
+)
+fit_log <- internal('.cdrgam_cli_work_log_path')(
+    current_definitions, 'fit', 'decay'
+)
+fit_log_text <- paste(readLines(fit_log, warn=FALSE), collapse='\n')
+stopifnot(
+    fit_log %in% log_paths,
+    grepl(' START fit decay ', fit_log_text, fixed=TRUE),
+    grepl(' COMPLETE fit decay', fit_log_text, fixed=TRUE),
+    !file.exists(file.path(project, 'models', 'decay', 'run.log'))
+)
+overwrite_item <- list(
+    kind='fit', name='overwrite-test', identity='new-identity'
+)
+overwrite_log <- internal('.cdrgam_cli_work_log_path')(
+    current_definitions, overwrite_item$kind, overwrite_item$name
+)
+dir.create(dirname(overwrite_log), recursive=TRUE, showWarnings=FALSE)
+writeLines('stale attempt output', overwrite_log)
+internal('.cdrgam_cli_start_work_log')(
+    current_definitions, overwrite_item, '2000-01-01T00:00:00Z'
+)
+stopifnot(identical(
+    readLines(overwrite_log, warn=FALSE),
+    '2000-01-01T00:00:00Z START fit overwrite-test [new-identity]'
+))
+unlink(overwrite_log)
 seen_logs <- NULL
 paged_paths <- cdrgam_cli_log(
     'test-project', models='decay', predictions='val',
@@ -1014,7 +1365,6 @@ if (can_bind_controller) {
 restored_model <- yaml::read_yaml(
     file.path(project, 'definitions', 'models', 'decay-two.yml')
 )
-restored_model$model <- 'decay'
 yaml::write_yaml(restored_model, file.path(project, 'definitions', 'models', 'decay.yml'))
 cdrgam_cli_run(projects='test-project', models='decay')
 unlink(prediction_path, recursive=TRUE)
@@ -1103,32 +1453,51 @@ stopifnot(
     !any(grepl('decay|prediction|test-project', submissions)),
     identical(readLines(fake_exit_log, warn=FALSE), '0')
 )
-
-# A terminal worker loss fails its ready item once. It does not create an
-# automatic replacement loop.
-unlink(prediction_path, recursive=TRUE)
-writeLines('', fail_workers)
-workers_before <- sum(submissions == '#SBATCH --job-name=cdrgam-worker')
-cdrgam_cli_run(projects='test-project', models='decay', predictions='val')
-failed_key <- paste(
-    'prediction',
-    changed_graph$definitions[['test-project']]$project$project$id,
-    'decay', 'validation',
-    prediction_plan$identity[prediction_plan$kind == 'prediction'], sep=':'
+worker_rows <- internal('.cdrgam_cli_registry_exec')(
+    configuration, paste(
+        'SELECT worker_id,scheduler_id,state FROM workers',
+        'ORDER BY updated_at DESC LIMIT 1'
+    ), query=TRUE
 )
-for (attempt in seq_len(240L)) {
-    states <- getFromNamespace('.cdrgam_cli_registry_states', 'cdrgam.cli')(
-        getFromNamespace('.cdrgam_cli_checkout', 'cdrgam.cli')(checkout),
-        failed_key
-    )
-    if (length(states) && identical(unname(states[[1L]]), 'failed')) break
-    Sys.sleep(0.25)
-}
-submissions <- readLines(fake_submission_log, warn=FALSE)
+stopifnot(nrow(worker_rows) == 1L)
+worker_log <- internal('.cdrgam_cli_worker_log_path')(
+    configuration, worker_rows$worker_id[[1L]]
+)
+dir.create(dirname(worker_log), recursive=TRUE, showWarnings=FALSE)
+writeLines(c(
+    paste('2000-01-01T00:00:00Z WORKER', worker_rows$worker_id[[1L]], 'START'),
+    paste('2000-01-01T00:00:01Z WORKER', worker_rows$worker_id[[1L]],
+          'CLAIM prediction decay_validation'),
+    paste('2000-01-01T00:00:02Z WORKER', worker_rows$worker_id[[1L]],
+          'COMPLETE prediction decay_validation')
+), worker_log)
+seen_worker_logs <- NULL
+worker_paths <- cdrgam_cli_log(
+    worker=TRUE, checkout=checkout,
+    pager=function(paths, labels) {
+        seen_worker_logs <<- list(paths=paths, labels=labels)
+    }
+)
 stopifnot(
-    length(states) && identical(unname(states[[1L]]), 'failed'),
-    sum(submissions == '#SBATCH --job-name=cdrgam-worker') == workers_before + 1L
+    worker_log %in% worker_paths,
+    any(grepl('worker/', seen_worker_logs$labels, fixed=TRUE))
 )
+worker_selector_error <- tryCatch(
+    cdrgam_cli_log(
+        projects='test-project', worker=TRUE, checkout=checkout,
+        pager=function(paths, labels) invisible(paths)
+    ),
+    error=function(error) conditionMessage(error)
+)
+stopifnot(grepl('cannot be combined', worker_selector_error, fixed=TRUE))
+available_worker_keys <- getFromNamespace(
+    '.cdrgam_cli_available_worker_resource_keys', 'cdrgam.cli'
+)(list(
+    list(resource_key='shared', status='running', current_work_key='fit:a'),
+    list(resource_key='shared', status='idle', current_work_key=NULL),
+    list(resource_key='other', status='stopping', current_work_key=NULL)
+))
+stopifnot(identical(available_worker_keys, 'shared'))
 } else {
     message('Skipping TCP controller test because local socket binding is unavailable')
 }

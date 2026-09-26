@@ -107,6 +107,14 @@
     if (is.null(active)) NULL else unname(active[[1L]])
 }
 
+.cdrgam_cli_available_worker_resource_keys <- function(workers) {
+    available <- workers[vapply(workers, function(worker) {
+        is.null(worker$current_work_key) &&
+            worker$status %in% c('submitted', 'idle')
+    }, logical(1))]
+    vapply(available, function(worker) worker$resource_key, character(1))
+}
+
 .cdrgam_cli_controller_main <- function(checkout) {
     options(cdrgam.cli.checkout=checkout)
     configuration <- .cdrgam_cli_checkout(checkout, create_root=TRUE)
@@ -401,12 +409,6 @@
                                 'Slurm worker disappeared before publishing its claimed artifact'
                             )
                         }
-                    } else {
-                        unclaimed <- ready_keys(worker$resource_key)
-                        if (length(unclaimed)) mark_failed(
-                            unclaimed[[1L]],
-                            'Slurm worker disappeared before claiming ready work'
-                        )
                     }
                     worker$status <- if (published) 'stopped' else 'failed'
                     worker$updated_at <- .cdrgam_cli_timestamp()
@@ -438,9 +440,9 @@
                 resource_keys <- vapply(ready, function(key) {
                     .cdrgam_cli_resource_key(contexts[[key]]$resources)
                 }, character(1))
-                active_keys <- vapply(workers, function(worker) worker$resource_key, character(1))
+                available_keys <- .cdrgam_cli_available_worker_resource_keys(workers)
                 desired <- table(resource_keys)
-                present <- table(active_keys)
+                present <- table(available_keys)
                 launch <- character()
                 for (resource_key in names(desired)) {
                     active_count <- if (resource_key %in% names(present)) {

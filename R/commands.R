@@ -367,21 +367,23 @@ cdrgam_cli_run <- function(
             arguments <- c(arguments, '--header', as.character(header_lines))
         }
     }
-    input <- strsplit(sub('\n$', '', text), '\n', fixed=TRUE)[[1L]]
-    tryCatch(.cdrgam_cli_process_run(
-        executable, arguments, stdin=paste0(paste(input, collapse='\n'), '\n'),
-        stdout='', stderr=''
-    ), interrupt=function(condition) NULL)
+    temporary <- tempfile('cdrgam-status-', fileext='.txt')
+    on.exit(unlink(temporary, force=TRUE), add=TRUE)
+    writeLines(text, temporary, useBytes=TRUE)
+    tryCatch(
+        .cdrgam_cli_process_pager(executable, c(arguments, temporary)),
+        interrupt=function(condition) NULL
+    )
     invisible(text)
 }
 
 .cdrgam_cli_status_rows <- function(configuration, selected) {
     if (!file.exists(.cdrgam_cli_registry_path(configuration))) return(data.frame())
     project_ids <- if (length(selected)) vapply(selected, function(project) {
-        definitions <- .cdrgam_cli_read_definitions(
-            project, check_sources=FALSE, checkout=configuration$checkout
+        definition <- .cdrgam_cli_read_project_definition(
+            project, checkout=configuration$checkout
         )
-        definitions$project$project$id
+        definition$definition$project$id
     }, character(1)) else character()
     where <- if (length(selected)) {
         name_clause <- paste0(
@@ -406,25 +408,31 @@ cdrgam_cli_run <- function(
         ' ORDER BY w.project,w.kind,w.name,w.updated_at DESC,w.identity DESC'
     ), query=TRUE)
     if (!nrow(output)) return(output)
+    project_roots <- .cdrgam_cli_project_roots(configuration)
     if (length(project_ids)) {
         for (project in names(project_ids)) {
-            stable <- vapply(c('fit', 'prediction', 'effect', 'visualization', 'comparison'),
+            stable <- Reduce(`|`, lapply(
+                c('fit', 'prediction', 'effect', 'visualization', 'comparison'),
                 function(kind) startsWith(
-                    output$work_key, paste0(kind, ':', project_ids[[project]], ':')
-                ), logical(nrow(output)))
-            output$project[apply(stable, 1L, any)] <- project
+                    output$work_key,
+                    paste0(kind, ':', project_ids[[project]], ':')
+                )
+            ))
+            output$project[stable] <- project
         }
     }
     output$artifact_path <- vapply(output$artifact_path, function(path) {
         .cdrgam_cli_managed_resolve(
-            configuration, path, field='registry artifact path', must_work=FALSE
+            configuration, path, field='registry artifact path', must_work=FALSE,
+            project_roots=project_roots
         )
     }, character(1))
     present_attempts <- !is.na(output$attempt_path) & nzchar(output$attempt_path)
     output$attempt_path[present_attempts] <- vapply(
         output$attempt_path[present_attempts], function(path) {
             .cdrgam_cli_managed_resolve(
-                configuration, path, field='registry attempt path', must_work=FALSE
+                configuration, path, field='registry attempt path', must_work=FALSE,
+                project_roots=project_roots
             )
         }, character(1)
     )
@@ -452,7 +460,18 @@ cdrgam_cli_run <- function(
     log_root <- ifelse(
         output$state == 'complete', output$artifact_path, output$attempt_path
     )
-    output$log <- ifelse(is.na(log_root), NA_character_, file.path(log_root, 'run.log'))
+    legacy_log <- ifelse(
+        is.na(log_root), NA_character_, file.path(log_root, 'run.log')
+    )
+    project_id <- sub('^[^:]+:([^:]+):.*$', '\\1', output$work_key)
+    managed_log <- vapply(seq_len(nrow(output)), function(index) {
+        root <- project_roots[[project_id[[index]]]]
+        if (is.null(root)) return(NA_character_)
+        .cdrgam_cli_work_log_path(
+            list(root=root), output$kind[[index]], output$name[[index]]
+        )
+    }, character(1))
+    output$log <- ifelse(file.exists(managed_log), managed_log, legacy_log)
     output
 }
 
@@ -481,71 +500,69 @@ cdrgam_cli_status <- function(
     invisible(output)
 }
 
-.cdrgam_cli_log_record <- function(path, definitions) {
-    directory <- dirname(path)
-    manifest_path <- file.path(directory, 'manifest.yml')
-    attempt_path <- file.path(directory, 'attempt.yml')
-    metadata_path <- if (file.exists(manifest_path)) manifest_path else attempt_path
-    if (!file.exists(metadata_path)) return(NULL)
-    metadata <- tryCatch(.cdrgam_cli_read_yaml(metadata_path), error=function(error) NULL)
-    if (is.null(metadata) || is.null(metadata$kind)) return(NULL)
-    published <- identical(metadata_path, manifest_path)
-    name <- if (published) metadata$definition else metadata$name
-    if (is.null(name)) return(NULL)
-    resolved <- if (published) metadata$resolved else NULL
-    kind <- metadata$kind
-    model <- NULL
-    dataset <- NULL
+.cdrgam_cli_status_log_record <- function(row, definitions) {
+    path <- row$log[[1L]]
+    if (is.na(path) || !nzchar(path) || !file.exists(path)) return(NULL)
+    kind <- row$kind[[1L]]
+    name <- row$name[[1L]]
+    model <- dataset <- NULL
     related_models <- character()
     if (identical(kind, 'fit')) {
-        model <- .cdrgam_cli_null(resolved$definition$model, name)
+        model <- name
         related_models <- model
-    } else if (identical(kind, 'prediction')) {
-        model <- resolved$model$definition$model
-        dataset <- resolved$dataset$definition$dataset
-        if (is.null(model)) model <- sub('_.*$', '', name)
-        if (is.null(dataset)) dataset <- sub(paste0('^', model, '_'), '', name)
+    } else if (kind %in% c('prediction', 'effect')) {
+        model <- sub('_.*$', '', name)
+        dataset <- if (identical(kind, 'prediction')) {
+            sub(paste0('^', model, '_'), '', name)
+        } else NULL
         related_models <- model
     } else if (identical(kind, 'visualization')) {
-        model <- resolved$definition$model
-        if (is.null(model) && !is.null(definitions$visualizations[[name]])) {
-            model <- definitions$visualizations[[name]]$model
-        }
-        related_models <- .cdrgam_cli_null(model, character())
-    } else if (identical(kind, 'effect')) {
-        model <- resolved$inputs$model$definition$model
+        model <- definitions$visualizations[[name]]$model
         related_models <- .cdrgam_cli_null(model, character())
     } else if (identical(kind, 'comparison')) {
-        related_models <- resolved$definition$models
-        if (is.null(related_models) && !is.null(definitions$comparisons[[name]])) {
-            related_models <- definitions$comparisons[[name]]$models
-        }
-        related_models <- .cdrgam_cli_null(related_models, character())
+        related_models <- .cdrgam_cli_null(
+            definitions$comparisons[[name]]$models, character()
+        )
     }
     list(
-        path=path, project=definitions$project$project$name, kind=kind,
-        name=name, model=model, models=related_models, dataset=dataset,
-        identity=.cdrgam_cli_null(metadata$identity, ''),
-        state=.cdrgam_cli_null(metadata$status, 'unknown'),
+        path=path, project=row$project[[1L]], kind=kind, name=name,
+        model=model, models=related_models, dataset=dataset,
+        identity=row$identity[[1L]], state=row$state[[1L]],
         modified=file.info(path)$mtime
     )
 }
 
-.cdrgam_cli_log_records <- function(definitions) {
-    public_roots <- file.path(definitions$root, c('models', 'comparisons', 'analyses'))
-    public <- unlist(lapply(public_roots[dir.exists(public_roots)], function(root) {
-        list.files(
-            root, pattern='^run\\.log$', full.names=TRUE, recursive=TRUE,
-            include.dirs=FALSE
+.cdrgam_cli_worker_log_records <- function(configuration) {
+    if (!file.exists(.cdrgam_cli_registry_path(configuration))) return(list())
+    workers <- .cdrgam_cli_registry_exec(configuration, paste(
+        'SELECT worker_id,scheduler_id,state,path,updated_at FROM workers',
+        'ORDER BY updated_at DESC'
+    ), query=TRUE)
+    records <- lapply(seq_len(nrow(workers)), function(index) {
+        worker <- workers[index, , drop=FALSE]
+        path <- .cdrgam_cli_worker_log_path(
+            configuration, worker$worker_id[[1L]]
         )
-    }), use.names=FALSE)
-    work <- .cdrgam_cli_path(definitions, 'work')
-    private <- if (dir.exists(work)) list.files(
-        work, pattern='^run\\.log$', full.names=TRUE, recursive=TRUE,
-        include.dirs=FALSE
-    ) else character()
-    records <- lapply(unique(c(public, private)), function(path) {
-        .cdrgam_cli_log_record(path, definitions)
+        if (!file.exists(path)) {
+            directory <- .cdrgam_cli_managed_resolve(
+                configuration, worker$path[[1L]],
+                field='registry worker path', must_work=FALSE
+            )
+            scheduler_id <- worker$scheduler_id[[1L]]
+            legacy <- if (is.na(scheduler_id) || !nzchar(scheduler_id)) {
+                NA_character_
+            } else file.path(directory, paste0(scheduler_id, '.log'))
+            if (!is.na(legacy) && file.exists(legacy)) path <- legacy
+        }
+        if (!file.exists(path)) return(NULL)
+        scheduler_id <- worker$scheduler_id[[1L]]
+        list(
+            path=path, project='', kind='worker',
+            name=worker$worker_id[[1L]], model=NULL, models=character(),
+            dataset=NULL,
+            identity=if (is.na(scheduler_id)) '' else scheduler_id,
+            state=worker$state[[1L]], modified=file.info(path)$mtime
+        )
     })
     Filter(Negate(is.null), records)
 }
@@ -595,7 +612,9 @@ cdrgam_cli_status <- function(
 .cdrgam_cli_display_logs <- function(records, lines=NULL, pager=NULL) {
     paths <- vapply(records, `[[`, character(1), 'path')
     labels <- vapply(records, function(record) paste0(
-        record$project, '/', record$kind, '/', record$name,
+        if (identical(record$kind, 'worker')) {
+            paste0('worker/', record$name)
+        } else paste0(record$project, '/', record$kind, '/', record$name),
         if (nzchar(record$identity)) paste0(' [', record$identity, ']') else '',
         ' (', record$state, ')'
     ), character(1))
@@ -629,9 +648,7 @@ cdrgam_cli_status <- function(
         message(
             'Opening ', length(paths), ' log(s); use :n and :p to switch files, q to quit.'
         )
-        result <- .cdrgam_cli_process_run(
-            executable, shown, stdout='', stderr=''
-        )
+        result <- .cdrgam_cli_process_pager(executable, shown)
         if (is.null(result) || !identical(result$status, 0L)) {
             .cdrgam_cli_abort('Pager exited unsuccessfully')
         }
@@ -652,6 +669,8 @@ cdrgam_cli_status <- function(
 #' @param projects,models,predictions,visualizations,comparisons Log selectors.
 #'   Omitted selector dimensions match all logged workloads.
 #' @param lines Optional maximum number of trailing lines from each log.
+#' @param worker Whether to show generic worker lifecycle logs instead of
+#'   work-item logs. Worker mode does not accept workload selectors.
 #' @param checkout Configured harness instance directory.
 #' @param pager Optional pager executable or function. Interactive terminals
 #'   use `less` by default; non-interactive calls print labeled sections.
@@ -659,15 +678,37 @@ cdrgam_cli_status <- function(
 #' @export
 cdrgam_cli_log <- function(
         projects=NULL, models=NULL, predictions=NULL, visualizations=NULL,
-        comparisons=NULL, lines=NULL, checkout=NULL, pager=NULL
+        comparisons=NULL, lines=NULL, checkout=NULL, pager=NULL, worker=FALSE
 ) {
+    configuration <- .cdrgam_cli_checkout(checkout, create_root=TRUE)
+    if (isTRUE(worker)) {
+        if (any(c(
+                length(projects), length(models), length(predictions),
+                length(visualizations), length(comparisons)
+            ) > 0L)) {
+            .cdrgam_cli_abort('Worker logs cannot be combined with workload selectors')
+        }
+        records <- .cdrgam_cli_worker_log_records(configuration)
+        if (!length(records)) .cdrgam_cli_abort('No managed worker logs are available')
+        modified <- vapply(
+            records, function(record) as.numeric(record$modified), numeric(1)
+        )
+        return(.cdrgam_cli_display_logs(
+            records[order(modified, decreasing=TRUE)],
+            lines=lines, pager=pager
+        ))
+    }
     selected_projects <- .cdrgam_cli_select_projects(projects, checkout)
     records <- list()
     for (project in selected_projects) {
         definitions <- .cdrgam_cli_read_definitions(
             project, check_sources=FALSE, checkout=checkout
         )
-        candidates <- .cdrgam_cli_log_records(definitions)
+        rows <- .cdrgam_cli_status_rows(configuration, project)
+        candidates <- lapply(seq_len(nrow(rows)), function(index) {
+            .cdrgam_cli_status_log_record(rows[index, , drop=FALSE], definitions)
+        })
+        candidates <- Filter(Negate(is.null), candidates)
         candidates <- Filter(function(record) .cdrgam_cli_log_selected(
             record, definitions, models, predictions, visualizations, comparisons
         ), candidates)

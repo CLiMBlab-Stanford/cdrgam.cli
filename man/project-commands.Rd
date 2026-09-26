@@ -12,7 +12,7 @@
 \usage{
 cdrgam_cli_def(project = NULL, type = NULL, name = NULL,
   source = NULL, checkout = NULL, editor = NULL,
-  operation = c("edit", "del", "val"), deep = FALSE)
+  operation = c("edit", "rm", "val"), deep = FALSE)
 
 cdrgam_cli_validate(projects = NULL, deep = FALSE, checkout = NULL)
 
@@ -20,7 +20,7 @@ cdrgam_cli_list(projects = NULL, checkout = NULL)
 
 cdrgam_cli_log(projects = NULL, models = NULL, predictions = NULL,
   visualizations = NULL, comparisons = NULL, lines = NULL,
-  checkout = NULL, pager = NULL)
+  checkout = NULL, pager = NULL, worker = FALSE)
 
 cdrgam_cli_plan(projects = NULL, models = NULL, predictions = NULL,
   visualizations = NULL, comparisons = NULL, checkout = NULL)
@@ -40,14 +40,15 @@ cdrgam_cli_purge(projects = NULL, models = NULL, predictions = NULL,
 find_cdrgam_project(project = NULL, checkout = NULL)
 }
 \arguments{
-  \item{name}{One or more definition names. Validation and deletion accept
+  \item{name}{One or more definition names. Validation and removal accept
   \code{*} patterns; editing treats names literally.}
   \item{type}{Optional definition type: \code{dataset}, \code{model},
   \code{visualization}, or \code{comparison}.}
   \item{source}{Optional source project or subordinate definition name. The
-  source is copied to the requested target without generated artifacts.}
+  source initializes the requested target without generated artifacts;
+  subordinate definitions are opened in the editor before publication.}
   \item{operation}{Either \code{"edit"} to create or edit a definition,
-  \code{"del"} to delete a subordinate definition after safety checks, or
+  \code{"rm"} to remove a subordinate definition after safety checks, or
   \code{"val"} to validate definitions without changing them.}
   \item{editor}{Editor command or callback. The default uses \env{VISUAL},
   then \env{EDITOR}, then R's configured editor.}
@@ -66,13 +67,15 @@ find_cdrgam_project(project = NULL, checkout = NULL)
   automatically.}
   \item{deep}{Whether to read datasets and compile training model designs.}
   \item{lines}{Optional maximum number of trailing lines from each log.}
+  \item{worker}{Whether to show generic worker lifecycle logs instead of
+  work-item process logs. Worker mode does not accept workload selectors.}
   \item{pager}{Optional pager executable or command-specific callback.
   Interactive terminals use \command{less} by default.}
   \item{use_pager}{Whether interactive status output may open the pager.}
   \item{dry_run}{Whether to print the dependency-closed plan without running it.}
   \item{cpus, memory, time, qos}{Optional Slurm resource overrides.}
   \item{work}{Whether to select private work attempts for cleanup.}
-  \item{logs}{Whether to select private scheduler logs for cleanup.}
+  \item{logs}{Whether to select project-private work-item logs for cleanup.}
   \item{yes}{Whether to remove selected generated paths after preview.}
 }
 \description{
@@ -88,14 +91,18 @@ convergence was not reached.
 through a validated temporary file. A failed edit is retained in the managed
 private draft directory and reopened by the next edit of the same definition;
 the last valid published definition remains unchanged. With \code{source}, it
-initializes a new project or subordinate definition from an existing one. The \code{"del"}
-operation deletes only unreferenced subordinate definitions and refuses to
-delete definitions with generated results. The \code{"val"} operation validates
+initializes a new project or subordinate definition from an existing one. The \code{"rm"}
+operation removes only unreferenced subordinate definitions and refuses to
+remove definitions with generated results. The \code{"val"} operation validates
 a project or one definition and its prerequisites without changing files.
-Definition selectors accept multiple names. Validation and deletion expand
-\code{*} patterns; editing processes literal names in order. A batch deletion
+Definition selectors accept multiple names. Validation and removal expand
+\code{*} patterns; editing processes literal names in order. A batch removal
 checks every target before removing any definition.
 Copying does not include generated artifacts or private orchestration state.
 Purging removes only generated artifacts and registry records selected by
 their managed artifact paths.
+Work-item logs are overwritten when the corresponding logical workload starts
+again. Worker logs record the timestamped sequence of work items claimed by
+each generic worker. \code{cdrgam_cli_log()} shows work-item logs by default and
+worker logs when \code{worker = TRUE}.
 }

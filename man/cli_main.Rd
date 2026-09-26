@@ -8,6 +8,7 @@ cli_main(args = commandArgs(trailingOnly = TRUE))
   \item{args}{Command arguments excluding the executable name.}
 }
 \description{
-Parse command-line arguments and dispatch a project-management command.
+Parse command-line arguments, render contextual help, and dispatch a
+project-management command.
 }
 \value{An integer exit status, invisibly.}

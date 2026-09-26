@@ -6,7 +6,9 @@ limit, and optional Slurm defaults. During development the instance directory
 is normally the source checkout. It may instead be any writable directory,
 which keeps mutable configuration outside an installed R package. The same
 commands run serially on a local machine or submit work through a shared Slurm
-scheduler and generic worker pool.
+scheduler and generic worker pool. A Slurm worker exits after five consecutive
+minutes without ready work; the scheduler submits another worker when later
+work becomes ready.
 
 Install from the checkout:
 
@@ -46,34 +48,46 @@ cdrgam def val brown --deep
 cdrgam run -P brown -m main
 ```
 
+Every command provides contextual help. Use `cdrgam --help` to list public
+commands, `cdrgam COMMAND --help` for its options, or `cdrgam help def edit`
+for a nested command. Internal scheduler and worker commands are omitted from
+public help.
+
 `cdrgam def edit` creates missing definitions and opens existing ones with
 `$VISUAL`, `$EDITOR`, or R's configured editor. If validation fails, the edited
 content is saved as a private draft and reopened by the same command; the last
-valid published definition remains unchanged. Initialize a project from another
+valid published definition remains unchanged. Closing the editor without saving
+cancels the edit without creating a draft. Initialize a project from another
 project's definitions, without copying generated artifacts, with:
 
 ```sh
 cdrgam def edit brown-replication --source brown
 ```
 
-The same option copies a subordinate definition within a project:
+The same option opens a copy of a subordinate definition for editing before
+publishing it under the new name:
 
 ```sh
 cdrgam def edit brown --model main-alternative --source main
 ```
 
-Delete an unused definition explicitly with `def del`:
+Remove an unused definition explicitly with `def rm`:
 
 ```sh
-cdrgam def del brown --model main-alternative
+cdrgam def rm brown --model main-alternative
 ```
 
-Deletion is refused while another definition references the target or while
+Removal is refused while another definition references the target or while
 generated results exist. Remove matching results first when requested:
 
 ```sh
 cdrgam purge -P brown -m main-alternative --yes
 ```
+
+`def rm` selects targets by filename and does not validate their contents, so
+malformed definitions remain removable. It reads the reference-bearing fields
+of relevant non-target definitions and enforces reference, result, and
+active-work safeguards.
 
 Validate an entire project or diagnose one definition without changing it:
 
@@ -82,8 +96,22 @@ cdrgam def val brown --deep
 cdrgam def val brown --model main alternative
 ```
 
+List all definitions, or combine selectors to list specific matches:
+
+```sh
+cdrgam def ls
+cdrgam def ls brown
+cdrgam def ls brown --model
+cdrgam def ls brown --dataset 'brown-*' --model 'main*'
+```
+
+Bare `cdrgam def ls` lists the checkout's available projects. A selector
+without values lists every definition of that type. Once any type selector is
+supplied, unselected types are omitted.
+
 Definition selectors accept multiple values. `edit` processes literal names in
-order; `val` and `del` also accept `*` patterns and operate on every match.
+order; `ls`, `val`, and `rm` also accept `*` patterns and operate on every
+match.
 
 A model declares its training and prediction datasets:
 

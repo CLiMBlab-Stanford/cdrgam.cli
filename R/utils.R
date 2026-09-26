@@ -149,6 +149,17 @@
     )
 }
 
+.cdrgam_cli_process_pager <- function(
+        command, arguments=character(), runner=base::system2
+) {
+    status <- tryCatch(
+        runner(command, vapply(arguments, shQuote, character(1))),
+        error=function(error) NA_integer_
+    )
+    if (is.null(status)) status <- 0L
+    list(status=as.integer(status[[1L]]))
+}
+
 .cdrgam_cli_absolute_path <- function(path) {
     fs::is_absolute_path(path)
 }

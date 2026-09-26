@@ -4,6 +4,34 @@
     sort(list.files(directory, pattern='\\.ya?ml$', full.names=TRUE))
 }
 
+.cdrgam_cli_definition_identity_field <- function(type) {
+    switch(
+        type,
+        dataset='dataset',
+        model='model',
+        visualization='visualization',
+        comparison='comparison',
+        .cdrgam_cli_abort(paste0('Unknown definition type: ', type))
+    )
+}
+
+.cdrgam_cli_reject_definition_identity <- function(value, type, path) {
+    field <- .cdrgam_cli_definition_identity_field(type)
+    if (field %in% names(value)) {
+        .cdrgam_cli_abort(paste0(
+            path, ': ', field,
+            ' is derived from the file name and must be omitted'
+        ))
+    }
+    value
+}
+
+.cdrgam_cli_assign_definition_identity <- function(value, type, name, path) {
+    field <- .cdrgam_cli_definition_identity_field(type)
+    value[[field]] <- .cdrgam_cli_name(name, paste0(path, ': file name'))
+    value
+}
+
 .cdrgam_cli_validate_schema <- function(value, path) {
     if (is.null(value$schema) || !is.numeric(value$schema) ||
             length(value$schema) != 1L || value$schema != 1) {
@@ -26,6 +54,17 @@
         .cdrgam_cli_abort(paste0(path, ': project.id must be one safe path component'))
     }
     value
+}
+
+.cdrgam_cli_canonical_formula <- function(value, field) {
+    value <- .cdrgam_cli_scalar_character(value, field)
+    formula <- tryCatch(
+        stats::as.formula(value),
+        error=function(error) .cdrgam_cli_abort(paste0(
+            field, ' must be a valid R formula: ', conditionMessage(error)
+        ))
+    )
+    paste(deparse(formula, width.cutoff=500L), collapse=' ')
 }
 
 .cdrgam_cli_validate_source <- function(value, field, root, check_exists=TRUE) {
@@ -84,11 +123,11 @@
 
 .cdrgam_cli_validate_dataset <- function(value, path, root, check_exists=TRUE) {
     .cdrgam_cli_validate_schema(value, path)
+    .cdrgam_cli_reject_definition_identity(value, 'dataset', path)
     .cdrgam_cli_check_keys(
-        value, c('schema', 'dataset', 'sources', 'columns', 'filters', 'preprocess'), path,
-        c('schema', 'dataset', 'sources', 'columns')
+        value, c('schema', 'sources', 'columns', 'filters', 'preprocess'), path,
+        c('schema', 'sources', 'columns')
     )
-    value$dataset <- .cdrgam_cli_name(value$dataset, paste0(path, ': dataset'))
     .cdrgam_cli_check_keys(
         value$sources, c('impulses', 'responses'), paste0(path, ': sources'),
         c('impulses', 'responses')
@@ -310,14 +349,14 @@
 
 .cdrgam_cli_validate_model <- function(value, path) {
     .cdrgam_cli_validate_schema(value, path)
+    .cdrgam_cli_reject_definition_identity(value, 'model', path)
     .cdrgam_cli_check_keys(
         value, c(
-            'schema', 'model', 'datasets', 'formula', 'window',
+            'schema', 'datasets', 'formula', 'window',
             .cdrgam_cli_irf_default_keys, 'fit'
         ), path,
-        c('schema', 'model', 'datasets', 'formula')
+        c('schema', 'datasets', 'formula')
     )
-    value$model <- .cdrgam_cli_name(value$model, paste0(path, ': model'))
     if (!is.list(value$datasets) || is.null(names(value$datasets)) ||
             any(!nzchar(names(value$datasets))) || anyDuplicated(names(value$datasets))) {
         .cdrgam_cli_abort(paste0(path, ': datasets must be a named mapping'))
@@ -341,11 +380,11 @@
         }
         value$formula <- lapply(
             value$formula,
-            .cdrgam_cli_scalar_character,
+            .cdrgam_cli_canonical_formula,
             field=paste0(path, ': formula parameter')
         )
     } else {
-        value$formula <- .cdrgam_cli_scalar_character(
+        value$formula <- .cdrgam_cli_canonical_formula(
             value$formula, paste0(path, ': formula')
         )
     }
@@ -438,15 +477,13 @@
 
 .cdrgam_cli_validate_visualization <- function(value, path) {
     .cdrgam_cli_validate_schema(value, path)
+    .cdrgam_cli_reject_definition_identity(value, 'visualization', path)
     .cdrgam_cli_check_keys(
         value, c(
-            'schema', 'visualization', 'model', 'kind', 'predictions', 'pages',
+            'schema', 'model', 'kind', 'predictions', 'pages',
             'query', 'layers', 'render'
         ),
-        path, c('schema', 'visualization', 'model')
-    )
-    value$visualization <- .cdrgam_cli_name(
-        value$visualization, paste0(path, ': visualization')
+        path, c('schema', 'model')
     )
     value$model <- .cdrgam_cli_name(value$model, paste0(path, ': model'))
     legacy <- !is.null(value$kind)
@@ -736,11 +773,11 @@
 
 .cdrgam_cli_validate_comparison <- function(value, path) {
     .cdrgam_cli_validate_schema(value, path)
+    .cdrgam_cli_reject_definition_identity(value, 'comparison', path)
     .cdrgam_cli_check_keys(
-        value, c('schema', 'comparison', 'models', 'evaluation', 'methods'),
-        path, c('schema', 'comparison', 'models', 'methods')
+        value, c('schema', 'models', 'evaluation', 'methods'),
+        path, c('schema', 'models', 'methods')
     )
-    value$comparison <- .cdrgam_cli_name(value$comparison, paste0(path, ': comparison'))
     if (!is.character(value$models) || length(value$models) < 2L) {
         .cdrgam_cli_abort(paste0(path, ': models must contain at least two names'))
     }
@@ -771,30 +808,36 @@
     value
 }
 
-.cdrgam_cli_read_definitions <- function(project=NULL, check_sources=TRUE, checkout=NULL) {
+.cdrgam_cli_read_project_definition <- function(project=NULL, checkout=NULL) {
     root <- find_cdrgam_project(project, checkout)
     project_path <- file.path(root, .cdrgam_cli_marker)
-    project <- .cdrgam_cli_validate_project(
+    definition <- .cdrgam_cli_validate_project(
         .cdrgam_cli_read_yaml(project_path), project_path
     )
-    project$project$name <- basename(root)
+    definition$project$name <- basename(root)
+    list(root=root, definition=definition)
+}
+
+.cdrgam_cli_read_definitions <- function(project=NULL, check_sources=TRUE, checkout=NULL) {
+    project_record <- .cdrgam_cli_read_project_definition(project, checkout)
+    root <- project_record$root
+    project <- project_record$definition
     read_kind <- function(directory, validator, ...) {
         files <- .cdrgam_cli_definition_files(root, directory)
+        type <- switch(
+            directory,
+            datasets='dataset', models='model',
+            visualizations='visualization', comparisons='comparison'
+        )
         values <- lapply(files, function(path) {
-            validator(.cdrgam_cli_read_yaml(path), path, ...)
+            value <- validator(.cdrgam_cli_read_yaml(path), path, ...)
+            expected <- sub('\\.ya?ml$', '', basename(path))
+            .cdrgam_cli_assign_definition_identity(
+                value, type, expected, path
+            )
         })
         if (!length(values)) return(list())
-        names(values) <- vapply(values, function(value) {
-            value[[switch(directory, datasets='dataset', models='model',
-                visualizations='visualization', comparisons='comparison')]]
-        }, character(1))
-        duplicates <- unique(names(values)[duplicated(names(values))])
-        if (length(duplicates)) {
-            .cdrgam_cli_abort(paste0(
-                'Duplicate ', directory, ' definitions: ',
-                paste(duplicates, collapse=', ')
-            ))
-        }
+        names(values) <- sub('\\.ya?ml$', '', basename(files))
         values
     }
     datasets <- read_kind('datasets', .cdrgam_cli_validate_dataset,

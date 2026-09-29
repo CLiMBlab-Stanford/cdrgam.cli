@@ -88,6 +88,8 @@ redundant model identity field.
 
 ```text
 projects/PROJECT/
+  code/
+    ...
   definitions/
     project.yml
     datasets/
@@ -95,20 +97,21 @@ projects/PROJECT/
     visualizations/
     comparisons/
     analyses/
-  datasets/
-    DATASET/
-  models/
-    MODEL/
-      effects/
-        EFFECT-IDENTITY/
-      predictions/
-        DATASET/
-      visualizations/
-        VISUALIZATION/
-  comparisons/
-    COMPARISON/
-  analyses/
-    ANALYSIS/
+  results/
+    datasets/
+      DATASET/
+    models/
+      MODEL/
+        effects/
+          EFFECT-IDENTITY/
+        predictions/
+          DATASET/
+        visualizations/
+          VISUALIZATION/
+    comparisons/
+      COMPARISON/
+    analyses/
+      ANALYSIS/
   .cdrgam/
     logs/
       KIND/
@@ -116,13 +119,19 @@ projects/PROJECT/
     work/
 ```
 
-Definitions are user-owned inputs. The other top-level directories contain
-published artifacts and may be recreated. Attempts and checkpoints live under
-the project's `.cdrgam/work` directory so that large temporary files share the
-artifact filesystem. Each logical work item has one project-private process
-log that is overwritten when that workload starts again. Checkout-wide request
-records, scheduler scripts, worker scripts, scheduler logs, and one lifecycle
-log per generic worker remain under the root-level `.cdrgam` directory.
+`code/`, `definitions/`, and other nonignored project metadata are user-owned
+project sources. The harness creates
+`code/` as a place for analysis scripts but does not interpret, execute, or
+purge its contents. Dataset definitions may refer to scripts there through
+project-relative paths. The result directories contain published artifacts and
+may be recreated. Attempts and checkpoints live under the project's
+`.cdrgam/work` directory so that large temporary files share the artifact
+filesystem. The complete `results/` tree is ignored by Git unless a user
+explicitly selects Git result publication. Each logical work item has one
+project-private process log that is
+overwritten when that workload starts again. Checkout-wide request records,
+scheduler scripts, worker scripts, scheduler logs, and one lifecycle log per
+generic worker remain under the root-level `.cdrgam` directory.
 
 ## Project definition
 
@@ -137,7 +146,9 @@ The generated ID remains stable if the project directory moves or is renamed
 within its configured root. At runtime the directory name takes precedence
 over the descriptive `project.name` value.
 
-`cdrgam def edit PROJECT` creates a missing project or edits its project definition.
+`cdrgam def init PROJECT` creates a project, initializes a Git repository on
+branch `main`, and stages its initial sources. `cdrgam def edit PROJECT` creates
+a missing project or edits its project definition.
 Definition selectors create or edit subordinate definitions, for example
 `cdrgam def edit PROJECT --dataset DATASET` and
 `cdrgam def edit PROJECT --model MODEL`. Existing definitions are edited through a
@@ -149,11 +160,12 @@ checkout's `.cdrgam/drafts/` directory.
 Closing the editor without saving cancels the edit: no target is published and
 no draft is created.
 
-`cdrgam def edit DESTINATION --source SOURCE` creates a new project ID and copies
-the source project's complete `definitions/` tree. It does not copy
-datasets, fitted models, predictions, visualizations, comparisons, analyses,
-logs, or private orchestration state. Relative source and preprocessing paths
-are preserved and may therefore need editing in the destination project.
+`cdrgam def init DESTINATION --source SOURCE` creates a new project ID and copies
+the source project's complete `definitions/` and `code/` trees. It does not
+copy datasets, fitted models, predictions, visualizations, comparisons,
+analyses, logs, or private orchestration state. Relative source and
+preprocessing paths are preserved and may therefore need editing in the
+destination project.
 
 With a definition selector, `--source` instead initializes a new definition
 of the selected type in the target project. For example,
@@ -183,11 +195,13 @@ removal because dependency safety cannot be established.
 Bare `cdrgam def ls` lists every available project in the checkout.
 `cdrgam def ls PROJECT` lists the project definition and every subordinate
 definition. Dataset, model, visualization, and comparison selectors accept
-multiple names and `*` patterns. Multiple selector types may be combined; the
-result contains the matching definitions from each supplied type. Listing
-uses definition filenames and does not require the YAML contents to validate.
-A selector without values selects every definition of that type, as in
-`cdrgam def ls brown --model`.
+multiple names, `*` globs, and `re:`-prefixed Perl-compatible regular
+expressions. Regular expressions use substring matching unless explicitly
+anchored with `^` or `$`. Multiple selector types may be combined; the result
+contains the matching definitions from each supplied type. Listing uses
+definition filenames and does not require the YAML contents to validate. A
+selector without values selects every definition of that type, as in `cdrgam
+def ls brown --model`.
 
 `cdrgam def val PROJECT` validates the complete project. A definition selector
 validates only that definition and its direct prerequisites, so an unrelated
@@ -197,8 +211,9 @@ the checkout configuration.
 
 Definition selectors accept multiple values after one option, or through a
 repeated option. `def edit` treats each value as a literal definition name and
-opens the files in order. `def ls`, `def val`, and `def rm` accept `*` patterns
-and apply to every match. Removal checks every match before removing any file.
+opens the files in order. `def ls`, `def val`, and `def rm` accept `*` globs
+and `re:` regular expressions and apply to every match. Removal checks every
+match before removing any file.
 
 ## Dataset definition
 
@@ -291,6 +306,10 @@ fit:
   link: identity
   backend: sparse
   rescale_predictors: true
+autosimplify:
+  enabled: false
+  max_steps: 5
+  conservatism: 1
 ```
 
 `datasets.train` is required and selects the fitting dataset. Other keys are
@@ -324,6 +343,24 @@ interval increases representational resolution there without increasing
 
 Settings omitted from `fit` follow the installed core defaults. Completed fit
 manifests record both requested and effective settings.
+
+`autosimplify` is optional and disabled when omitted. Set it to `true`, or to
+a mapping with `enabled: true`, to let a nonconverged fit be diagnosed,
+simplified, and refitted. The core ranks candidates by convergence evidence
+and discounts edits by the estimated fitted degrees of freedom they remove;
+larger `conservatism` values favor narrower edits more strongly. `max_steps`
+limits fit attempts, including the initial requested model. Optional `allow`
+and `protect` lists restrict the accepted action names and exact reported term
+names. Supported actions are `drop_grouped_deviation`, `drop_random_effect`,
+`drop_term`, and `intercept_only_parameter`.
+
+Each formula change starts with a fresh optimizer state. A converged terminal
+fit alone is published at the model's standard artifact path. Nonconverged
+intermediate fits remain under `.cdrgam/autosimplify/steps` in that artifact,
+and `derived-config.yml` records the formula actually fitted. The private
+chain records the original definition contract and every exact formula
+replacement. If no eligible edit yields convergence within `max_steps`, the
+work item fails and no nonconverged model is published at the standard path.
 
 `fit.family` accepts `gaussian`, `binomial`, `poisson`, `Gamma`, or `gaulss`
 through
@@ -487,11 +524,17 @@ the corresponding prediction artifacts.
 `run` and `plan` accept project, model, prediction, visualization, and
 comparison selectors. Supplied dimensions are conjunctive. Repeating
 `--prediction` requests multiple partitions of the same selected model.
+Project, model, visualization, and comparison selectors accept exact names,
+`*` globs, and `re:`-prefixed Perl-compatible regular expressions. Regexes use
+substring matching unless anchored. Prediction selectors remain exact because
+each value resolves first as a model-local partition and then as a dataset
+definition.
 
 ```sh
 cdrgam run -P brown -m main -p val -p test
 cdrgam run -P brown -m main -v main-effects
 cdrgam run -P brown -c alternatives
+cdrgam run -P val -m 're:^natstor-(raw|log)-l[01]s[01]h[01]$'
 ```
 
 Downstream work includes its complete dependency closure. Explicit ancestors
@@ -535,3 +578,40 @@ If a worker disappears while it owns an item, that item becomes failed and its
 dependants become blocked. The scheduler does not retry terminal failures; a
 new `cdrgam run` request is required. A temporary failure to query Slurm leaves
 worker state unchanged.
+
+## Publication and fetching
+
+Every initialized project is a Git repository. Successful `def edit`, `def rm`,
+and project-copy operations stage the source paths they change. Invalid drafts
+are private and remain unstaged. The harness never commits or pushes
+implicitly.
+
+`cdrgam publish PROJECT` validates sources, writes the tracked
+`publication.yml`, and stages it. Result modes are:
+
+- `none`, which publishes project sources without results;
+- `archive`, which writes a verified `.tar.gz` containing selected artifacts,
+  their dependency closure, checksums, contracts, and a source snapshot;
+- `url`, which records a direct archive URL and required SHA-256 checksum; and
+- `git`, which force-stages selected results despite the normal ignore rule.
+
+Archive and Git modes reject incomplete, stale, and nonconverged selected
+artifacts. `--commit MESSAGE` commits all changes already staged in the project
+repository, including definition edits. `--push` runs Git push only when it is
+explicitly supplied together with `--commit`. Uploading a generated archive to a data repository is a
+separate operation; rerun publication in URL mode after obtaining its direct
+download URL.
+
+`cdrgam fetch LOCATION` accepts a Git repository or a direct project source
+archive. It validates the stable project ID and publication metadata. When a
+direct results URL is present, or `--results LOCATION` supplies an override,
+the command downloads the archive, verifies its SHA-256 and per-file inventory,
+and installs it under `results/`. The completed project is moved into the local
+root atomically, and the checkout registry is reconstructed from complete
+artifact manifests. `--source-only` skips result hydration.
+
+Git revisions are provenance rather than freshness inputs. Result publications
+record the project revision and dirty state present when the archive was made,
+while each artifact retains the core and harness implementation information
+recorded at execution. Artifact contracts and checksums determine whether a
+fetched result is current for the fetched definitions.

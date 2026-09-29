@@ -1,5 +1,44 @@
 .cdrgam_cli_manifest_path <- function(directory) file.path(directory, 'manifest.yml')
 
+.cdrgam_cli_valid_derivation <- function(directory, derivation) {
+    if (is.null(derivation)) return(TRUE)
+    required <- c('intent_contract', 'final_contract', 'chain', 'derived_config')
+    if (!all(required %in% names(derivation))) return(FALSE)
+    chain_path <- file.path(directory, derivation$chain)
+    derived_path <- file.path(directory, derivation$derived_config)
+    private <- dirname(chain_path)
+    intended_path <- file.path(private, 'intended-config.yml')
+    if (!all(file.exists(c(chain_path, derived_path, intended_path)))) return(FALSE)
+    value <- tryCatch({
+        chain <- .cdrgam_cli_read_yaml(chain_path)
+        model <- .cdrgam_cli_read_yaml(intended_path)
+        if (!identical(chain$intent_contract, derivation$intent_contract) ||
+                !identical(chain$final_contract, derivation$final_contract) ||
+                length(chain$steps) != as.integer(derivation$steps)) return(FALSE)
+        if (!identical(
+                .cdrgam_cli_model_contract(model), derivation$intent_contract
+        )) return(FALSE)
+        for (step in chain$steps) {
+            if (!identical(
+                    .cdrgam_cli_model_contract(model), step$input_contract
+            )) return(FALSE)
+            model <- .cdrgam_cli_apply_formula_patches(
+                model, .cdrgam_cli_null(step$preparation_patches, list())
+            )
+            if (!is.null(step$patch)) {
+                model <- .cdrgam_cli_apply_formula_patch(model, step$patch)
+            }
+            if (!identical(
+                    .cdrgam_cli_model_contract(model), step$result_contract
+            )) return(FALSE)
+        }
+        derived <- .cdrgam_cli_read_yaml(derived_path)
+        identical(.cdrgam_cli_model_contract(model), derivation$final_contract) &&
+            identical(.cdrgam_cli_model_contract(derived), derivation$final_contract)
+    }, error=function(error) FALSE)
+    isTRUE(value)
+}
+
 .cdrgam_cli_complete_artifact <- function(directory, identity=NULL) {
     manifest_path <- .cdrgam_cli_manifest_path(directory)
     if (!file.exists(manifest_path)) return(FALSE)
@@ -7,6 +46,11 @@
     if (is.null(manifest) || !identical(manifest$status, 'complete') ||
             is.null(manifest$outputs)) return(FALSE)
     if (!is.null(identity) && !identical(manifest$identity, identity)) return(FALSE)
+    if (identical(manifest$kind, 'fit') &&
+            identical(manifest$result$diagnostics$converged, FALSE)) return(FALSE)
+    if (identical(manifest$kind, 'fit') && !.cdrgam_cli_valid_derivation(
+            directory, manifest$result$derivation
+    )) return(FALSE)
     all(vapply(manifest$outputs, function(output) {
         path <- file.path(directory, output$path)
         file.exists(path) && identical(.cdrgam_cli_source_hash(path), output$md5)
@@ -122,6 +166,21 @@
     label <- paste0(format(Sys.time(), '%Y%m%dT%H%M%S'), '-', Sys.getpid())
     path <- file.path(parent, label)
     if (!dir.create(path)) .cdrgam_cli_abort(paste0('Could not create ', path))
+    if (identical(item$kind, 'fit')) {
+        manifest_path <- .cdrgam_cli_manifest_path(item$output)
+        manifest <- if (file.exists(manifest_path)) tryCatch(
+            .cdrgam_cli_read_yaml(manifest_path), error=function(error) NULL
+        ) else NULL
+        source <- file.path(item$output, 'optimizer-checkpoint.rds')
+        same_nonconverged_fit <- !is.null(manifest) &&
+            identical(manifest$kind, 'fit') &&
+            identical(manifest$identity, item$identity) &&
+            identical(manifest$result$diagnostics$converged, FALSE)
+        if (same_nonconverged_fit && file.exists(source) &&
+                !file.copy(source, file.path(path, basename(source)))) {
+            .cdrgam_cli_abort('Could not seed the fit attempt from its checkpoint')
+        }
+    }
     list(path=path, resumed=FALSE)
 }
 
@@ -227,11 +286,13 @@
     )
 }
 
-.cdrgam_cli_execute_fit <- function(item, stage) {
-    data <- .cdrgam_cli_load_dataset(item$dataset)
+.cdrgam_cli_execute_fit_once <- function(
+        item, stage, model=item$model, data=NULL, render_booklet=TRUE
+) {
+    if (is.null(data)) data <- .cdrgam_cli_load_dataset(item$dataset)
     .cdrgam_cli_check_dataset_columns(item$dataset, data)
-    design <- .cdrgam_cli_prepare_model(item$model, item$dataset, data)
-    fit_control <- item$model$fit
+    design <- .cdrgam_cli_prepare_model(model, item$dataset, data)
+    fit_control <- model$fit
     checkpoint <- file.path(stage, 'optimizer-checkpoint.rds')
     backend <- .cdrgam_cli_null(fit_control[['backend', exact=TRUE]], 'mgcv')
     distributional <- identical(
@@ -312,7 +373,7 @@
     .cdrgam_cli_write_yaml(
         .cdrgam_cli_diagnostics(fit), file.path(stage, 'diagnostics.yml')
     )
-    booklet <- tryCatch(
+    booklet <- if (isTRUE(render_booklet)) tryCatch(
         .cdrgam_cli_default_booklet(fit, file.path(stage, 'booklet.pdf')),
         error=function(error) {
             warning(
@@ -322,12 +383,13 @@
             )
             NULL
         }
-    )
-    if (file.exists(checkpoint)) unlink(checkpoint)
+    ) else NULL
+    diagnostics <- .cdrgam_cli_diagnostics(fit)
+    if (isTRUE(diagnostics$converged) && file.exists(checkpoint)) unlink(checkpoint)
     list(
-        diagnostics=.cdrgam_cli_diagnostics(fit),
+        diagnostics=diagnostics,
         configuration=list(
-            requested=item$model$fit,
+            requested=model$fit,
             effective=.cdrgam_cli_effective_model_configuration(fit, design)
         ),
         response_name=design$response_name,
@@ -336,8 +398,243 @@
             .cdrgam_cli_formula_text
         ),
         simplifications=design$simplifications,
-        booklet=booklet
+        booklet=booklet,
+        .fit=fit
     )
+}
+
+.cdrgam_cli_model_definition <- function(model) {
+    attr(model, 'path') <- NULL
+    model$model <- NULL
+    model
+}
+
+.cdrgam_cli_model_contract <- function(model) {
+    value <- .cdrgam_cli_scientific_definition(
+        .cdrgam_cli_model_definition(model)
+    )
+    canonical <- yaml::yaml.load(yaml::as.yaml(value), eval.expr=FALSE)
+    .cdrgam_cli_short_hash(canonical)
+}
+
+.cdrgam_cli_formula_patch <- function(path, before, after, source) {
+    list(
+        operation='replace_formula', path=path,
+        before=.cdrgam_cli_canonical_formula(before, paste0(source, ' before')),
+        after=.cdrgam_cli_canonical_formula(after, paste0(source, ' after')),
+        source=source
+    )
+}
+
+.cdrgam_cli_apply_formula_patch <- function(model, patch) {
+    if (!identical(patch$operation, 'replace_formula')) {
+        .cdrgam_cli_abort(paste0(
+            'Unsupported autosimplification operation: ', patch$operation
+        ))
+    }
+    pieces <- strsplit(patch$path, '.', fixed=TRUE)[[1L]]
+    if (!identical(pieces[[1L]], 'formula') || length(pieces) > 2L) {
+        .cdrgam_cli_abort(paste0(
+            'Invalid autosimplification formula path: ', patch$path
+        ))
+    }
+    current <- if (length(pieces) == 1L) {
+        model$formula
+    } else model$formula[[pieces[[2L]], exact=TRUE]]
+    current <- .cdrgam_cli_canonical_formula(current, patch$path)
+    before <- .cdrgam_cli_canonical_formula(patch$before, patch$path)
+    if (!identical(current, before)) {
+        .cdrgam_cli_abort(paste0(
+            'Autosimplification patch precondition failed at ', patch$path
+        ))
+    }
+    after <- .cdrgam_cli_canonical_formula(patch$after, patch$path)
+    if (length(pieces) == 1L) {
+        model$formula <- after
+    } else model$formula[[pieces[[2L]]]] <- after
+    model
+}
+
+.cdrgam_cli_materialize_formula_patches <- function(model, effective) {
+    distributional <- is.list(model$formula)
+    parameters <- if (distributional) names(model$formula) else NULL
+    paths <- if (distributional) paste0('formula.', parameters) else 'formula'
+    current <- if (distributional) model$formula else list(model$formula)
+    target <- if (distributional) effective else list(effective)
+    patches <- list()
+    for (i in seq_along(paths)) {
+        before <- .cdrgam_cli_canonical_formula(current[[i]], paths[[i]])
+        after <- .cdrgam_cli_canonical_formula(target[[i]], paths[[i]])
+        if (!identical(before, after)) {
+            patches[[length(patches) + 1L]] <- .cdrgam_cli_formula_patch(
+                paths[[i]], before, after, 'model preparation'
+            )
+        }
+    }
+    patches
+}
+
+.cdrgam_cli_apply_formula_patches <- function(model, patches) {
+    for (patch in patches) model <- .cdrgam_cli_apply_formula_patch(model, patch)
+    model
+}
+
+.cdrgam_cli_report_records <- function(report) {
+    candidates <- as.data.frame(report)
+    if (!nrow(candidates)) return(list())
+    lapply(seq_len(nrow(candidates)), function(index) {
+        as.list(candidates[index, , drop=FALSE])
+    })
+}
+
+.cdrgam_cli_select_simplification <- function(report, policy) {
+    candidates <- as.data.frame(report)
+    eligible <- which(
+        candidates$automatable & candidates$action %in% policy$allow &
+        !(candidates$term %in% policy$protect)
+    )
+    if (!length(eligible)) return(NULL)
+    candidate <- candidates[eligible[[1L]], , drop=FALSE]
+    list(candidate=as.list(candidate), patch=report$patches[[candidate$patch_id]])
+}
+
+.cdrgam_cli_move_step_outputs <- function(step, stage) {
+    paths <- list.files(step, all.files=TRUE, no..=TRUE, full.names=TRUE)
+    paths <- paths[!(basename(paths) %in% c(
+        'input-config.yml', 'derived-config.yml', 'simplification-report.yml'
+    ))]
+    for (path in paths) {
+        .cdrgam_cli_replace_path(path, file.path(stage, basename(path)))
+    }
+    unlink(step, recursive=TRUE, force=TRUE)
+    invisible(stage)
+}
+
+.cdrgam_cli_execute_fit <- function(item, stage) {
+    policy <- item$model$autosimplify
+    if (is.null(policy)) policy <- list(enabled=FALSE)
+    if (!isTRUE(policy$enabled)) {
+        result <- .cdrgam_cli_execute_fit_once(item, stage)
+        result$.fit <- NULL
+        return(result)
+    }
+    data <- .cdrgam_cli_load_dataset(item$dataset)
+    .cdrgam_cli_check_dataset_columns(item$dataset, data)
+    model <- item$model
+    intent <- .cdrgam_cli_model_definition(model)
+    intent_contract <- .cdrgam_cli_model_contract(model)
+    private <- file.path(stage, '.cdrgam', 'autosimplify')
+    steps <- file.path(private, 'steps')
+    if (!dir.create(steps, recursive=TRUE, showWarnings=FALSE) &&
+            !dir.exists(steps)) {
+        .cdrgam_cli_abort('Could not create the autosimplification archive')
+    }
+    .cdrgam_cli_write_yaml(intent, file.path(private, 'intended-config.yml'))
+    chain <- list(
+        schema=1L, intent_contract=intent_contract, policy=policy,
+        steps=list()
+    )
+    final <- NULL
+    for (step_index in seq_len(policy$max_steps)) {
+        step <- file.path(steps, sprintf('%03d', step_index))
+        if (!dir.create(step, recursive=TRUE, showWarnings=FALSE) &&
+                !dir.exists(step)) {
+            .cdrgam_cli_abort('Could not create an autosimplification step')
+        }
+        input_contract <- .cdrgam_cli_model_contract(model)
+        .cdrgam_cli_write_yaml(
+            .cdrgam_cli_model_definition(model), file.path(step, 'input-config.yml')
+        )
+        message(
+            'Autosimplification fit ', step_index, ' of ', policy$max_steps,
+            ' [', input_contract, ']'
+        )
+        result <- .cdrgam_cli_execute_fit_once(
+            item, step, model=model, data=data, render_booklet=FALSE
+        )
+        fit <- result$.fit
+        result$.fit <- NULL
+        materialization <- .cdrgam_cli_materialize_formula_patches(
+            model, result$formulas$effective
+        )
+        model <- .cdrgam_cli_apply_formula_patches(model, materialization)
+        record <- list(
+            step=step_index, input_contract=input_contract,
+            diagnostics=result$diagnostics,
+            preparation_patches=materialization
+        )
+        if (isTRUE(result$diagnostics$converged)) {
+            record$result_contract <- .cdrgam_cli_model_contract(model)
+            chain$steps[[length(chain$steps) + 1L]] <- record
+            final <- list(result=result, fit=fit, step=step)
+            break
+        }
+        report <- cdrgam::suggest_simplifications(
+            fit, max_candidates=Inf, conservatism=policy$conservatism
+        )
+        .cdrgam_cli_write_yaml(
+            list(
+                converged=report$converged,
+                gradient_tolerance=report$gradient_tolerance,
+                conservatism=report$conservatism,
+                candidates=.cdrgam_cli_report_records(report)
+            ),
+            file.path(step, 'simplification-report.yml')
+        )
+        selected <- if (step_index < policy$max_steps) {
+            .cdrgam_cli_select_simplification(report, policy)
+        } else NULL
+        if (is.null(selected)) {
+            record$result_contract <- .cdrgam_cli_model_contract(model)
+            chain$steps[[length(chain$steps) + 1L]] <- record
+            break
+        }
+        patch <- selected$patch
+        patch$source <- 'fit diagnostics'
+        model <- .cdrgam_cli_apply_formula_patch(model, patch)
+        record$selection <- selected$candidate
+        record$patch <- patch
+        record$result_contract <- .cdrgam_cli_model_contract(model)
+        chain$steps[[length(chain$steps) + 1L]] <- record
+        .cdrgam_cli_write_yaml(
+            .cdrgam_cli_model_definition(model), file.path(step, 'derived-config.yml')
+        )
+        message(
+            'Selected ', selected$candidate$term, ' (',
+            selected$candidate$action, '); refitting from a fresh optimizer state'
+        )
+    }
+    chain$final_contract <- .cdrgam_cli_model_contract(model)
+    .cdrgam_cli_write_yaml(chain, file.path(private, 'chain.yml'))
+    .cdrgam_cli_write_yaml(
+        .cdrgam_cli_model_definition(model), file.path(stage, 'derived-config.yml')
+    )
+    if (is.null(final)) {
+        .cdrgam_cli_abort(paste0(
+            'Autosimplification did not produce a converged model after ',
+            length(chain$steps), ' fit attempts; archived attempts remain in ',
+            private
+        ))
+    }
+    final$result$booklet <- tryCatch(
+        .cdrgam_cli_default_booklet(final$fit, file.path(final$step, 'booklet.pdf')),
+        error=function(error) {
+            warning(
+                'Could not generate the default plot booklet: ',
+                conditionMessage(error), call.=FALSE
+            )
+            NULL
+        }
+    )
+    final$result$derivation <- list(
+        intent_contract=intent_contract,
+        final_contract=chain$final_contract,
+        steps=length(chain$steps),
+        chain=file.path('.cdrgam', 'autosimplify', 'chain.yml'),
+        derived_config='derived-config.yml'
+    )
+    .cdrgam_cli_move_step_outputs(final$step, stage)
+    final$result
 }
 
 .cdrgam_cli_execute_prediction <- function(item, stage) {
@@ -462,8 +759,16 @@
 }
 
 .cdrgam_cli_execution_envelope <- function(definitions) {
+    source <- if (dir.exists(file.path(definitions$root, '.git'))) {
+        inventory <- .cdrgam_cli_source_inventory(definitions$root)
+        list(
+            revision=.cdrgam_cli_git_revision(definitions$root),
+            digest=.cdrgam_cli_inventory_digest(inventory)
+        )
+    } else NULL
     list(
         checkout=definitions$checkout$checkout,
+        project_source=source,
         R=R.home(), R_version=as.character(getRversion()),
         BLAS=unname(extSoftVersion()[['BLAS']]),
         libraries=.libPaths(),
@@ -531,14 +836,18 @@
             stop(error)
         }
     )
-    metadata$status <- 'complete'
+    nonconverged <- identical(item$kind, 'fit') &&
+        identical(result$diagnostics$converged, FALSE)
+    metadata$status <- if (nonconverged) 'nonconverged' else 'complete'
     metadata$completed_at <- .cdrgam_cli_timestamp()
     .cdrgam_cli_write_yaml(metadata, file.path(stage, 'attempt.yml'))
     write(paste0(
-        metadata$completed_at, ' COMPLETE ', item$kind, ' ', item$name
+        metadata$completed_at, ' ',
+        if (nonconverged) 'NONCONVERGED' else 'COMPLETE',
+        ' ', item$kind, ' ', item$name
     ), file=log_path, append=TRUE)
     relative_outputs <- setdiff(list.files(
-        stage, recursive=TRUE, all.files=FALSE, include.dirs=FALSE
+        stage, recursive=TRUE, all.files=TRUE, include.dirs=FALSE, no..=TRUE
     ), 'manifest.yml')
     manifest <- list(
         schema=1L, status='complete', project=item$project, kind=item$kind,
@@ -566,5 +875,9 @@
     .cdrgam_cli_publish_directory(stage, destination, definitions, item)
     published <- TRUE
     message('Published ', item$kind, ' artifact ', destination)
-    invisible(list(status='completed', path=destination, item=item$key))
+    invisible(list(
+        status=if (nonconverged) 'nonconverged' else 'completed',
+        path=destination, item=item$key,
+        message=if (nonconverged) result$diagnostics$message else NULL
+    ))
 }

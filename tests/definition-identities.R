@@ -204,7 +204,7 @@ local({
         project, 'definitions', 'models', 'spare.yml'
     )
     writeLines('model: [', spare_path)
-    spare_artifact <- file.path(project, 'models', 'spare')
+    spare_artifact <- file.path(project, 'results', 'models', 'spare')
     dir.create(spare_artifact, recursive=TRUE)
     results_error <- tryCatch({
         cli_main(c('def', 'rm', 'example', '--model', 'spare'))

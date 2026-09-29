@@ -245,6 +245,10 @@
         )
         message(if (saved) 'Updated ' else 'No changes to ', type,
             ' definition at ', target)
+        if (saved) {
+            .cdrgam_cli_git_track_project(root)
+            .cdrgam_cli_git_stage(root, target)
+        }
         return(invisible(target))
     }
     if (!is.null(source)) {
@@ -273,6 +277,8 @@
             initial_path=source_path
         )
         if (saved) {
+            .cdrgam_cli_git_track_project(root)
+            .cdrgam_cli_git_stage(root, target)
             message(
                 'Initialized ', type, ' definition ', name, ' from ', source,
                 ' at ', target
@@ -314,6 +320,8 @@
     }, add=TRUE)
     .cdrgam_cli_read_definitions(project, check_sources=FALSE, checkout=checkout)
     complete <- TRUE
+    .cdrgam_cli_git_track_project(definitions$root)
+    .cdrgam_cli_git_stage(definitions$root, target)
     message('Initialized ', type, ' definition at ', target)
     invisible(target)
 }
@@ -385,7 +393,7 @@
         dataset=.cdrgam_cli_path(definitions, 'dataset', name),
         model=.cdrgam_cli_path(definitions, 'model', name),
         visualization={
-            models_root <- file.path(definitions$root, 'models')
+            models_root <- file.path(definitions$root, 'results', 'models')
             model_names <- if (dir.exists(models_root)) {
                 basename(list.dirs(
                     models_root, recursive=FALSE, full.names=TRUE
@@ -620,6 +628,8 @@
         ))
     }
     complete <- TRUE
+    .cdrgam_cli_git_track_project(root)
+    .cdrgam_cli_git_stage(root, targets)
     message(
         'Removed ', length(names), ' ', type,
         if (length(names) == 1L) ' definition: ' else ' definitions: ',
@@ -678,9 +688,11 @@
 #' @param name One or more definition names when `type` is supplied. Validation
 #'   and removal accept `*` patterns; editing treats names literally.
 #' @param source Optional source project or subordinate definition name. The
-#'   source initializes the requested target without generated artifacts;
-#'   subordinate definitions are opened in the editor before publication.
-#' @param operation Either `"edit"` to create or edit a definition, or
+#'   source initializes the requested target without generated artifacts. A
+#'   project copy includes its definitions and `code/`; subordinate definitions
+#'   are opened in the editor before publication.
+#' @param operation Either `"init"` to initialize a project, `"edit"` to
+#'   create or edit a definition, or
 #'   `"rm"` to remove a subordinate definition after safety checks, or
 #'   `"val"` to validate definitions without changing them.
 #' @param deep Whether `operation="val"` should read data and prepare model
@@ -692,7 +704,7 @@
 #' @export
 cdrgam_cli_def <- function(
         project=NULL, type=NULL, name=NULL, source=NULL,
-        checkout=NULL, editor=NULL, operation=c('edit', 'rm', 'val'),
+        checkout=NULL, editor=NULL, operation=c('edit', 'init', 'rm', 'val'),
         deep=FALSE
 ) {
     operation <- match.arg(operation)
@@ -755,6 +767,23 @@ cdrgam_cli_def <- function(
             paste(supported, collapse=', ')
         ))
     }
+    if (identical(operation, 'init')) {
+        if (!is.null(type) || !is.null(name) || !is.null(editor)) {
+            .cdrgam_cli_abort(
+                'def init accepts only a project and optional source project'
+            )
+        }
+        root <- .cdrgam_cli_project_root(
+            project, checkout=checkout, must_work=FALSE
+        )
+        if (file.exists(root) || dir.exists(root)) {
+            .cdrgam_cli_abort(paste0('Project already exists: ', root))
+        }
+        if (is.null(source)) {
+            return(.cdrgam_cli_create_project(project, checkout))
+        }
+        return(.cdrgam_cli_copy_project_sources(source, project, checkout))
+    }
     if (identical(operation, 'val')) {
         if (!is.null(source) || !is.null(editor)) {
             .cdrgam_cli_abort('def val does not accept source or editor')
@@ -771,7 +800,7 @@ cdrgam_cli_def <- function(
             if (!is.null(editor)) {
                 .cdrgam_cli_abort('source cannot be combined with editor')
             }
-            return(.cdrgam_cli_copy_project_definitions(
+            return(.cdrgam_cli_copy_project_sources(
                 source, project, checkout
             ))
         }
@@ -803,6 +832,10 @@ cdrgam_cli_def <- function(
         )
         message(if (saved) 'Updated' else 'No changes to',
             ' project definition at ', target)
+        if (saved) {
+            .cdrgam_cli_git_track_project(root)
+            .cdrgam_cli_git_stage(root, target)
+        }
         return(invisible(target))
     }
     if (identical(operation, 'rm')) {

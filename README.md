@@ -41,7 +41,7 @@ Linux memory-limit detection belong to the `cdrgam` core; unsupported
 acceleration paths fall back to portable serial or lower-memory behavior.
 
 ```sh
-cdrgam def edit brown
+cdrgam def init brown
 cdrgam def edit brown --dataset training
 cdrgam def edit brown --model main
 cdrgam def val brown --deep
@@ -53,15 +53,18 @@ commands, `cdrgam COMMAND --help` for its options, or `cdrgam help def edit`
 for a nested command. Internal scheduler and worker commands are omitted from
 public help.
 
-`cdrgam def edit` creates missing definitions and opens existing ones with
+`cdrgam def init` creates a project, initializes a Git repository on `main`,
+and stages its initial source files. `cdrgam def edit` creates missing
+definitions and opens existing ones with
 `$VISUAL`, `$EDITOR`, or R's configured editor. If validation fails, the edited
 content is saved as a private draft and reopened by the same command; the last
 valid published definition remains unchanged. Closing the editor without saving
 cancels the edit without creating a draft. Initialize a project from another
-project's definitions, without copying generated artifacts, with:
+project's definitions and project-owned `code/`, without copying generated
+artifacts, with:
 
 ```sh
-cdrgam def edit brown-replication --source brown
+cdrgam def init brown-replication --source brown
 ```
 
 The same option opens a copy of a subordinate definition for editing before
@@ -103,6 +106,7 @@ cdrgam def ls
 cdrgam def ls brown
 cdrgam def ls brown --model
 cdrgam def ls brown --dataset 'brown-*' --model 'main*'
+cdrgam def ls brown --model 're:^main-(linear|nonlinear)$'
 ```
 
 Bare `cdrgam def ls` lists the checkout's available projects. A selector
@@ -110,8 +114,10 @@ without values lists every definition of that type. Once any type selector is
 supplied, unselected types are omitted.
 
 Definition selectors accept multiple values. `edit` processes literal names in
-order; `ls`, `val`, and `rm` also accept `*` patterns and operate on every
-match.
+order; `ls`, `val`, and `rm` also accept `*` globs and `re:`-prefixed
+Perl-compatible regular expressions and operate on every match. Regular
+expressions use ordinary substring matching unless you include `^` or `$`.
+Quote patterns so the shell does not interpret them.
 
 A model declares its training and prediction datasets:
 
@@ -126,11 +132,35 @@ Run selected predictions with model-internal partition names:
 
 ```sh
 cdrgam run -P brown -m main -p val -p test
+cdrgam run -P val -m 're:^natstor-(raw|log)-l[01]s[01]h[01]$'
 ```
 
-If a prediction selector is not a model partition, it must exactly match a
-dataset definition. Downstream visualizations and comparisons request their
-fit and prediction dependencies automatically.
+Project, model, visualization, and comparison selectors accept exact names,
+`*` globs, and `re:`-prefixed regular expressions. If a prediction selector is
+not a model partition, it must exactly match a dataset definition. Downstream
+visualizations and comparisons request their fit and prediction dependencies
+automatically.
+
+Generated artifacts live under the project's ignored `results/` directory.
+Prepare independently publishable sources and results with:
+
+```sh
+cdrgam publish brown --results archive --archive brown-results.tar.gz
+cdrgam publish brown --results url --url URL --sha256 DIGEST
+cdrgam publish brown --results none --commit 'Publish analysis sources' --push
+```
+
+Archive mode includes only complete, current, converged selected artifacts and
+their dependency closure. `publish` stages `publication.yml`; commit and push
+occur only when explicitly requested. Fetching installs project sources,
+verifies separately published results when available, and rebuilds local
+registry state from artifact manifests:
+
+```sh
+cdrgam fetch https://github.com/example/brown-cdrgam
+cdrgam fetch SOURCE --source-only
+cdrgam fetch SOURCE --results brown-results.tar.gz
+```
 
 See [docs/project-schema.md](docs/project-schema.md) for the definition schema
 and [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for orchestration

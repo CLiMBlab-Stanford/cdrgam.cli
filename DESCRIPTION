@@ -15,6 +15,7 @@ Imports:
     cdrgam,
     cli,
     DBI,
+    digest,
     filelock,
     fs,
     ggplot2,

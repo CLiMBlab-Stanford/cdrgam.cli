@@ -27,24 +27,31 @@
     .cdrgam_cli_option(
         'project', paste(
             'Select projects. Omission uses the current project when possible,',
-            'otherwise all projects.'
+            'otherwise all projects. Accepts exact names, * globs, and re: regexes.'
         ),
         short='-P', metavar='PROJECT', arity=arity
     ),
     .cdrgam_cli_option(
-        'model', 'Select model workloads. Multiple selector dimensions are conjunctive.',
+        'model', paste(
+            'Select model workloads by exact name, * glob, or re: regex.',
+            'Multiple selector dimensions are conjunctive.'
+        ),
         short='-m', metavar='MODEL', arity=arity
     ),
     .cdrgam_cli_option(
-        'prediction', 'Select model partitions or prediction datasets.',
+        'prediction', 'Select exact model partitions or prediction datasets.',
         short='-p', metavar='PARTITION', arity=arity
     ),
     .cdrgam_cli_option(
-        'visualization', 'Select visualization workloads.',
+        'visualization', paste(
+            'Select visualization workloads by exact name, * glob, or re: regex.'
+        ),
         short='-v', metavar='VISUALIZATION', arity=arity
     ),
     .cdrgam_cli_option(
-        'comparison', 'Select comparison workloads.',
+        'comparison', paste(
+            'Select comparison workloads by exact name, * glob, or re: regex.'
+        ),
         short='-c', metavar='COMPARISON', arity=arity
     )
 )
@@ -80,6 +87,25 @@
             'derived from their YAML file names.'
         ),
         commands=list(
+            init=.cdrgam_cli_command(
+                'init', 'Initialize a version-controlled project.',
+                description=paste(
+                    'Create a project, initialize its Git repository on main,',
+                    'and stage its source files. Source copies definitions and code.'
+                ),
+                options=list(.cdrgam_cli_option(
+                    'source', 'Initialize from an existing project.',
+                    metavar='SOURCE'
+                )),
+                arguments=list(.cdrgam_cli_argument(
+                    'PROJECT', 'New project name.'
+                )),
+                examples=c(
+                    'cdrgam def init brown',
+                    'cdrgam def init brown-replication --source brown'
+                ),
+                handler='def-init'
+            ),
             edit=.cdrgam_cli_command(
                 'edit', 'Create or edit definitions.',
                 description=paste(
@@ -106,7 +132,8 @@
                 'ls', 'List matching definitions.',
                 description=paste(
                     'List projects or definitions. A type selector without values',
-                    'matches every definition of that type.'
+                    'matches every definition of that type. Values accept exact',
+                    'names, * globs, and re: regular expressions.'
                 ),
                 options=.cdrgam_cli_definition_options('zero-or-more'),
                 arguments=list(.cdrgam_cli_argument(
@@ -125,7 +152,8 @@
                 description=paste(
                     'Remove definitions matching exactly one definition type.',
                     'Referenced definitions and definitions with results cannot',
-                    'be removed.'
+                    'be removed. Values accept exact names, * globs, and re:',
+                    'regular expressions.'
                 ),
                 options=.cdrgam_cli_definition_options('one-or-more'),
                 arguments=definition_target,
@@ -136,7 +164,8 @@
                 'val', 'Validate definitions.',
                 description=paste(
                     'Validate a project or matching definitions without changing',
-                    'them. At most one definition type may be selected.'
+                    'them. At most one definition type may be selected. Values',
+                    'accept exact names, * globs, and re: regular expressions.'
                 ),
                 options=c(
                     .cdrgam_cli_definition_options('one-or-more'),
@@ -261,6 +290,78 @@
         ),
         handler='purge'
     )
+    publish=.cdrgam_cli_command(
+        'publish', 'Prepare and optionally push a project publication.',
+        description=paste(
+            'Validate project sources and selected complete results, write',
+            'publication metadata, and stage the changes in the project Git',
+            'repository. Uploading results is separate from archive creation.'
+        ),
+        options=c(selectors[2:5], list(
+            .cdrgam_cli_option(
+                'results', 'Results mode: none, archive, url, or git.',
+                metavar='MODE'
+            ),
+            .cdrgam_cli_option(
+                'archive', 'Destination for a generated results tar archive.',
+                metavar='PATH'
+            ),
+            .cdrgam_cli_option(
+                'url', 'Direct download URL for separately hosted results.',
+                metavar='URL'
+            ),
+            .cdrgam_cli_option(
+                'sha256', 'Expected SHA-256 checksum for --results url.',
+                metavar='DIGEST'
+            ),
+            .cdrgam_cli_option(
+                'commit', 'Commit all staged project changes with this message.',
+                metavar='MESSAGE'
+            ),
+            .cdrgam_cli_option(
+                'push', 'Push the current project branch after publication.',
+                arity='flag'
+            )
+        )),
+        arguments=list(.cdrgam_cli_argument('PROJECT', 'Project to publish.')),
+        examples=c(
+            'cdrgam publish brown --results archive',
+            'cdrgam publish brown --results url --url URL --sha256 DIGEST',
+            "cdrgam publish brown --results none --commit 'Publish sources' --push"
+        ),
+        handler='publish'
+    )
+    fetch=.cdrgam_cli_command(
+        'fetch', 'Fetch a published project and optional results.',
+        description=paste(
+            'Clone a Git repository or unpack a direct source archive, verify',
+            'its publication metadata, hydrate published results when available,',
+            'and rebuild local registry state from artifact manifests.'
+        ),
+        options=list(
+            .cdrgam_cli_option(
+                'project', 'Override the local project directory name.',
+                short='-P', metavar='PROJECT'
+            ),
+            .cdrgam_cli_option(
+                'source-only', 'Do not download separately published results.',
+                arity='flag'
+            ),
+            .cdrgam_cli_option(
+                'results', 'Override the results archive path or direct URL.',
+                metavar='LOCATION'
+            )
+        ),
+        arguments=list(.cdrgam_cli_argument(
+            'LOCATION', 'Git repository or direct source archive location.'
+        )),
+        examples=c(
+            'cdrgam fetch https://github.com/example/brown-cdrgam',
+            'cdrgam fetch ./brown.git --source-only',
+            'cdrgam fetch SOURCE --results ./brown-results.tar.gz'
+        ),
+        handler='fetch'
+    )
     scheduler=.cdrgam_cli_command(
         'scheduler', 'Run the internal checkout scheduler.',
         options=list(.cdrgam_cli_option(
@@ -287,7 +388,8 @@
         ),
         commands=list(
             def=def, list=list_command, plan=plan, run=run, status=status,
-            log=log, purge=purge, scheduler=scheduler, worker=worker
+            log=log, purge=purge, publish=publish, fetch=fetch,
+            scheduler=scheduler, worker=worker
         )
     )
 }
@@ -544,6 +646,15 @@
             project, flags[selected]
         ))
     }
+    if (identical(operation, 'init')) {
+        if (length(selected)) {
+            .cdrgam_cli_abort('def init does not accept definition selectors')
+        }
+        return(cdrgam_cli_def(
+            project, source=.cdrgam_cli_one(flags$source, '--source'),
+            operation='init'
+        ))
+    }
     expected <- if (identical(operation, 'rm')) 1L else c(0L, 1L)
     if (!(length(selected) %in% expected)) {
         .cdrgam_cli_abort(paste0(
@@ -658,6 +769,28 @@ cli_main <- function(args=commandArgs(trailingOnly=TRUE)) {
             comparisons=flags$comparison, datasets=flags$dataset,
             work=isTRUE(flags$work), logs=isTRUE(flags$logs),
             yes=isTRUE(flags$yes)
+        )
+    } else if (identical(handler, 'publish')) {
+        cdrgam_cli_publish(
+            parsed$positional[[1L]],
+            results=.cdrgam_cli_null(
+                .cdrgam_cli_one(flags$results, '--results'), 'none'
+            ),
+            archive=.cdrgam_cli_one(flags$archive, '--archive'),
+            url=.cdrgam_cli_one(flags$url, '--url'),
+            sha256=.cdrgam_cli_one(flags$sha256, '--sha256'),
+            models=flags$model, predictions=flags$prediction,
+            visualizations=flags$visualization,
+            comparisons=flags$comparison,
+            commit=.cdrgam_cli_one(flags$commit, '--commit'),
+            push=isTRUE(flags$push)
+        )
+    } else if (identical(handler, 'fetch')) {
+        cdrgam_cli_fetch(
+            parsed$positional[[1L]],
+            project=.cdrgam_cli_one(flags$project, '--project'),
+            source_only=isTRUE(flags$`source-only`),
+            results=.cdrgam_cli_one(flags$results, '--results')
         )
     } else {
         .cdrgam_cli_abort(paste0('No handler for ', .cdrgam_cli_command_path(path)))

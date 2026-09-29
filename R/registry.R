@@ -148,6 +148,51 @@
     invisible(.cdrgam_cli_registry_path(configuration))
 }
 
+.cdrgam_cli_registry_import_project <- function(definitions, items) {
+    items <- Filter(function(item) {
+        .cdrgam_cli_complete_artifact(item$output, item$identity)
+    }, items)
+    if (!length(items)) return(invisible(character()))
+    configuration <- definitions$checkout
+    .cdrgam_cli_registry_initialize(configuration)
+    connection <- .cdrgam_cli_registry_connect(configuration)
+    on.exit(DBI::dbDisconnect(connection), add=TRUE)
+    request_id <- .cdrgam_cli_random_id('fetch')
+    keys <- names(items)
+    DBI::dbWithTransaction(connection, {
+        DBI::dbExecute(
+            connection, 'INSERT INTO requests VALUES (?, ?, ?)',
+            params=list(request_id, .cdrgam_cli_timestamp(), 'fetch')
+        )
+        for (key in keys) {
+            item <- items[[key]]
+            DBI::dbExecute(connection, paste(
+                'INSERT INTO work_items VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                'ON CONFLICT(work_key) DO UPDATE SET project=excluded.project,',
+                'kind=excluded.kind, name=excluded.name, identity=excluded.identity,',
+                'state=excluded.state, artifact_path=excluded.artifact_path,',
+                'updated_at=excluded.updated_at'
+            ), params=list(
+                item$key, item$project, item$kind, item$name, item$identity,
+                'complete', .cdrgam_cli_project_relative(definitions, item$output),
+                .cdrgam_cli_timestamp()
+            ))
+            DBI::dbExecute(
+                connection, 'INSERT OR IGNORE INTO request_items VALUES (?, ?, ?)',
+                params=list(request_id, item$key, 1L)
+            )
+            for (dependency in intersect(item$dependencies, keys)) {
+                DBI::dbExecute(
+                    connection,
+                    'INSERT OR IGNORE INTO dependencies VALUES (?, ?)',
+                    params=list(item$key, dependency)
+                )
+            }
+        }
+    })
+    invisible(keys)
+}
+
 .cdrgam_cli_registry_placeholders <- function(values) {
     paste(rep.int('?', length(values)), collapse=',')
 }

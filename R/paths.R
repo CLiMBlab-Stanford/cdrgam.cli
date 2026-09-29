@@ -3,18 +3,19 @@
 ) {
     root <- definitions$root
     configuration <- definitions$checkout
+    results <- file.path(root, 'results')
     if (identical(kind, 'dataset')) {
-        parts <- c(root, 'datasets', name)
+        parts <- c(results, 'datasets', name)
     } else if (identical(kind, 'model')) {
-        parts <- c(root, 'models', name)
+        parts <- c(results, 'models', name)
     } else if (identical(kind, 'prediction')) {
-        parts <- c(root, 'models', name, 'predictions', dataset)
+        parts <- c(results, 'models', name, 'predictions', dataset)
     } else if (identical(kind, 'visualization')) {
-        parts <- c(root, 'models', name, 'visualizations', dataset)
+        parts <- c(results, 'models', name, 'visualizations', dataset)
     } else if (identical(kind, 'effect')) {
-        parts <- c(root, 'models', name, 'effects', identity)
+        parts <- c(results, 'models', name, 'effects', identity)
     } else if (kind %in% c('comparison', 'analysis')) {
-        parts <- c(root, paste0(kind, 's'), name)
+        parts <- c(results, paste0(kind, 's'), name)
     } else if (identical(kind, 'work')) {
         parts <- c(root, '.cdrgam', 'work')
         if (!is.null(name)) parts <- c(parts, name)

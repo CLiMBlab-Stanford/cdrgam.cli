@@ -29,7 +29,9 @@ find_cdrgam_project <- function(project=NULL, checkout=NULL) {
         file.path('definitions', 'visualizations'),
         file.path('definitions', 'comparisons'),
         file.path('definitions', 'analyses'),
-        'datasets', 'models', 'comparisons', 'analyses'
+        'code', 'results', file.path('results', 'datasets'),
+        file.path('results', 'models'), file.path('results', 'comparisons'),
+        file.path('results', 'analyses')
     ))
 }
 
@@ -41,13 +43,16 @@ find_cdrgam_project <- function(project=NULL, checkout=NULL) {
     paste0(
         '# ', name, '\n\n',
         'This directory is a CDR-GAM analysis project. Edit definitions under ',
-        '`definitions/`; the configured checkout manages generated state.\n'
+        '`definitions/`, keep project scripts under `code/`, and let the ',
+        'configured checkout manage generated state under `results/`.\n'
     )
 }
 
 .cdrgam_cli_project_gitignore <- function() {
     paste(c(
-        '/.cdrgam/', '/datasets/', '/models/', '/comparisons/', '/analyses/'
+        '/.cdrgam/', '/results/', '/*-results.tar.gz', '/.Rproj.user/',
+        '.Rhistory', '.RData',
+        '.DS_Store', 'Thumbs.db', '*~', '*.swp', '*.swo'
     ), collapse='\n')
 }
 
@@ -55,6 +60,7 @@ find_cdrgam_project <- function(project=NULL, checkout=NULL) {
     name <- .cdrgam_cli_name(name, 'project.name')
     .cdrgam_cli_checkout(checkout, create_root=TRUE)
     root <- .cdrgam_cli_project_root(name, checkout, must_work=FALSE)
+    created_root <- !dir.exists(root)
     if (!dir.exists(root) && !dir.create(root, recursive=TRUE)) {
         .cdrgam_cli_abort(paste0('Could not create project root ', sQuote(root)))
     }
@@ -84,7 +90,11 @@ find_cdrgam_project <- function(project=NULL, checkout=NULL) {
     created <- character()
     complete <- FALSE
     on.exit({
-        if (!complete && length(created)) unlink(created, force=TRUE)
+        if (!complete && created_root) {
+            unlink(root, recursive=TRUE, force=TRUE)
+        } else if (!complete && length(created)) {
+            unlink(created, force=TRUE)
+        }
     }, add=TRUE)
     for (directory in .cdrgam_cli_project_layout(root)) {
         if (!dir.exists(directory) && !dir.create(directory, recursive=TRUE)) {
@@ -110,12 +120,13 @@ find_cdrgam_project <- function(project=NULL, checkout=NULL) {
         })
     }
     .cdrgam_cli_read_definitions(name, check_sources=FALSE, checkout=checkout)
+    .cdrgam_cli_git_track_project(root)
     complete <- TRUE
     message('Initialized CDR-GAM project ', name, ' at ', root)
     invisible(.cdrgam_cli_normalize_path(root, TRUE))
 }
 
-.cdrgam_cli_copy_project_definitions <- function(from, to, checkout=NULL) {
+.cdrgam_cli_copy_project_sources <- function(from, to, checkout=NULL) {
     from <- .cdrgam_cli_name(from, 'source project')
     to <- .cdrgam_cli_name(to, 'destination project')
     if (identical(from, to)) {
@@ -152,6 +163,13 @@ find_cdrgam_project <- function(project=NULL, checkout=NULL) {
     )) {
         .cdrgam_cli_abort('Could not copy the source definition directory')
     }
+    source_code <- file.path(source_definitions$root, 'code')
+    if (dir.exists(source_code) && !file.copy(
+            source_code, stage,
+            recursive=TRUE, copy.mode=TRUE, copy.date=TRUE
+    )) {
+        .cdrgam_cli_abort('Could not copy the source code directory')
+    }
     for (directory in .cdrgam_cli_project_layout(stage)) {
         if (!dir.exists(directory) && !dir.create(directory, recursive=TRUE)) {
             .cdrgam_cli_abort(paste0('Could not create ', sQuote(directory)))
@@ -174,7 +192,8 @@ find_cdrgam_project <- function(project=NULL, checkout=NULL) {
     }
     published <- TRUE
     .cdrgam_cli_read_definitions(to, check_sources=FALSE, checkout=checkout)
+    .cdrgam_cli_git_track_project(destination)
     complete <- TRUE
-    message('Copied definitions from ', from, ' to ', to)
+    message('Copied project sources from ', from, ' to ', to)
     invisible(.cdrgam_cli_normalize_path(destination, TRUE))
 }

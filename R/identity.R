@@ -73,21 +73,40 @@
     list(identity=.cdrgam_cli_short_hash(resolved), resolved=resolved)
 }
 
+.cdrgam_cli_match_name_pattern <- function(pattern, choices, field) {
+    pattern <- .cdrgam_cli_scalar_character(pattern, field)
+    if (startsWith(pattern, 're:')) {
+        expression <- substring(pattern, 4L)
+        if (!nzchar(expression)) {
+            .cdrgam_cli_abort(paste0(
+                field, ' selector has an empty regular expression: ', pattern
+            ))
+        }
+        matched <- tryCatch(
+            suppressWarnings(grepl(expression, choices, perl=TRUE)),
+            error=function(error) .cdrgam_cli_abort(paste0(
+                field, ' selector has an invalid regular expression ',
+                sQuote(pattern), ': ', conditionMessage(error)
+            ))
+        )
+        return(choices[matched])
+    }
+    if (identical(pattern, '*')) return(choices)
+    if (grepl('*', pattern, fixed=TRUE)) {
+        expression <- paste0(
+            '^', gsub('\\*', '.*', gsub('([][{}()+?.^$|\\\\])', '\\\\\\1', pattern)), '$'
+        )
+        return(choices[grepl(expression, choices)])
+    }
+    choices[choices == pattern]
+}
+
 .cdrgam_cli_match_names <- function(patterns, choices, field) {
     if (is.null(patterns) || !length(patterns)) return(choices)
     selected <- character()
     for (pattern in patterns) {
         pattern <- .cdrgam_cli_scalar_character(pattern, field)
-        if (identical(pattern, '*')) {
-            matches <- choices
-        } else if (grepl('*', pattern, fixed=TRUE)) {
-            expression <- paste0(
-                '^', gsub('\\*', '.*', gsub('([][{}()+?.^$|\\\\])', '\\\\\\1', pattern)), '$'
-            )
-            matches <- choices[grepl(expression, choices)]
-        } else {
-            matches <- choices[choices == pattern]
-        }
+        matches <- .cdrgam_cli_match_name_pattern(pattern, choices, field)
         if (!length(matches)) {
             .cdrgam_cli_abort(paste0(
                 field, ' selector matched nothing: ', pattern,

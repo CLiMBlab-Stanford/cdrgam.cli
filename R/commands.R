@@ -119,9 +119,19 @@ cdrgam_cli_plan <- function(
 
 .cdrgam_cli_run_local <- function(graph) {
     results <- list()
+    failed <- character()
     for (key in .cdrgam_cli_graph_order(graph)) {
         item <- graph$items[[key]]
         definitions <- graph$definitions[[item$project]]
+        if (any(item$dependencies %in% failed)) {
+            .cdrgam_cli_registry_state(definitions$checkout, item, 'blocked')
+            failed <- c(failed, key)
+            results[[key]] <- list(
+                status='blocked', path=item$output, item=item$key,
+                message='An upstream work item did not converge'
+            )
+            next
+        }
         if (.cdrgam_cli_complete_artifact(item$output, item$identity)) {
             .cdrgam_cli_registry_state(definitions$checkout, item, 'complete')
             results[[key]] <- list(status='reused', path=item$output, item=item$key)
@@ -158,9 +168,17 @@ cdrgam_cli_plan <- function(
                 stop(error)
             }
         )
-        .cdrgam_cli_registry_state(definitions$checkout, item, 'complete')
-        .cdrgam_cli_registry_attempt_state(definitions$checkout, item, 'complete')
+        completed <- !identical(result$status, 'nonconverged')
+        state <- if (completed) 'complete' else 'failed'
+        .cdrgam_cli_registry_state(definitions$checkout, item, state)
+        .cdrgam_cli_registry_attempt_state(
+            definitions$checkout, item, state,
+            if (completed) NULL else .cdrgam_cli_null(
+                result$message, 'Fit did not converge'
+            )
+        )
         results[[key]] <- result
+        if (!completed) failed <- c(failed, key)
     }
     results
 }
@@ -442,15 +460,17 @@ cdrgam_cli_run <- function(
         output$state, .cdrgam_cli_status_state, character(1)
     )
     output$diagnostic <- NA_character_
-    completed_fits <- which(output$state == 'complete' & output$kind == 'fit')
-    for (i in completed_fits) {
-        manifest <- tryCatch(.cdrgam_cli_read_yaml(file.path(
+    fit_rows <- which(output$kind == 'fit')
+    for (i in fit_rows) {
+        if (!(output$state[[i]] %in% c('complete', 'failed'))) next
+        manifest <- tryCatch(suppressWarnings(.cdrgam_cli_read_yaml(file.path(
             output$artifact_path[[i]], 'manifest.yml'
-        )), error=function(error) NULL)
-        if (!is.null(manifest) && identical(manifest$diagnostics$converged, FALSE)) {
+        ))), error=function(error) NULL)
+        diagnostics <- manifest$result$diagnostics
+        if (!is.null(diagnostics) && identical(diagnostics$converged, FALSE)) {
             output$display_state[[i]] <- 'Nonconverged'
             output$diagnostic[[i]] <- .cdrgam_cli_null(
-                manifest$diagnostics$message, 'Optimizer convergence was not reached'
+                diagnostics$message, 'Optimizer convergence was not reached'
             )
         }
     }
@@ -567,16 +587,11 @@ cdrgam_cli_status <- function(
     Filter(Negate(is.null), records)
 }
 
-.cdrgam_cli_log_selector_matches <- function(values, patterns) {
+.cdrgam_cli_log_selector_matches <- function(values, patterns, field='log') {
     if (!length(patterns)) return(TRUE)
     if (!length(values)) return(FALSE)
     any(vapply(patterns, function(pattern) {
-        pattern <- .cdrgam_cli_scalar_character(pattern, 'log selector')
-        if (identical(pattern, '*')) return(TRUE)
-        expression <- paste0(
-            '^', gsub('\\*', '.*', gsub('([][{}()+?.^$|\\\\])', '\\\\\\1', pattern)), '$'
-        )
-        any(grepl(expression, values))
+        length(.cdrgam_cli_match_name_pattern(pattern, values, field)) > 0L
     }, logical(1)))
 }
 
@@ -592,7 +607,9 @@ cdrgam_cli_status <- function(
 .cdrgam_cli_log_selected <- function(
         record, definitions, models, predictions, visualizations, comparisons
 ) {
-    if (length(models) && !.cdrgam_cli_log_selector_matches(record$models, models)) {
+    if (length(models) && !.cdrgam_cli_log_selector_matches(
+            record$models, models, 'model'
+    )) {
         return(FALSE)
     }
     typed <- any(c(
@@ -601,12 +618,17 @@ cdrgam_cli_status <- function(
     if (!typed) return(TRUE)
     (identical(record$kind, 'prediction') && length(predictions) &&
         .cdrgam_cli_log_selector_matches(
-            .cdrgam_cli_log_prediction_names(record, definitions), predictions
+            .cdrgam_cli_log_prediction_names(record, definitions), predictions,
+            'prediction'
         )) ||
         (identical(record$kind, 'visualization') && length(visualizations) &&
-            .cdrgam_cli_log_selector_matches(record$name, visualizations)) ||
+            .cdrgam_cli_log_selector_matches(
+                record$name, visualizations, 'visualization'
+            )) ||
         (identical(record$kind, 'comparison') && length(comparisons) &&
-            .cdrgam_cli_log_selector_matches(record$name, comparisons))
+            .cdrgam_cli_log_selector_matches(
+                record$name, comparisons, 'comparison'
+            ))
 }
 
 .cdrgam_cli_display_logs <- function(records, lines=NULL, pager=NULL) {
@@ -868,7 +890,7 @@ cdrgam_cli_purge <- function(
             ))
         }
         if (!workload_selected && !isTRUE(work) && !isTRUE(logs)) {
-            roots <- file.path(definitions$root, c(
+            roots <- file.path(definitions$root, 'results', c(
                 'datasets', 'models', 'comparisons', 'analyses'
             ))
             project_targets <- c(project_targets, unlist(lapply(

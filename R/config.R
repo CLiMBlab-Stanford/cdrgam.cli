@@ -280,6 +280,61 @@
     'knots_l', 'k_l', 'k_t', 'k_p', 'bs_l', 'bs_t', 'bs_p'
 )
 
+.cdrgam_cli_autosimplify_actions <- c(
+    'drop_grouped_deviation', 'drop_random_effect', 'drop_term',
+    'intercept_only_parameter'
+)
+
+.cdrgam_cli_validate_autosimplify <- function(value, path) {
+    defaults <- list(
+        enabled=TRUE, max_steps=5L, conservatism=1,
+        allow=.cdrgam_cli_autosimplify_actions, protect=character()
+    )
+    if (is.logical(value) && length(value) == 1L && !is.na(value)) {
+        defaults$enabled <- value
+        return(defaults)
+    }
+    if (!is.list(value)) {
+        .cdrgam_cli_abort(paste0(path, ' must be true, false, or a mapping'))
+    }
+    .cdrgam_cli_check_keys(
+        value, names(defaults), path
+    )
+    output <- utils::modifyList(defaults, value)
+    if (!is.logical(output$enabled) || length(output$enabled) != 1L ||
+            is.na(output$enabled)) {
+        .cdrgam_cli_abort(paste0(path, '.enabled must be true or false'))
+    }
+    if (!is.numeric(output$max_steps) || length(output$max_steps) != 1L ||
+            !is.finite(output$max_steps) || output$max_steps < 1 ||
+            output$max_steps != as.integer(output$max_steps)) {
+        .cdrgam_cli_abort(paste0(path, '.max_steps must be a positive integer'))
+    }
+    output$max_steps <- as.integer(output$max_steps)
+    if (!is.numeric(output$conservatism) || length(output$conservatism) != 1L ||
+            !is.finite(output$conservatism) || output$conservatism < 0) {
+        .cdrgam_cli_abort(paste0(
+            path, '.conservatism must be one finite nonnegative number'
+        ))
+    }
+    for (field in c('allow', 'protect')) {
+        if (is.list(output[[field]]) && !length(output[[field]])) {
+            output[[field]] <- character()
+        }
+        if (!is.character(output[[field]]) || anyNA(output[[field]]) ||
+                any(!nzchar(output[[field]]))) {
+            .cdrgam_cli_abort(paste0(path, '.', field, ' must be a string list'))
+        }
+        output[[field]] <- unique(output[[field]])
+    }
+    invalid <- setdiff(output$allow, .cdrgam_cli_autosimplify_actions)
+    if (length(invalid)) .cdrgam_cli_abort(paste0(
+        path, '.allow contains unsupported actions: ',
+        paste(invalid, collapse=', ')
+    ))
+    output
+}
+
 .cdrgam_cli_validate_irf_defaults <- function(value, path) {
     scalar_dimension <- function(dimension, field, allow_null=FALSE) {
         if (allow_null && is.null(dimension)) return(invisible(NULL))
@@ -353,7 +408,7 @@
     .cdrgam_cli_check_keys(
         value, c(
             'schema', 'datasets', 'formula', 'window',
-            .cdrgam_cli_irf_default_keys, 'fit'
+            .cdrgam_cli_irf_default_keys, 'fit', 'autosimplify'
         ), path,
         c('schema', 'datasets', 'formula')
     )
@@ -470,6 +525,11 @@
             path, ': mgcv does not support gaulss with fit.engine bam; ',
             'use gam or omit fit.engine'
         ))
+    }
+    if (!is.null(value$autosimplify)) {
+        value$autosimplify <- .cdrgam_cli_validate_autosimplify(
+            value$autosimplify, paste0(path, ': autosimplify')
+        )
     }
     attr(value, 'path') <- path
     value

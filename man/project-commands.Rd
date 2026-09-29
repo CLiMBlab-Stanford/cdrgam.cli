@@ -12,7 +12,7 @@
 \usage{
 cdrgam_cli_def(project = NULL, type = NULL, name = NULL,
   source = NULL, checkout = NULL, editor = NULL,
-  operation = c("edit", "rm", "val"), deep = FALSE)
+  operation = c("edit", "init", "rm", "val"), deep = FALSE)
 
 cdrgam_cli_validate(projects = NULL, deep = FALSE, checkout = NULL)
 
@@ -45,9 +45,11 @@ find_cdrgam_project(project = NULL, checkout = NULL)
   \item{type}{Optional definition type: \code{dataset}, \code{model},
   \code{visualization}, or \code{comparison}.}
   \item{source}{Optional source project or subordinate definition name. The
-  source initializes the requested target without generated artifacts;
-  subordinate definitions are opened in the editor before publication.}
-  \item{operation}{Either \code{"edit"} to create or edit a definition,
+  source initializes the requested target without generated artifacts. A
+  project copy includes its definitions and \file{code/}; subordinate
+  definitions are opened in the editor before publication.}
+  \item{operation}{Either \code{"init"} to initialize a version-controlled
+  project, \code{"edit"} to create or edit a definition,
   \code{"rm"} to remove a subordinate definition after safety checks, or
   \code{"val"} to validate definitions without changing them.}
   \item{editor}{Editor command or callback. The default uses \env{VISUAL},
@@ -87,11 +89,13 @@ to generated artifacts and private orchestration state.
 Status preserves the artifact lifecycle state and displays published fits as
 \code{Nonconverged} when their recorded optimizer diagnostics report that
 convergence was not reached.
-\code{cdrgam_cli_def()} creates missing definitions and edits existing YAML
+\code{cdrgam_cli_def()} initializes Git-managed projects, creates missing
+definitions, and edits existing YAML
 through a validated temporary file. A failed edit is retained in the managed
 private draft directory and reopened by the next edit of the same definition;
 the last valid published definition remains unchanged. With \code{source}, it
-initializes a new project or subordinate definition from an existing one. The \code{"rm"}
+initializes a new project or subordinate definition from an existing one. A
+project copy includes its definitions and project-owned \file{code/} tree. The \code{"rm"}
 operation removes only unreferenced subordinate definitions and refuses to
 remove definitions with generated results. The \code{"val"} operation validates
 a project or one definition and its prerequisites without changing files.

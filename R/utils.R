@@ -274,6 +274,14 @@
     unname(tools::md5sum(path))
 }
 
+.cdrgam_cli_sha256 <- function(path) {
+    path <- .cdrgam_cli_scalar_character(path, 'checksum path')
+    if (!file.exists(path) || dir.exists(path)) {
+        .cdrgam_cli_abort(paste0('Cannot checksum missing file ', sQuote(path)))
+    }
+    unname(digest::digest(path, algo='sha256', file=TRUE, serialize=FALSE))
+}
+
 .cdrgam_cli_timestamp <- function() {
     format(Sys.time(), '%Y-%m-%dT%H:%M:%S%z')
 }

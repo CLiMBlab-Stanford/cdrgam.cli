@@ -323,8 +323,9 @@
             ))
             next
         }
+        run_result <- NULL
         run_error <- tryCatch({
-            .cdrgam_cli_run_item(
+            run_result <- .cdrgam_cli_run_item(
                 definitions, item, attempt_path=assignment$attempt
             )
             NULL
@@ -343,6 +344,21 @@
                 TRUE
             }, error=function(error) FALSE)
             if (!reported) stop(run_error)
+            next
+        }
+        if (identical(run_result$status, 'nonconverged')) {
+            message <- .cdrgam_cli_null(
+                run_result$message, 'Fit did not converge'
+            )
+            .cdrgam_cli_worker_event(
+                worker_id, 'NONCONVERGED', paste0(
+                    item$kind, ' ', item$name, ': ', message
+                )
+            )
+            .cdrgam_cli_controller_call(endpoint, list(
+                type='failed', worker_id=worker_id,
+                work_key=assignment$work_key, error=message
+            ))
             next
         }
         reported <- tryCatch({

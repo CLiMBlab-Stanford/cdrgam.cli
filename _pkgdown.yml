@@ -1,4 +1,5 @@
 url: https://climblab-stanford.github.io/cdrgam.cli/
+destination: site
 
 template:
   bootstrap: 5

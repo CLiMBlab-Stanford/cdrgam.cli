@@ -37,5 +37,7 @@ project outputs, checkpoints, logs, plots, or fitted objects.
 ## Publication
 
 Commit, push, tag, or create a pull request only when the user explicitly
-requests it. AI systems are not Git authors or signatories. Follow
-`CONTRIBUTING.md` for attribution and identity requirements.
+requests it. Changes enter the release-only `main` branch through a pull
+request after its hosted release gate and cross-platform checks pass. AI
+systems are not Git authors or signatories. Follow `CONTRIBUTING.md` for
+attribution and identity requirements.

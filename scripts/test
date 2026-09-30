@@ -1,0 +1,40 @@
+#!/bin/sh
+set -eu
+
+scope=${1:-all}
+case "$scope" in
+    architecture) tests='tests/architecture.R' ;;
+    cli) tests='tests/cli.R' ;;
+    paths) tests='tests/paths.R' ;;
+    registry) tests='tests/registry.R' ;;
+    identities) tests='tests/definition-identities.R' ;;
+    integration) tests='tests/phase1.R' ;;
+    all) tests='tests/architecture.R tests/cli.R tests/paths.R tests/registry.R tests/definition-identities.R tests/phase1.R' ;;
+    *)
+        echo "Unknown test scope: $scope" >&2
+        echo 'Expected architecture, cli, paths, registry, identities, integration, or all' >&2
+        exit 2
+        ;;
+esac
+
+if [ "${R_BIN+x}" = x ]; then
+    r_bin=$R_BIN
+else
+    r_bin=$(command -v R)
+fi
+
+temporary_root=${TMPDIR:-/tmp}
+if [ ! -d "$temporary_root" ] || [ ! -w "$temporary_root" ]; then
+    temporary_root=/tmp
+fi
+test_library=$(mktemp -d "$temporary_root/cdrgam-cli-test-lib.XXXXXX")
+trap 'rm -rf "$test_library"' EXIT HUP INT TERM
+mkdir -p "$test_library/cache"
+export XDG_CACHE_HOME="$test_library/cache"
+"$r_bin" CMD INSTALL --no-byte-compile -l "$test_library" . >/dev/null
+
+for test_file in $tests; do
+    echo "RUN $test_file"
+    R_LIBS="$test_library${R_LIBS:+:$R_LIBS}" \
+        "$r_bin" --vanilla --slave -f "$test_file"
+done

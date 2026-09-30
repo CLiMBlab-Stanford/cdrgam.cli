@@ -23,8 +23,70 @@
     if (query) DBI::dbGetQuery(connection, sql) else DBI::dbExecute(connection, sql)
 }
 
+.cdrgam_cli_registry_status_records <- function(
+        configuration, projects=character(), project_ids=character()
+) {
+    if (!file.exists(.cdrgam_cli_registry_path(configuration))) {
+        return(data.frame())
+    }
+    where <- if (length(projects)) {
+        name_clause <- paste0(
+            'w.project IN (',
+            paste(vapply(
+                projects, .cdrgam_cli_sql_quote, character(1)
+            ), collapse=','),
+            ')'
+        )
+        id_clauses <- unlist(lapply(project_ids, function(id) vapply(
+            c('fit', 'prediction', 'effect', 'visualization', 'comparison'),
+            function(kind) paste0(
+                'w.work_key LIKE ',
+                .cdrgam_cli_sql_quote(paste0(kind, ':', id, ':%'))
+            ),
+            character(1)
+        )), use.names=FALSE)
+        paste0(
+            ' WHERE (', paste(c(name_clause, id_clauses), collapse=' OR '), ')'
+        )
+    } else ''
+    .cdrgam_cli_registry_exec(configuration, paste0(
+        'SELECT w.work_key,w.project,w.kind,w.name,w.identity,w.state,',
+        'w.updated_at,w.artifact_path,a.scheduler_id AS job,',
+        'a.path AS attempt_path,a.error FROM work_items w ',
+        'LEFT JOIN attempts a ON a.attempt_id=(',
+        'SELECT a2.attempt_id FROM attempts a2 WHERE a2.work_key=w.work_key ',
+        "ORDER BY COALESCE(a2.started_at,a2.completed_at,'') DESC,",
+        'a2.attempt_id DESC LIMIT 1)', where,
+        ' ORDER BY w.project,w.kind,w.name,w.updated_at DESC,w.identity DESC'
+    ), query=TRUE)
+}
+
+.cdrgam_cli_registry_worker_records <- function(configuration) {
+    if (!file.exists(.cdrgam_cli_registry_path(configuration))) {
+        return(data.frame())
+    }
+    .cdrgam_cli_registry_exec(configuration, paste(
+        'SELECT worker_id,scheduler_id,state,path,updated_at FROM workers',
+        'ORDER BY updated_at DESC'
+    ), query=TRUE)
+}
+
+.cdrgam_cli_registry_project_active <- function(
+        configuration, project, project_id
+) {
+    if (!file.exists(.cdrgam_cli_registry_path(configuration))) return(FALSE)
+    result <- .cdrgam_cli_registry_exec(configuration, paste0(
+        'SELECT COUNT(*) AS n FROM attempts a JOIN work_items w ',
+        'ON w.work_key=a.work_key WHERE ',
+        "a.state IN ('submitting','submitted','running') AND (w.project=",
+        .cdrgam_cli_sql_quote(project), ' OR w.work_key LIKE ',
+        .cdrgam_cli_sql_quote(paste0('%:', project_id, ':%')), ')'
+    ), query=TRUE)
+    result$n[[1L]] > 0L
+}
+
 .cdrgam_cli_registry_keys_for_artifacts <- function(configuration, targets) {
-    targets <- unique(targets[file.exists(targets)])
+    targets <- unique(targets)
     if (!length(targets) ||
             !file.exists(.cdrgam_cli_registry_path(configuration))) {
         return(character())
@@ -47,6 +109,27 @@
         }, logical(1)))
     }, logical(1))
     records$work_key[selected]
+}
+
+.cdrgam_cli_registry_keys_for_project <- function(
+        configuration, project, project_id
+) {
+    if (!file.exists(.cdrgam_cli_registry_path(configuration))) {
+        return(character())
+    }
+    records <- .cdrgam_cli_registry_exec(
+        configuration,
+        'SELECT work_key,project FROM work_items',
+        query=TRUE
+    )
+    if (!nrow(records)) return(character())
+    key_project <- vapply(strsplit(records$work_key, ':', fixed=TRUE), function(parts) {
+        if (length(parts) >= 2L) parts[[2L]] else NA_character_
+    }, character(1))
+    records$work_key[
+        records$project == project |
+        (!is.na(key_project) & key_project == project_id)
+    ]
 }
 
 .cdrgam_cli_registry_assert_inactive <- function(configuration, work_keys) {
@@ -142,6 +225,10 @@
         paste(
             'CREATE UNIQUE INDEX IF NOT EXISTS one_current_workload',
             'ON work_items(project,kind,name)'
+        ),
+        paste(
+            'CREATE INDEX IF NOT EXISTS attempts_by_work_key',
+            'ON attempts(work_key)'
         )
     )
     for (statement in statements) DBI::dbExecute(connection, statement)

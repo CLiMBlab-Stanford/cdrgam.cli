@@ -237,7 +237,9 @@
 
     item_complete <- function(key) {
         item <- items[[key]]
-        !is.null(item) && .cdrgam_cli_complete_artifact(item$output, item$identity)
+        !is.null(item) && .cdrgam_cli_complete_artifact(
+            item$output, item$identity, verify_hashes=FALSE
+        )
     }
     ready_keys <- function(resource_key=NULL) {
         assigned <- vapply(workers, function(worker) {

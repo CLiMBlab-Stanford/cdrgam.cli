@@ -229,7 +229,7 @@
 
 .cdrgam_cli_formula <- function(text) {
     environment <- new.env(parent=asNamespace('mgcv'))
-    environment$irf <- cdrgam::irf
+    environment$irf <- .cdrgam_cli_core_irf
     tryCatch(
         stats::as.formula(text, env=environment),
         error=function(error) .cdrgam_cli_abort(paste0(
@@ -263,5 +263,5 @@
         value <- fit[[field, exact=TRUE]]
         if (!is.null(value)) arguments[[field]] <- value
     }
-    do.call(cdrgam::prepare_cdrgam, arguments)
+    .cdrgam_cli_core_prepare(arguments)
 }

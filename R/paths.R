@@ -193,6 +193,83 @@
     resolved
 }
 
+.cdrgam_cli_registry_resolve <- function(
+        configuration, paths, field='registry managed path',
+        project_roots=NULL
+) {
+    if (!length(paths)) return(character())
+    if (!is.character(paths) || anyNA(paths) || any(!nzchar(paths))) {
+        .cdrgam_cli_abort(paste0(field, ' must contain nonempty paths'))
+    }
+    if (is.null(project_roots)) {
+        project_roots <- .cdrgam_cli_project_roots(configuration)
+    }
+    store_root <- .cdrgam_cli_normalize_path(
+        configuration$cdrgam_root, must_work=FALSE
+    )
+    prefix <- 'cdrgam-project://'
+    output <- vapply(paths, function(path) {
+        root <- store_root
+        relative <- path
+        if (startsWith(path, prefix)) {
+            reference <- substring(path, nchar(prefix) + 1L)
+            slash <- regexpr('/', reference, fixed=TRUE)
+            if (slash < 2L) .cdrgam_cli_abort(paste0(
+                field, ' is not a valid project path'
+            ))
+            id <- substring(reference, 1L, slash - 1L)
+            relative <- substring(reference, slash + 1L)
+            root <- project_roots[[id]]
+            if (is.null(root)) .cdrgam_cli_abort(paste0(
+                field, ' refers to unknown project.id ', sQuote(id)
+            ))
+        }
+        if (!nzchar(relative) || .cdrgam_cli_absolute_path(relative) ||
+                any(strsplit(relative, '[/\\\\]')[[1L]] == '..')) {
+            .cdrgam_cli_abort(paste0(field, ' is not a valid relative path'))
+        }
+        resolved <- as.character(fs::path_norm(fs::path(root, relative)))
+        if (!isTRUE(fs::path_has_parent(resolved, root))) {
+            .cdrgam_cli_abort(paste0(field, ' escapes its managed root'))
+        }
+        resolved
+    }, character(1), USE.NAMES=FALSE)
+    names(output) <- names(paths)
+    output
+}
+
+.cdrgam_cli_registry_work_log_paths <- function(
+        configuration, project_ids, kinds, names, project_roots=NULL
+) {
+    count <- length(project_ids)
+    if (length(kinds) != count || length(names) != count) {
+        .cdrgam_cli_abort('Registry work-log fields have incompatible lengths')
+    }
+    allowed <- c(
+        'fit', 'prediction', 'effect', 'visualization', 'comparison', 'analysis'
+    )
+    valid <- kinds %in% allowed & basename(names) == names &
+        !(names %in% c('.', '..'))
+    if (anyNA(valid) || !all(valid)) {
+        .cdrgam_cli_abort('Registry work-log fields contain unsafe values')
+    }
+    if (is.null(project_roots)) {
+        project_roots <- .cdrgam_cli_project_roots(configuration)
+    }
+    output <- rep.int(NA_character_, count)
+    known <- project_ids %in% names(project_roots)
+    if (!any(known)) return(output)
+    references <- paste0(
+        'cdrgam-project://', project_ids[known], '/.cdrgam/logs/', kinds[known],
+        '/', names[known], '.log'
+    )
+    output[known] <- .cdrgam_cli_registry_resolve(
+        configuration, references, field='registry work log path',
+        project_roots=project_roots
+    )
+    output
+}
+
 .cdrgam_cli_pack_store_paths <- function(value, configuration) {
     prefix <- 'cdrgam-root://'
     project_roots <- .cdrgam_cli_project_roots(configuration)

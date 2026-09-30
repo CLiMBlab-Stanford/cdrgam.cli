@@ -113,7 +113,7 @@ nonconverged_distributional_fit <- structure(list(
     distributional=list(evaluations=12L, gradient_norm=0.01)
 ), class=c('cdrgam_distributional_sparse', 'cdrgam_sparse', 'cdrgam'))
 nonconverged_distributional_diagnostics <- internal(
-    '.cdrgam_cli_diagnostics'
+    '.cdrgam_cli_core_diagnostics'
 )(nonconverged_distributional_fit)
 idle_now <- as.POSIXct('2026-01-01 00:05:00', tz='UTC')
 idle_started <- as.POSIXct('2026-01-01 00:00:00', tz='UTC')
@@ -261,6 +261,61 @@ stopifnot(
     grepl('definitions/project.yml', initial_git_status, fixed=TRUE),
     grepl('.gitignore', initial_git_status, fixed=TRUE),
     identical(find_cdrgam_project('test-project'), normalizePath(project))
+)
+test_configuration <- internal('.cdrgam_cli_checkout')(checkout)
+test_project_roots <- internal('.cdrgam_cli_project_roots')(test_configuration)
+test_project_id <- yaml::read_yaml(
+    file.path(project, 'definitions', 'project.yml')
+)$project$id
+registry_references <- c(
+    file.path('projects', 'test-project', 'results', 'models', 'main'),
+    paste0(
+        'cdrgam-project://', test_project_id,
+        '/results/models/main'
+    )
+)
+registry_resolved <- internal('.cdrgam_cli_registry_resolve')(
+    test_configuration, registry_references,
+    project_roots=test_project_roots
+)
+strict_resolved <- vapply(registry_references, function(path) {
+    internal('.cdrgam_cli_managed_resolve')(
+        test_configuration, path, project_roots=test_project_roots
+    )
+}, character(1), USE.NAMES=FALSE)
+unsafe_registry_path <- tryCatch({
+    internal('.cdrgam_cli_registry_resolve')(
+        test_configuration, '../outside', project_roots=test_project_roots
+    )
+    NA_character_
+}, error=function(error) conditionMessage(error))
+unknown_registry_project <- tryCatch({
+    internal('.cdrgam_cli_registry_resolve')(
+        test_configuration,
+        'cdrgam-project://unknown/results/models/main',
+        project_roots=test_project_roots
+    )
+    NA_character_
+}, error=function(error) conditionMessage(error))
+registry_log <- internal('.cdrgam_cli_registry_work_log_paths')(
+    test_configuration, test_project_id, 'fit', 'main',
+    project_roots=test_project_roots
+)
+legacy_registry_log <- internal('.cdrgam_cli_registry_work_log_paths')(
+    test_configuration, 'test-project', 'fit', 'main',
+    project_roots=test_project_roots
+)
+stopifnot(
+    identical(unname(registry_resolved), unname(strict_resolved)),
+    grepl('not a valid relative path', unsafe_registry_path, fixed=TRUE),
+    grepl('unknown project.id', unknown_registry_project, fixed=TRUE),
+    identical(
+        unname(registry_log),
+        internal('.cdrgam_cli_work_log_path')(
+            list(root=project), 'fit', 'main'
+        )
+    ),
+    is.na(legacy_registry_log)
 )
 
 editor_script <- file.path(temporary_parent, 'editor')
@@ -797,6 +852,51 @@ stopifnot(grepl(
     result_guard_error, fixed=TRUE
 ))
 stopifnot(all(file.exists(copied_model_paths)))
+purge_definitions <- internal('.cdrgam_cli_read_definitions')(
+    'test-project', check_sources=FALSE, checkout=checkout
+)
+orphan_output <- file.path(project, 'results', 'models', 'decay-copy-a')
+orphan_key <- paste(
+    'fit', test_project_id, 'decay-copy-a', 'orphan-identity', sep=':'
+)
+orphan_item <- list(
+    key=orphan_key, project='test-project', kind='fit', name='decay-copy-a',
+    identity='orphan-identity', output=orphan_output,
+    dependencies=character()
+)
+orphan_graph <- list(
+    items=stats::setNames(list(orphan_item), orphan_key),
+    targets=orphan_key,
+    definitions=list(`test-project`=purge_definitions)
+)
+internal('.cdrgam_cli_registry_record_graph')(
+    test_configuration, orphan_graph, 'purge-registry-only-test'
+)
+orphan_attempt <- file.path(
+    project, '.cdrgam', 'work', 'fit_decay-copy-a',
+    'orphan-identity', 'attempt'
+)
+dir.create(orphan_attempt, recursive=TRUE)
+internal('.cdrgam_cli_registry_attempt')(
+    test_configuration, orphan_item,
+    list(
+        status='failed', job_id=NULL, path=orphan_attempt,
+        definitions=purge_definitions
+    )
+)
+stopifnot(!file.exists(orphan_output), dir.exists(orphan_attempt))
+cdrgam_cli_purge(
+    projects='test-project', models='decay-copy-a', yes=TRUE
+)
+orphan_count <- internal('.cdrgam_cli_registry_exec')(
+    test_configuration,
+    paste0(
+        'SELECT COUNT(*) AS n FROM work_items WHERE work_key=',
+        internal('.cdrgam_cli_sql_quote')(orphan_key)
+    ),
+    query=TRUE
+)$n[[1L]]
+stopifnot(orphan_count == 0L, !dir.exists(orphan_attempt))
 cdrgam_cli_purge(
     projects='test-project', models='decay-copy-b', yes=TRUE
 )
@@ -1339,9 +1439,13 @@ status_text <- NULL
 status <- cdrgam_cli_status(
     'test-project', pager=function(text) status_text <<- text
 )
+registry_indexes <- internal('.cdrgam_cli_registry_exec')(
+    test_configuration, 'PRAGMA index_list(attempts)', query=TRUE
+)$name
 stopifnot(
     any(status$kind == 'fit' & status$name == 'decay' & status$state == 'complete'),
     any(status$kind == 'prediction' & status$state == 'complete'),
+    'attempts_by_work_key' %in% registry_indexes,
     grepl('PROJECT', status_text, fixed=TRUE),
     grepl('Success', status_text, fixed=TRUE),
     grepl('Summary:', status_text, fixed=TRUE)
@@ -1407,6 +1511,22 @@ stopifnot(
     ] == 'Running'
 )
 yaml::write_yaml(converged_manifest, fit_manifest_path)
+lightweight_directory <- file.path(root, '.cdrgam', 'lightweight-artifact-test')
+dir.create(lightweight_directory, recursive=TRUE)
+writeLines('present but changed', file.path(lightweight_directory, 'output.txt'))
+yaml::write_yaml(list(
+    status='complete', kind='comparison', identity='lightweight-test',
+    outputs=list(list(path='output.txt', md5='deliberately-wrong'))
+), file.path(lightweight_directory, 'manifest.yml'))
+stopifnot(
+    !internal('.cdrgam_cli_complete_artifact')(
+        lightweight_directory, 'lightweight-test'
+    ),
+    internal('.cdrgam_cli_complete_artifact')(
+        lightweight_directory, 'lightweight-test', verify_hashes=FALSE
+    )
+)
+unlink(lightweight_directory, recursive=TRUE)
 internal('.cdrgam_cli_registry_state')(
     seed_graph$definitions[['test-project']]$checkout, seed_item, 'complete'
 )
@@ -1501,7 +1621,10 @@ stopifnot(identical(
 work_preview <- cdrgam_cli_purge(
     projects='test-project', work=TRUE, yes=FALSE
 )
-stopifnot(identical(work_preview, work_root))
+stopifnot(
+    work_root %in% work_preview,
+    any(startsWith(work_preview, file.path(project, 'results')))
+)
 
 model_definition$formula <- paste0(model_definition$formula, ' + 0')
 yaml::write_yaml(

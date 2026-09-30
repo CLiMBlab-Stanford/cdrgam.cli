@@ -13,7 +13,7 @@
 
 .cdrgam_cli_execute_effect <- function(item, stage) {
     fit <- readRDS(file.path(item$fit$output, 'fit.rds'))
-    catalog <- cdrgam::effect_catalog(fit)
+    catalog <- .cdrgam_cli_core_effect_catalog(fit)
     summaries_complete <- vapply(seq_len(nrow(catalog)), function(index) {
         axes <- catalog$axes[[index]]
         summaries <- catalog$axis_summaries[[index]]
@@ -26,7 +26,7 @@
     query <- item$query
     layers <- .cdrgam_cli_effect_layers(query, item$layers)
     tables <- lapply(layers, function(layer) {
-        value <- cdrgam::estimate_effect(
+        value <- .cdrgam_cli_core_estimate_effect(
             fit,
             terms=query$terms,
             axes=query$axes,

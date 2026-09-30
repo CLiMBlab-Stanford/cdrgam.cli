@@ -424,17 +424,11 @@
 
 .cdrgam_cli_project_has_active_work <- function(definitions) {
     configuration <- definitions$checkout
-    if (!file.exists(.cdrgam_cli_registry_path(configuration))) return(FALSE)
-    project <- definitions$project$project$name
-    project_id <- definitions$project$project$id
-    result <- .cdrgam_cli_registry_exec(configuration, paste0(
-        'SELECT COUNT(*) AS n FROM attempts a JOIN work_items w ',
-        'ON w.work_key=a.work_key WHERE ',
-        "a.state IN ('submitting','submitted','running') AND (w.project=",
-        .cdrgam_cli_sql_quote(project), ' OR w.work_key LIKE ',
-        .cdrgam_cli_sql_quote(paste0('%:', project_id, ':%')), ')'
-    ), query=TRUE)
-    result$n[[1L]] > 0L
+    .cdrgam_cli_registry_project_active(
+        configuration,
+        definitions$project$project$name,
+        definitions$project$project$id
+    )
 }
 
 .cdrgam_cli_list_definitions <- function(

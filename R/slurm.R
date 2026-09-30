@@ -217,8 +217,11 @@
     if (!dir.exists(directory)) dir.create(directory, recursive=TRUE)
     script_path <- file.path(directory, 'slurm.sh')
     log_path <- .cdrgam_cli_worker_log_path(configuration, worker_id)
-    if (!dir.exists(dirname(log_path)) &&
-            !dir.create(dirname(log_path), recursive=TRUE)) {
+    log_directory <- dirname(log_path)
+    if (!dir.exists(log_directory)) {
+        suppressWarnings(dir.create(log_directory, recursive=TRUE))
+    }
+    if (!dir.exists(log_directory)) {
         .cdrgam_cli_abort('Could not create the worker log directory')
     }
     .cdrgam_cli_worker_script(

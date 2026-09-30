@@ -266,8 +266,9 @@
     purge=.cdrgam_cli_command(
         'purge', 'Preview or remove generated results.',
         description=paste(
-            'Select generated artifacts and private work state. Definitions are',
-            'never selected. Removal requires --yes.'
+            'Select generated artifacts, private work state, and corresponding',
+            'registry workloads. Definitions are never selected. Removal',
+            'requires --yes.'
         ),
         options=c(selectors, list(
             .cdrgam_cli_option(

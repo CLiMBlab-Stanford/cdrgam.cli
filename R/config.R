@@ -475,7 +475,7 @@
     }
     if (!is.null(value$fit$family)) {
         resolved_family <- tryCatch(
-            cdrgam::cdrgam_family(value$fit$family, value$fit$link),
+            .cdrgam_cli_core_family(value$fit$family, value$fit$link),
             error=function(error) .cdrgam_cli_abort(paste0(
                 path, ': ', conditionMessage(error)
             ))

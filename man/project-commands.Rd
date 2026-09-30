@@ -103,8 +103,11 @@ Definition selectors accept multiple names. Validation and removal expand
 \code{*} patterns; editing processes literal names in order. A batch removal
 checks every target before removing any definition.
 Copying does not include generated artifacts or private orchestration state.
-Purging removes only generated artifacts and registry records selected by
-their managed artifact paths.
+Purging removes only selected generated artifacts and their registry records.
+Registry records and private attempt directories are removed even when the
+corresponding generated artifacts are already absent. The \code{work} and
+\code{logs} options add private orchestration paths to the selection; they do
+not suppress the selected result artifacts.
 Work-item logs are overwritten when the corresponding logical workload starts
 again. Worker logs record the timestamped sequence of work items claimed by
 each generic worker. \code{cdrgam_cli_log()} shows work-item logs by default and

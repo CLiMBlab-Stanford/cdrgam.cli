@@ -25,6 +25,9 @@ prediction <- internal('.cdrgam_cli_path')(
 )
 reference <- internal('.cdrgam_cli_project_relative')(definitions, prediction)
 roots <- internal('.cdrgam_cli_project_roots')(configuration)
+normalized_prediction <- internal('.cdrgam_cli_normalize_path')(
+    prediction, must_work=FALSE
+)
 
 stopifnot(
     identical(model, file.path(project, 'results', 'models', 'main')),
@@ -40,13 +43,13 @@ stopifnot(
         unname(internal('.cdrgam_cli_registry_resolve')(
             configuration, reference, project_roots=roots
         )),
-        prediction
+        normalized_prediction
     ),
     identical(
         internal('.cdrgam_cli_managed_resolve')(
             configuration, reference, project_roots=roots
         ),
-        prediction
+        normalized_prediction
     )
 )
 

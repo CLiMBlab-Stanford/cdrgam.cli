@@ -65,6 +65,12 @@ cdrgam_cli_configure(checkout, root, concurrency=2L)
 options(cdrgam.cli.checkout=checkout)
 
 internal <- function(name) getFromNamespace(name, 'cdrgam.cli')
+same_path <- function(left, right) {
+    identical(
+        internal('.cdrgam_cli_normalize_path')(left, must_work=FALSE),
+        internal('.cdrgam_cli_normalize_path')(right, must_work=FALSE)
+    )
+}
 selector_choices <- c(
     'brown-linear', 'natstor-linear', 'natstor-nonlinear', 'unrelated'
 )
@@ -260,7 +266,7 @@ stopifnot(
     )),
     grepl('definitions/project.yml', initial_git_status, fixed=TRUE),
     grepl('.gitignore', initial_git_status, fixed=TRUE),
-    identical(find_cdrgam_project('test-project'), normalizePath(project))
+    same_path(find_cdrgam_project('test-project'), project)
 )
 test_configuration <- internal('.cdrgam_cli_checkout')(checkout)
 test_project_roots <- internal('.cdrgam_cli_project_roots')(test_configuration)
@@ -309,7 +315,7 @@ stopifnot(
     identical(unname(registry_resolved), unname(strict_resolved)),
     grepl('not a valid relative path', unsafe_registry_path, fixed=TRUE),
     grepl('unknown project.id', unknown_registry_project, fixed=TRUE),
-    identical(
+    same_path(
         unname(registry_log),
         internal('.cdrgam_cli_work_log_path')(
             list(root=project), 'fit', 'main'
@@ -1425,9 +1431,9 @@ fetched_status <- cdrgam_cli_status(
     'fetched-project', checkout=published_checkout, use_pager=FALSE
 )
 stopifnot(
-    identical(fetched, normalizePath(file.path(
+    same_path(fetched, file.path(
         published_root, 'projects', 'fetched-project'
-    ))),
+    )),
     all(fetched_plan$state == 'complete'),
     any(
         fetched_status$kind == 'fit' & fetched_status$state == 'complete'
@@ -1596,25 +1602,25 @@ unlink(protected_code)
 preview <- cdrgam_cli_purge(
     projects='test-project', models='decay', yes=FALSE
 )
-stopifnot(identical(preview, file.path(project, 'results', 'models', 'decay')))
+stopifnot(same_path(preview, file.path(project, 'results', 'models', 'decay')))
 prediction_preview <- cdrgam_cli_purge(
     projects='test-project', models='decay', predictions='val', yes=FALSE
 )
-stopifnot(identical(
+stopifnot(same_path(
     prediction_preview,
     file.path(project, 'results', 'models', 'decay', 'predictions', 'validation')
 ))
 visualization_preview <- cdrgam_cli_purge(
     projects='test-project', visualizations='diagnostics', yes=FALSE
 )
-stopifnot(identical(
+stopifnot(same_path(
     visualization_preview,
     file.path(project, 'results', 'models', 'decay', 'visualizations', 'diagnostics')
 ))
 comparison_preview <- cdrgam_cli_purge(
     projects='test-project', comparisons='alternatives', yes=FALSE
 )
-stopifnot(identical(
+stopifnot(same_path(
     comparison_preview,
     file.path(project, 'results', 'comparisons', 'alternatives')
 ))
@@ -1910,7 +1916,7 @@ stopifnot(file.rename(moved_project, renamed_project))
 unpacked_project_path <- getFromNamespace(
     '.cdrgam_cli_unpack_store_paths', 'cdrgam.cli'
 )(packed_project_path, moved_configuration)$path
-stopifnot(identical(
+stopifnot(same_path(
     unpacked_project_path, file.path(renamed_project, 'results', 'models', 'decay')
 ))
 renamed_plan <- cdrgam_cli_plan(

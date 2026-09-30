@@ -14,6 +14,7 @@ IMPLEMENTATION_PLAN*.md
 *.Rcheck/
 *.tar.gz
 /library/
+/site/
 /00LOCK*/
 *.o
 *.obj

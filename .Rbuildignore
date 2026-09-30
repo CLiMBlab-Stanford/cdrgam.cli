@@ -13,4 +13,5 @@
 ^WRITING_POLICY\.md$
 ^_pkgdown\.yml$
 ^docs$
+^site$
 ^.*\.Rcheck$

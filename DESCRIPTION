@@ -1,6 +1,6 @@
 Package: cdrgam.cli
 Title: Project Harness for Continuous-Time Deconvolutional Regression
-Version: 0.0.0.9000
+Version: 0.1.0
 Authors@R:
     person("Cory", "Shain", , "cory.shain@gmail.com", role = c("aut", "cre"),
            comment = c(ORCID = "https://orcid.org/0000-0002-2704-7197"))
@@ -15,7 +15,7 @@ URL: https://climblab-stanford.github.io/cdrgam.cli/,
 BugReports: https://github.com/CLiMBlab-Stanford/cdrgam.cli/issues
 Imports:
     callr,
-    cdrgam,
+    cdrgam (>= 0.2.0),
     cli,
     DBI,
     digest,

@@ -673,7 +673,7 @@ invalid_edit <- tryCatch({
 stopifnot(
     grepl('derived from the file name', invalid_edit, fixed=TRUE),
     grepl('must be omitted', invalid_edit, fixed=TRUE),
-    grepl(model_draft, invalid_edit, fixed=TRUE),
+    grepl(basename(model_draft), invalid_edit, fixed=TRUE),
     identical(unname(tools::md5sum(model_path)), model_before),
     identical(yaml::read_yaml(model_draft)$model, 'renamed')
 )

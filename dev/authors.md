@@ -12,12 +12,12 @@ Source:
 
 Shain C (2026). *cdrgam.cli: Project Harness for Continuous-Time
 Deconvolutional Regression*. R package version 0.1.0.9000,
-<https://climblab-stanford.github.io/cdrgam.cli/>.
+<https://climblab.org/cdrgam.cli/>.
 
     @Manual{,
       title = {cdrgam.cli: Project Harness for Continuous-Time Deconvolutional Regression},
       author = {Cory Shain},
       year = {2026},
       note = {R package version 0.1.0.9000},
-      url = {https://climblab-stanford.github.io/cdrgam.cli/},
+      url = {https://climblab.org/cdrgam.cli/},
     }

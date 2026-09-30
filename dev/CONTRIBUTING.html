@@ -44,12 +44,18 @@
 <span id="cb1-6"><a href="#cb1-6" tabindex="-1"></a><span class="ex">./scripts/test</span> integration</span></code></pre></div>
 <p><code>./scripts/test all</code> runs every scope. Each invocation installs the current CLI source into a temporary library. The integration scope covers the complete project lifecycle and is reserved for changes that cross component boundaries.</p>
 <p>Keep calls to <code>cdrgam</code> and knowledge of fitted-object representation in <code>R/core-adapter.R</code>. Keep SQLite access in <code>R/registry.R</code>. The architecture test enforces these boundaries. Add a public core API when the adapter lacks a required operation; do not inspect an additional core implementation field in another CLI module.</p>
-<p>Before a release, update <code>Version</code> in <code>DESCRIPTION</code>, run the complete tests, and run <code>R CMD check</code> on a clean source package. Document intentional schema or command-line incompatibilities and their migration path.</p>
+<p>Before proposing a release, update <code>Version</code> in <code>DESCRIPTION</code> and document intentional schema or command-line incompatibilities and their migration path. The hosted release gate is the authoritative clean-environment check.</p>
 <p>Run the repository’s correctness-focused R lint profile after installing the package and its dependencies:</p>
 <div class="sourceCode" id="cb2"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" tabindex="-1"></a><span class="ex">Rscript</span> <span class="at">-e</span> <span class="st">'lintr::lint_package(".")'</span></span></code></pre></div>
 <p>The profile preserves the established formatting conventions. New lint rules should identify actionable defects without requiring unrelated restyling.</p>
 <p>Material AI assistance must be disclosed in affected commits with an <code>Assisted-by: &lt;tool-or-agent&gt;:&lt;model-identifier&gt;</code> trailer. A human contributor remains the author and is responsible for review. Do not invent or modify Git identity, substitute another account, fabricate a signature, or add a <code>Signed-off-by:</code> certification without explicit human authorization.</p>
 <p>Commits, pushes, tags, pull requests, and releases require an explicit user request. Technical prose must follow <code>WRITING_POLICY.md</code>.</p>
+<div class="section level2">
+<h2 id="releases-and-compatibility">Releases and compatibility<a class="anchor" aria-label="anchor" href="#releases-and-compatibility"></a></h2>
+<p><code>main</code> contains released code. Prepare releases on <code>dev</code> or a release branch and merge them into <code>main</code> only through a pull request. Every pull request to <code>main</code> must change <code>Version</code> in <code>DESCRIPTION</code> to a later <code>MAJOR.MINOR.PATCH</code> value. Repository protection requires the release gate and the Linux, macOS, and Windows package checks to pass before merge. The release gate runs the lint profile, the complete test suite through <code>R CMD check</code>, and the complete pkgdown build against the released core package.</p>
+<p>Use patch releases for compatible fixes. During the 0.x series, use minor releases for new features and intentional interface changes. Release the core package first when a harness release requires a newer core API.</p>
+<p>After the pull request merges, create an annotated <code>vMAJOR.MINOR.PATCH</code> tag on the validated merge commit. The tag workflow rejects versions that do not match <code>DESCRIPTION</code>, lightweight tags, and commits outside <code>main</code>, then creates the corresponding GitHub Release. Its description must begin with a concise human-written summary. Verify the tag workflow and final description before treating publication as complete. Never move or replace a published tag.</p>
+</div>
 </div>
 
   </main></div>

@@ -42,7 +42,7 @@ or the stable `cdrgam` launcher.
 Local project definition, validation, fitting, prediction,
 visualization, and serial orchestration use portable R APIs and are
 intended to run on Linux, macOS, and Windows.
-[`install_cli()`](https://climblab-stanford.github.io/cdrgam.cli/dev/reference/install_cli.md)
+[`install_cli()`](https://climblab.org/cdrgam.cli/dev/reference/install_cli.md)
 writes a POSIX launcher on Unix and a `.cmd` launcher on Windows. Names
 that conflict with Windows device files are rejected so a project root
 can be moved between platforms.
@@ -184,35 +184,35 @@ cdrgam fetch SOURCE --results brown-results.tar.gz
 ```
 
 See
-[docs/project-schema.md](https://climblab-stanford.github.io/cdrgam.cli/dev/docs/project-schema.md)
+[docs/project-schema.md](https://climblab.org/cdrgam.cli/dev/docs/project-schema.md)
 for the definition schema and
-[IMPLEMENTATION_PLAN.md](https://climblab-stanford.github.io/cdrgam.cli/dev/IMPLEMENTATION_PLAN.md)
+[IMPLEMENTATION_PLAN.md](https://climblab.org/cdrgam.cli/dev/IMPLEMENTATION_PLAN.md)
 for orchestration invariants and implementation structure.
 
 # Package index
 
 ## All functions
 
-- [`cdrgam.cli-package`](https://climblab-stanford.github.io/cdrgam.cli/dev/reference/cdrgam.cli-package.md)
-  [`cdrgam.cli`](https://climblab-stanford.github.io/cdrgam.cli/dev/reference/cdrgam.cli-package.md)
+- [`cdrgam.cli-package`](https://climblab.org/cdrgam.cli/dev/reference/cdrgam.cli-package.md)
+  [`cdrgam.cli`](https://climblab.org/cdrgam.cli/dev/reference/cdrgam.cli-package.md)
   : Project Harness for CDR-GAM Analyses
-- [`cdrgam_cli_configure()`](https://climblab-stanford.github.io/cdrgam.cli/dev/reference/cdrgam_cli_configure.md)
+- [`cdrgam_cli_configure()`](https://climblab.org/cdrgam.cli/dev/reference/cdrgam_cli_configure.md)
   : Configure a CDR-GAM Source Checkout
-- [`cli_main()`](https://climblab-stanford.github.io/cdrgam.cli/dev/reference/cli_main.md)
+- [`cli_main()`](https://climblab.org/cdrgam.cli/dev/reference/cli_main.md)
   : Dispatch the cdrgam Command
-- [`install_cli()`](https://climblab-stanford.github.io/cdrgam.cli/dev/reference/install_cli.md)
+- [`install_cli()`](https://climblab.org/cdrgam.cli/dev/reference/install_cli.md)
   : Install the Checkout-Bound cdrgam Launcher
-- [`cdrgam_cli_def()`](https://climblab-stanford.github.io/cdrgam.cli/dev/reference/project-commands.md)
-  [`cdrgam_cli_validate()`](https://climblab-stanford.github.io/cdrgam.cli/dev/reference/project-commands.md)
-  [`cdrgam_cli_list()`](https://climblab-stanford.github.io/cdrgam.cli/dev/reference/project-commands.md)
-  [`cdrgam_cli_log()`](https://climblab-stanford.github.io/cdrgam.cli/dev/reference/project-commands.md)
-  [`cdrgam_cli_plan()`](https://climblab-stanford.github.io/cdrgam.cli/dev/reference/project-commands.md)
-  [`cdrgam_cli_run()`](https://climblab-stanford.github.io/cdrgam.cli/dev/reference/project-commands.md)
-  [`cdrgam_cli_status()`](https://climblab-stanford.github.io/cdrgam.cli/dev/reference/project-commands.md)
-  [`cdrgam_cli_purge()`](https://climblab-stanford.github.io/cdrgam.cli/dev/reference/project-commands.md)
-  [`find_cdrgam_project()`](https://climblab-stanford.github.io/cdrgam.cli/dev/reference/project-commands.md)
+- [`cdrgam_cli_def()`](https://climblab.org/cdrgam.cli/dev/reference/project-commands.md)
+  [`cdrgam_cli_validate()`](https://climblab.org/cdrgam.cli/dev/reference/project-commands.md)
+  [`cdrgam_cli_list()`](https://climblab.org/cdrgam.cli/dev/reference/project-commands.md)
+  [`cdrgam_cli_log()`](https://climblab.org/cdrgam.cli/dev/reference/project-commands.md)
+  [`cdrgam_cli_plan()`](https://climblab.org/cdrgam.cli/dev/reference/project-commands.md)
+  [`cdrgam_cli_run()`](https://climblab.org/cdrgam.cli/dev/reference/project-commands.md)
+  [`cdrgam_cli_status()`](https://climblab.org/cdrgam.cli/dev/reference/project-commands.md)
+  [`cdrgam_cli_purge()`](https://climblab.org/cdrgam.cli/dev/reference/project-commands.md)
+  [`find_cdrgam_project()`](https://climblab.org/cdrgam.cli/dev/reference/project-commands.md)
   : Manage Configured CDR-GAM Projects
-- [`cdrgam_cli_publish()`](https://climblab-stanford.github.io/cdrgam.cli/dev/reference/publication.md)
-  [`cdrgam_cli_fetch()`](https://climblab-stanford.github.io/cdrgam.cli/dev/reference/publication.md)
+- [`cdrgam_cli_publish()`](https://climblab.org/cdrgam.cli/dev/reference/publication.md)
+  [`cdrgam_cli_fetch()`](https://climblab.org/cdrgam.cli/dev/reference/publication.md)
   : Publish and Fetch CDR-GAM Projects
 

@@ -42,7 +42,7 @@ or the stable `cdrgam` launcher.
 Local project definition, validation, fitting, prediction,
 visualization, and serial orchestration use portable R APIs and are
 intended to run on Linux, macOS, and Windows.
-[`install_cli()`](https://climblab-stanford.github.io/cdrgam.cli/dev/reference/install_cli.md)
+[`install_cli()`](https://climblab.org/cdrgam.cli/dev/reference/install_cli.md)
 writes a POSIX launcher on Unix and a `.cmd` launcher on Windows. Names
 that conflict with Windows device files are rejected so a project root
 can be moved between platforms.
@@ -184,7 +184,7 @@ cdrgam fetch SOURCE --results brown-results.tar.gz
 ```
 
 See
-[docs/project-schema.md](https://climblab-stanford.github.io/cdrgam.cli/dev/docs/project-schema.md)
+[docs/project-schema.md](https://climblab.org/cdrgam.cli/dev/docs/project-schema.md)
 for the definition schema and
-[IMPLEMENTATION_PLAN.md](https://climblab-stanford.github.io/cdrgam.cli/dev/IMPLEMENTATION_PLAN.md)
+[IMPLEMENTATION_PLAN.md](https://climblab.org/cdrgam.cli/dev/IMPLEMENTATION_PLAN.md)
 for orchestration invariants and implementation structure.

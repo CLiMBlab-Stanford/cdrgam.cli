@@ -31,15 +31,11 @@ jobs:
           use-public-rspm: true
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          working-directory: cdrgam-core
           extra-packages: any::pkgdown
           needs: website
       - name: Install the core package
-        run: R CMD INSTALL cdrgam-core
-      - uses: r-lib/actions/setup-r-dependencies@v2
-        with:
-          extra-packages: any::pkgdown, local::.
-          needs: website
+        run: install.packages('cdrgam-core', repos = NULL, type = 'source')
+        shell: Rscript {0}
       - name: Build site
         run: pkgdown::build_site(new_process = FALSE, install = FALSE)
         shell: Rscript {0}

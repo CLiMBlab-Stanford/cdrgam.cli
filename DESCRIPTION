@@ -13,6 +13,8 @@ License: MIT + file LICENSE
 URL: https://climblab.org/cdrgam.cli/,
     https://github.com/CLiMBlab-Stanford/cdrgam.cli
 BugReports: https://github.com/CLiMBlab-Stanford/cdrgam.cli/issues
+Remotes:
+    github::CLiMBlab-Stanford/cdrgam@main
 Imports:
     callr,
     cdrgam (>= 0.2.0),

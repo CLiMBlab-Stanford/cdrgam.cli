@@ -35,19 +35,13 @@ jobs:
         run: Rscript .github/workflows/check-main-version.R "$BASE_COMMIT"
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          working-directory: cdrgam-core
           extra-packages: |
             any::pkgdown
             any::rcmdcheck
           needs: check
       - name: Install the released core package
-        run: R CMD INSTALL cdrgam-core
-      - uses: r-lib/actions/setup-r-dependencies@v2
-        with:
-          extra-packages: |
-            any::pkgdown
-            any::rcmdcheck
-          needs: check
+        run: install.packages('cdrgam-core', repos = NULL, type = 'source')
+        shell: Rscript {0}
       - name: Run the correctness lint profile
         run: |
           lints <- lintr::lint_package('.')

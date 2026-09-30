@@ -36,7 +36,7 @@ jobs:
         with:
           extra-packages: |
             any::rcmdcheck
-            local::cdrgam-core/cdrgam
+            local::cdrgam-core
           needs: check
       - uses: r-lib/actions/check-r-package@v2
         with:

@@ -6,4 +6,11 @@
 ^config\.toml$
 ^scripts$
 ^\.cdrgam$
+^AGENTS\.md$
+^AI_PROVENANCE\.md$
+^CONTRIBUTING\.md$
+^IMPLEMENTATION_PLAN.*\.md$
+^WRITING_POLICY\.md$
+^_pkgdown\.yml$
+^docs$
 ^.*\.Rcheck$

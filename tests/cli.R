@@ -5,11 +5,16 @@ capture <- function(arguments) paste(capture.output(
 ), collapse='\n')
 
 root_help <- capture('--help')
+version <- capture('--version')
 stopifnot(
     identical(root_help, capture('-h')),
     identical(root_help, capture('help')),
     grepl('Usage: cdrgam <COMMAND>', root_help, fixed=TRUE),
     grepl('Commands:', root_help, fixed=TRUE),
+    grepl('-V, --version', root_help, fixed=TRUE),
+    identical(version, capture('-V')),
+    grepl('cdrgam.cli ', version, fixed=TRUE),
+    grepl(' (cdrgam ', version, fixed=TRUE),
     !grepl('scheduler', root_help, fixed=TRUE),
     !grepl('worker', root_help, fixed=TRUE)
 )

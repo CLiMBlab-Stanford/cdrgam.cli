@@ -1,0 +1,7 @@
+url: https://climblab-stanford.github.io/cdrgam.cli/
+
+template:
+  bootstrap: 5
+
+development:
+  mode: auto

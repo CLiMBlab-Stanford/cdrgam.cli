@@ -1,0 +1,67 @@
+#!/bin/sh
+set -eu
+
+if [ "${R_BIN+x}" = x ]; then
+    r_bin=$R_BIN
+elif command -v R >/dev/null 2>&1; then
+    r_bin=$(command -v R)
+else
+    echo "R was not found; activate its environment or set R_BIN" >&2
+    exit 1
+fi
+
+script_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+source_root=$(dirname "$script_directory")
+core_source=${CDRGAM_CORE_SOURCE:-$(dirname "$source_root")/cdrgam}
+checkout=${CDRGAM_CHECKOUT:-$source_root}
+launcher=${CDRGAM_DEV_LAUNCHER:-$HOME/.local/bin/cdrgam-dev}
+
+if [ ! -f "$core_source/DESCRIPTION" ]; then
+    echo "cdrgam source was not found at $core_source" >&2
+    echo "Set CDRGAM_CORE_SOURCE to the flattened core checkout" >&2
+    exit 1
+fi
+if [ ! -f "$checkout/.cdrgam/checkout.yml" ]; then
+    echo "Checkout configuration is missing: $checkout/.cdrgam/checkout.yml" >&2
+    echo "Set CDRGAM_CHECKOUT to a configured harness instance" >&2
+    exit 1
+fi
+
+if [ "${CDRGAM_DEV_LIBRARY+x}" = x ]; then
+    dev_library=$CDRGAM_DEV_LIBRARY
+else
+    dev_library=$(
+        "$r_bin" --vanilla --slave -e \
+            'cat(file.path(tools::R_user_dir("cdrgam.cli", "data"), "dev-library"))'
+    )
+fi
+mkdir -p "$dev_library"
+
+temporary_root=${TMPDIR:-/tmp}
+if [ ! -d "$temporary_root" ] || [ ! -w "$temporary_root" ]; then
+    temporary_root=/tmp
+fi
+source_stage=$(mktemp -d "$temporary_root/cdrgam-dev-source.XXXXXX")
+trap 'rm -rf "$source_stage"' EXIT HUP INT TERM
+mkdir -p "$source_stage/core/src" "$source_stage/cli"
+cp -a "$core_source/DESCRIPTION" "$core_source/LICENSE" \
+    "$core_source/NAMESPACE" "$core_source/R" "$core_source/man" \
+    "$source_stage/core/"
+cp -a "$core_source/src/Makevars" "$core_source/src/init.c" \
+    "$core_source/src/schur.c" "$source_stage/core/src/"
+cp -a "$source_root/DESCRIPTION" "$source_root/LICENSE" \
+    "$source_root/NAMESPACE" "$source_root/R" "$source_root/exec" \
+    "$source_root/inst" "$source_root/man" "$source_stage/cli/"
+
+"$r_bin" CMD INSTALL --preclean -l "$dev_library" "$source_stage/core"
+R_LIBS_USER="$dev_library" \
+    "$r_bin" CMD INSTALL --preclean -l "$dev_library" "$source_stage/cli"
+R_LIBS_USER="$dev_library" \
+    "$r_bin" --vanilla --slave -e '
+        cdrgam.cli::install_cli(
+            path=commandArgs(TRUE)[[1L]],
+            checkout=commandArgs(TRUE)[[2L]]
+        )
+    ' --args "$launcher" "$checkout"
+
+echo "Installed development launcher at $launcher"

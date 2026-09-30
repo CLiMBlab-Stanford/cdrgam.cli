@@ -486,6 +486,10 @@
         sections, '', '  -h, --help',
         '      Show help for this command and exit.'
     )
+    if (!length(path)) sections <- c(
+        sections, '  -V, --version',
+        '      Show installed CLI and core package versions and exit.'
+    )
     if (length(command$examples)) {
         sections <- c(
             sections, '', 'Examples:', paste0('  ', command$examples)
@@ -685,6 +689,14 @@
 #' @export
 cli_main <- function(args=commandArgs(trailingOnly=TRUE)) {
     if (length(args) && identical(args[[1L]], '--args')) args <- args[-1L]
+    if (length(args) == 1L && args[[1L]] %in% c('-V', '--version')) {
+        cat(
+            'cdrgam.cli ', as.character(utils::packageVersion('cdrgam.cli')),
+            ' (cdrgam ', as.character(utils::packageVersion('cdrgam')), ')\n',
+            sep=''
+        )
+        return(invisible(0L))
+    }
     if (!length(args)) {
         cat(.cdrgam_cli_help(.cdrgam_cli_command_spec()))
         return(invisible(0L))

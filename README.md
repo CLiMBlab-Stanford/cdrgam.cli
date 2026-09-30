@@ -22,6 +22,19 @@ launcher bound to this checkout. Projects then live under the configured root:
 Use `./scripts/install --configure` to replace an existing checkout
 configuration interactively.
 
+Install the core and CLI development checkouts into an isolated library and
+write a separate `cdrgam-dev` launcher with:
+
+```sh
+./scripts/install-dev
+```
+
+The development launcher uses the configured checkout selected by
+`CDRGAM_CHECKOUT`, or this source checkout by default. Set
+`CDRGAM_CORE_SOURCE` when the flattened core checkout is not its sibling. It
+does not replace packages installed in the active R library or the stable
+`cdrgam` launcher.
+
 ## Platform support
 
 Local project definition, validation, fitting, prediction, visualization, and

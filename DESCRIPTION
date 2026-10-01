@@ -10,7 +10,7 @@ Description: Manages schema-versioned analysis projects built around the
     scheduler and generic worker pool, and publishes reproducible artifacts
     beneath named projects.
 License: MIT + file LICENSE
-URL: https://climblab.org/cdrgam.cli/,
+URL: https://climblab-stanford.github.io/cdrgam.cli/,
     https://github.com/CLiMBlab-Stanford/cdrgam.cli
 BugReports: https://github.com/CLiMBlab-Stanford/cdrgam.cli/issues
 Remotes:

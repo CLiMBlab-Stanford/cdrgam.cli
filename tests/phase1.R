@@ -1654,9 +1654,18 @@ stopifnot(same_path(
 work_preview <- cdrgam_cli_purge(
     projects='test-project', work=TRUE, yes=FALSE
 )
+normalized_work_preview <- internal('.cdrgam_cli_normalize_path')(
+    work_preview, must_work=FALSE
+)
+normalized_results_root <- internal('.cdrgam_cli_normalize_path')(
+    file.path(project, 'results'), must_work=FALSE
+)
 stopifnot(
-    work_root %in% work_preview,
-    any(startsWith(work_preview, file.path(project, 'results')))
+    any(vapply(work_preview, same_path, logical(1), right=work_root)),
+    any(startsWith(
+        normalized_work_preview,
+        paste0(normalized_results_root, .Platform$file.sep)
+    ))
 )
 
 model_definition$formula <- paste0(model_definition$formula, ' + 0')

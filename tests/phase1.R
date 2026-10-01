@@ -1610,7 +1610,8 @@ stopifnot(
 launcher <- file.path(temporary_parent, 'bin', 'cdrgam')
 install_cli(launcher, checkout=checkout)
 stopifnot(
-    file.exists(launcher), file.access(launcher, mode=1L) == 0L,
+    file.exists(launcher),
+    .Platform$OS.type == 'windows' || file.access(launcher, mode=1L) == 0L,
     any(grepl('CDRGAM_CHECKOUT', readLines(launcher), fixed=TRUE)),
     any(grepl('R_LIBS_USER', readLines(launcher), fixed=TRUE))
 )

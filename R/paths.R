@@ -277,7 +277,9 @@
 
 .cdrgam_cli_pack_store_paths <- function(value, configuration) {
     prefix <- 'cdrgam-root://'
-    store_root <- as.character(fs::path_norm(configuration$cdrgam_root))
+    store_root <- .cdrgam_cli_normalize_path(
+        configuration$cdrgam_root, must_work=FALSE
+    )
     project_roots <- .cdrgam_cli_project_roots(configuration)
     project_roots <- project_roots[order(
         nchar(unlist(project_roots, use.names=FALSE)), decreasing=TRUE
@@ -288,7 +290,7 @@
         if (exists(element, envir=converted, inherits=FALSE)) {
             return(get(element, envir=converted, inherits=FALSE))
         }
-        normalized <- as.character(fs::path_norm(element))
+        normalized <- .cdrgam_cli_normalize_path(element, must_work=FALSE)
         output <- element
         for (id in names(project_roots)) {
             root <- project_roots[[id]]
@@ -332,7 +334,9 @@
 .cdrgam_cli_unpack_store_paths <- function(value, configuration) {
     prefix <- 'cdrgam-root://'
     project_prefix <- 'cdrgam-project://'
-    store_root <- as.character(fs::path_norm(configuration$cdrgam_root))
+    store_root <- .cdrgam_cli_normalize_path(
+        configuration$cdrgam_root, must_work=FALSE
+    )
     project_roots <- .cdrgam_cli_project_roots(configuration)
     converted <- new.env(hash=TRUE, parent=emptyenv())
     unpack_path <- function(element) {
@@ -363,7 +367,9 @@
                 any(strsplit(relative, '[/\\]')[[1L]] == '..')) {
             .cdrgam_cli_abort('stored request path is not a valid relative path')
         }
-        output <- as.character(fs::path_norm(fs::path(root, relative)))
+        output <- .cdrgam_cli_normalize_path(
+            fs::path(root, relative), must_work=FALSE
+        )
         if (!isTRUE(fs::path_has_parent(output, root))) {
             .cdrgam_cli_abort('stored request path escapes its managed root')
         }

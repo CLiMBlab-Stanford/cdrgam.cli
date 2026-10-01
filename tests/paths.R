@@ -76,4 +76,23 @@ stopifnot(
     inherits(unknown, 'error')
 )
 
+packed_model <- internal('.cdrgam_cli_pack_store_paths')(
+    list(path=model), configuration
+)
+renamed_project <- file.path(store, 'projects', 'renamed')
+stopifnot(
+    startsWith(packed_model$path, 'cdrgam-project://project-path-test/'),
+    file.rename(project, renamed_project)
+)
+unpacked_model <- internal('.cdrgam_cli_unpack_store_paths')(
+    packed_model, configuration
+)$path
+stopifnot(identical(
+    unpacked_model,
+    internal('.cdrgam_cli_normalize_path')(
+        file.path(renamed_project, 'results', 'models', 'main'),
+        must_work=FALSE
+    )
+))
+
 cat('paths: ok\n')

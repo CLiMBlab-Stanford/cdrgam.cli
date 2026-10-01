@@ -28,13 +28,17 @@ roots <- internal('.cdrgam_cli_project_roots')(configuration)
 normalized_prediction <- internal('.cdrgam_cli_normalize_path')(
     prediction, must_work=FALSE
 )
+expected_model <- internal('.cdrgam_cli_normalize_path')(
+    file.path(project, 'results', 'models', 'main'), must_work=FALSE
+)
+expected_prediction <- internal('.cdrgam_cli_normalize_path')(
+    file.path(project, 'results', 'models', 'main', 'predictions', 'test'),
+    must_work=FALSE
+)
 
 stopifnot(
-    identical(model, file.path(project, 'results', 'models', 'main')),
-    identical(
-        prediction,
-        file.path(project, 'results', 'models', 'main', 'predictions', 'test')
-    ),
+    identical(model, expected_model),
+    identical(prediction, expected_prediction),
     identical(
         reference,
         'cdrgam-project://project-path-test/results/models/main/predictions/test'

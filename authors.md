@@ -8,7 +8,7 @@
 ## Citation
 
 Source:
-[`DESCRIPTION`](https://github.com/CLiMBlab-Stanford/cdrgam.cli/blob/dev/DESCRIPTION)
+[`DESCRIPTION`](https://github.com/CLiMBlab-Stanford/cdrgam.cli/blob/main/DESCRIPTION)
 
 Shain C (2026). *cdrgam.cli: Project Harness for Continuous-Time
 Deconvolutional Regression*. R package version 0.2.0,

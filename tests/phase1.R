@@ -328,7 +328,16 @@ editor_script <- file.path(temporary_parent, 'editor')
 writeLines(c('#!/bin/sh', 'touch "$1"', 'exit 0'), editor_script)
 Sys.chmod(editor_script, mode='0755')
 old_visual <- Sys.getenv('VISUAL', unset=NA_character_)
-Sys.setenv(VISUAL=editor_script)
+old_editor_environment <- Sys.getenv('EDITOR', unset=NA_character_)
+old_editor <- getOption('editor')
+if (.Platform$OS.type == 'windows') {
+    Sys.unsetenv('VISUAL')
+    Sys.unsetenv('EDITOR')
+    options(editor=function(path) {
+        Sys.setFileTime(path, Sys.time())
+        invisible(path)
+    })
+} else Sys.setenv(VISUAL=editor_script)
 stopifnot(identical(cli_main(c('def', 'edit', 'site')), 0L))
 stopifnot(identical(cli_main(c('def', 'init', 'scaffold')), 0L))
 stopifnot(identical(cli_main(c(
@@ -345,6 +354,10 @@ stopifnot(identical(cli_main(c(
 )), 0L))
 unlink(file.path(root, 'projects', 'scaffold'), recursive=TRUE)
 if (is.na(old_visual)) Sys.unsetenv('VISUAL') else Sys.setenv(VISUAL=old_visual)
+if (is.na(old_editor_environment)) {
+    Sys.unsetenv('EDITOR')
+} else Sys.setenv(EDITOR=old_editor_environment)
+options(editor=old_editor)
 
 typed_csv <- file.path(temporary_parent, 'typed.csv')
 writeLines(c('id,value', '001,1.5', '002,2.5'), typed_csv)
@@ -722,7 +735,16 @@ unlink(ambiguous_path)
 # Project copying republishes user-owned definitions and code with a fresh
 # project identity and no generated artifacts.
 old_source_visual <- Sys.getenv('VISUAL', unset=NA_character_)
-Sys.setenv(VISUAL=editor_script)
+old_source_editor_environment <- Sys.getenv('EDITOR', unset=NA_character_)
+old_source_editor <- getOption('editor')
+if (.Platform$OS.type == 'windows') {
+    Sys.unsetenv('VISUAL')
+    Sys.unsetenv('EDITOR')
+    options(editor=function(path) {
+        Sys.setFileTime(path, Sys.time())
+        invisible(path)
+    })
+} else Sys.setenv(VISUAL=editor_script)
 writeLines('not a definition', file.path(project, 'results', 'analyses', 'sentinel.txt'))
 writeLines('project source', file.path(project, 'code', 'sentinel.R'))
 stopifnot(identical(cli_main(c(
@@ -941,6 +963,10 @@ if (is.na(old_source_visual)) {
 } else {
     Sys.setenv(VISUAL=old_source_visual)
 }
+if (is.na(old_source_editor_environment)) {
+    Sys.unsetenv('EDITOR')
+} else Sys.setenv(EDITOR=old_source_editor_environment)
+options(editor=old_source_editor)
 
 listed <- cdrgam_cli_list('test-project')$`test-project`
 stopifnot(
@@ -1096,7 +1122,7 @@ stopifnot(
 fit_plan <- cdrgam_cli_plan(projects='test-project', models='decay')
 stopifnot(
     nrow(fit_plan) == 1L, fit_plan$kind == 'fit', fit_plan$state == 'missing',
-    fit_plan$path == file.path(project, 'results', 'models', 'decay')
+    same_path(fit_plan$path, file.path(project, 'results', 'models', 'decay'))
 )
 regex_fit_plan <- cdrgam_cli_plan(
     projects='re:^test-project$', models='re:^decay(-two)?$'

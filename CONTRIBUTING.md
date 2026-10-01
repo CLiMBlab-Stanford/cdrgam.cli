@@ -64,8 +64,9 @@ releases for new features and intentional interface changes. Release the core
 package first when a harness release requires a newer core API.
 
 After the pull request merges, create an annotated `vMAJOR.MINOR.PATCH` tag on
-the validated merge commit. The tag workflow rejects versions that do not
-match `DESCRIPTION`, lightweight tags, and commits outside `main`, then creates
-the corresponding GitHub Release. Its description must begin with a concise
-human-written summary. Verify the tag workflow and final description before
-treating publication as complete. Never move or replace a published tag.
+the validated merge commit, using a concise human-written release summary as
+the tag message. The tag workflow rejects versions that do not match
+`DESCRIPTION`, lightweight or empty tags, and commits outside `main`, then
+uses that message as the corresponding GitHub Release description. Verify the
+tag workflow and final description before treating publication as complete.
+Never move or replace a published tag.

@@ -71,6 +71,19 @@ same_path <- function(left, right) {
         internal('.cdrgam_cli_normalize_path')(right, must_work=FALSE)
     )
 }
+under_path <- function(paths, root) {
+    normalized_paths <- internal('.cdrgam_cli_normalize_path')(
+        paths, must_work=FALSE
+    )
+    normalized_root <- internal('.cdrgam_cli_normalize_path')(
+        root, must_work=FALSE
+    )
+    normalized_paths == normalized_root |
+        startsWith(
+            normalized_paths,
+            paste0(normalized_root, .Platform$file.sep)
+        )
+}
 selector_choices <- c(
     'brown-linear', 'natstor-linear', 'natstor-nonlinear', 'unrelated'
 )
@@ -1620,8 +1633,8 @@ protected_code <- file.path(project, 'code', 'protected.R')
 writeLines('project source', protected_code)
 project_preview <- cdrgam_cli_purge(projects='test-project', yes=FALSE)
 stopifnot(
-    !(protected_code %in% project_preview),
-    !any(startsWith(project_preview, file.path(project, 'code'))),
+    !any(vapply(project_preview, same_path, logical(1), right=protected_code)),
+    !any(under_path(project_preview, file.path(project, 'code'))),
     file.exists(protected_code)
 )
 unlink(protected_code)
@@ -1654,18 +1667,9 @@ stopifnot(same_path(
 work_preview <- cdrgam_cli_purge(
     projects='test-project', work=TRUE, yes=FALSE
 )
-normalized_work_preview <- internal('.cdrgam_cli_normalize_path')(
-    work_preview, must_work=FALSE
-)
-normalized_results_root <- internal('.cdrgam_cli_normalize_path')(
-    file.path(project, 'results'), must_work=FALSE
-)
 stopifnot(
     any(vapply(work_preview, same_path, logical(1), right=work_root)),
-    any(startsWith(
-        normalized_work_preview,
-        paste0(normalized_results_root, .Platform$file.sep)
-    ))
+    any(under_path(work_preview, file.path(project, 'results')))
 )
 
 model_definition$formula <- paste0(model_definition$formula, ' + 0')
@@ -1927,16 +1931,16 @@ moved_status <- cdrgam_cli_status(
 )
 stopifnot(
     nrow(moved_status) > 0L,
-    all(startsWith(moved_status$artifact_path, moved_root)),
+    all(under_path(moved_status$artifact_path, moved_root)),
     all(
         is.na(moved_status$attempt_path) |
-        startsWith(moved_status$attempt_path, moved_root)
+        under_path(moved_status$attempt_path, moved_root)
     )
 )
 moved_plan <- cdrgam_cli_plan(
     projects='test-project', models='decay', checkout=checkout
 )
-stopifnot(nrow(moved_plan) > 0L, all(startsWith(moved_plan$path, moved_root)))
+stopifnot(nrow(moved_plan) > 0L, all(under_path(moved_plan$path, moved_root)))
 
 # Project-owned references follow the stable project ID, so renaming the
 # directory does not invalidate artifacts, registry paths, or queued payloads.
@@ -1961,7 +1965,7 @@ renamed_plan <- cdrgam_cli_plan(
 stopifnot(
     nrow(renamed_plan) == 1L,
     renamed_plan$state == 'complete',
-    startsWith(renamed_plan$path, renamed_project)
+    under_path(renamed_plan$path, renamed_project)
 )
 renamed_status <- cdrgam_cli_status(
     'renamed-project', checkout=checkout, use_pager=FALSE
@@ -1969,7 +1973,7 @@ renamed_status <- cdrgam_cli_status(
 stopifnot(
     nrow(renamed_status) > 0L,
     all(renamed_status$project == 'renamed-project'),
-    all(startsWith(renamed_status$artifact_path, renamed_project))
+    all(under_path(renamed_status$artifact_path, renamed_project))
 )
 
 cat('phase1: ok\n')

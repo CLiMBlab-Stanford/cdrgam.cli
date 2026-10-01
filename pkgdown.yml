@@ -1,0 +1,8 @@
+pandoc: 3.8.3
+pkgdown: 2.2.1
+pkgdown_sha: ~
+articles: {}
+last_built: 2026-10-01T02:31Z
+urls:
+  reference: https://climblab.org/cdrgam.cli/reference
+  article: https://climblab.org/cdrgam.cli/articles

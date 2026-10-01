@@ -1,3 +1,8 @@
+# cdrgam.cli 0.2.1
+
+- Repairs release-tag validation for annotated tag messages containing Git's
+  formatting syntax.
+
 # cdrgam.cli 0.2.0
 
 - Gives clean installations a writable, cross-platform default CDR-GAM root

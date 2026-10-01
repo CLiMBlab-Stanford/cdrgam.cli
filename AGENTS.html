@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="index.html">cdrgam.cli</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.1.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.2.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -29,7 +29,7 @@
   <main id="main" class="col-md-9"><div class="page-header">
 
       <h1>Repository instructions for AI agents</h1>
-      <small class="dont-index">Source: <a href="https://github.com/CLiMBlab-Stanford/cdrgam.cli/blob/main/AGENTS.md" class="external-link"><code>AGENTS.md</code></a></small>
+      <small class="dont-index">Source: <a href="https://github.com/CLiMBlab-Stanford/cdrgam.cli/blob/dev/AGENTS.md" class="external-link"><code>AGENTS.md</code></a></small>
     </div>
 
 <div id="repository-instructions-for-ai-agents" class="section level1">
@@ -46,9 +46,12 @@
 </div>
 <div class="section level2">
 <h2 id="correctness-and-testing">Correctness and testing<a class="anchor" aria-label="anchor" href="#correctness-and-testing"></a></h2>
-<p>Install both packages into a clean temporary R library for integration tests. Run the standalone test and package check before handing off a broad change:</p>
-<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a><span class="ex">Rscript</span> tests/phase1.R</span>
-<span id="cb1-2"><a href="#cb1-2" tabindex="-1"></a><span class="ex">R</span> CMD check <span class="at">--no-manual</span> <span class="at">--no-build-vignettes</span> cdrgam.cli_<span class="pp">*</span>.tar.gz</span></code></pre></div>
+<p>Use the narrowest applicable <code>scripts/test</code> scope while developing. Add or run focused tests for the behavior changed by the task. Reserve the integration scope and clean temporary installation of both packages for changes that cross the core/CLI boundary or affect installed-package behavior.</p>
+<p>Do not run a full <code>R CMD check</code> for routine development changes. The hosted release gate is the authoritative full-suite, package-check, documentation, and cross-platform validation. Run equivalent full validation locally only when preparing a release, investigating a gate failure, or when the user asks for it explicitly.</p>
+<p>Available focused scopes are documented in <code>CONTRIBUTING.md</code>; for example:</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a><span class="ex">./scripts/test</span> paths</span>
+<span id="cb1-2"><a href="#cb1-2" tabindex="-1"></a><span class="ex">./scripts/test</span> registry</span>
+<span id="cb1-3"><a href="#cb1-3" tabindex="-1"></a><span class="ex">./scripts/test</span> integration</span></code></pre></div>
 <p>Do not commit package tarballs, check directories, installed libraries, project outputs, checkpoints, logs, plots, or fitted objects.</p>
 </div>
 <div class="section level2">

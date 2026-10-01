@@ -1,15 +1,13 @@
 # cdrgam.cli
 
 `cdrgam.cli` manages named projects and dependency-ordered CDR-GAM
-workloads. One harness instance is configured with a root directory, a
-global concurrency limit, and optional Slurm defaults. During
-development the instance directory is normally the source checkout. It
-may instead be any writable directory, which keeps mutable configuration
-outside an installed R package. The same commands run serially on a
-local machine or submit work through a shared Slurm scheduler and
-generic worker pool. A Slurm worker exits after five consecutive minutes
-without ready work; the scheduler submits another worker when later work
-becomes ready.
+workloads. One harness instance is a root directory containing its site
+configuration, projects, registry, scheduler metadata, and other private
+state. The root has a global concurrency limit and optional Slurm
+defaults. The same commands run serially on a local machine or submit
+work through a shared Slurm scheduler and generic worker pool. A Slurm
+worker exits after five consecutive minutes without ready work; the
+scheduler submits another worker when later work becomes ready.
 
 Install from the checkout:
 
@@ -17,11 +15,23 @@ Install from the checkout:
 ./scripts/install
 ```
 
-The installer creates `.cdrgam/checkout.yml` when necessary and installs
-a launcher bound to this checkout. Projects then live under the
-configured root:
+The installer creates `$CDRGAM_ROOT/.cdrgam/site.yml` when necessary and
+installs a launcher with that root as its fallback. A caller-supplied
+`CDRGAM_ROOT` takes precedence, so temporarily changing it switches the
+whole harness instance—including configuration and registry—without
+separating any of its state. Otherwise, the root defaults to R’s
+platform-specific user data directory, such as
+`~/.local/share/R/cdrgam.cli` on Linux. Projects live under the
+configured root.
 
-Use `./scripts/install --configure` to replace an existing checkout
+After installation from a package repository, run
+[`install_cli()`](https://climblab-stanford.github.io/cdrgam.cli/reference/install_cli.md).
+It creates the default root and its site configuration. Use
+`cdrgam def edit site` to change scheduler settings. To move a root,
+stop its workers, move the entire directory, and set `CDRGAM_ROOT` or
+reinstall the launcher with the new path.
+
+Use `./scripts/install --configure` to replace an existing root
 configuration interactively.
 
 Install the core and CLI development checkouts into an isolated library
@@ -31,25 +41,25 @@ and write a separate `cdrgam-dev` launcher with:
 ./scripts/install-dev
 ```
 
-The development launcher uses the configured checkout selected by
-`CDRGAM_CHECKOUT`, or this source checkout by default. Set
-`CDRGAM_CORE_SOURCE` when the flattened core checkout is not its
-sibling. It does not replace packages installed in the active R library
-or the stable `cdrgam` launcher.
+The development launcher uses the root selected by `CDRGAM_ROOT`, or the
+platform default when the variable is absent. Set `CDRGAM_CORE_SOURCE`
+when the flattened core checkout is not its sibling. It does not replace
+packages installed in the active R library or the stable `cdrgam`
+launcher.
 
 ## Platform support
 
 Local project definition, validation, fitting, prediction,
 visualization, and serial orchestration use portable R APIs and are
 intended to run on Linux, macOS, and Windows.
-[`install_cli()`](https://climblab.org/cdrgam.cli/reference/install_cli.md)
+[`install_cli()`](https://climblab-stanford.github.io/cdrgam.cli/reference/install_cli.md)
 writes a POSIX launcher on Unix and a `.cmd` launcher on Windows. Names
 that conflict with Windows device files are rejected so a project root
 can be moved between platforms.
 
 Direct Slurm execution is a Unix feature. It requires `sh`, `sbatch`,
 and the other configured Slurm commands. Subprocess execution, scheduler
-query timeouts, process liveness checks, and checkout locks use
+query timeouts, process liveness checks, and root locks use
 cross-platform R packages rather than platform shell utilities. Windows
 users can omit the Slurm fields and use local execution. Local work
 remains serial but each item runs in an isolated R process. Paging uses
@@ -129,7 +139,7 @@ cdrgam def ls brown --dataset 'brown-*' --model 'main*'
 cdrgam def ls brown --model 're:^main-(linear|nonlinear)$'
 ```
 
-Bare `cdrgam def ls` lists the checkout’s available projects. A selector
+Bare `cdrgam def ls` lists the root’s available projects. A selector
 without values lists every definition of that type. Once any type
 selector is supplied, unselected types are omitted.
 
@@ -184,7 +194,7 @@ cdrgam fetch SOURCE --results brown-results.tar.gz
 ```
 
 See
-[docs/project-schema.md](https://climblab.org/cdrgam.cli/docs/project-schema.md)
+[docs/project-schema.md](https://climblab-stanford.github.io/cdrgam.cli/docs/project-schema.md)
 for the definition schema and
-[IMPLEMENTATION_PLAN.md](https://climblab.org/cdrgam.cli/IMPLEMENTATION_PLAN.md)
+[IMPLEMENTATION_PLAN.md](https://climblab-stanford.github.io/cdrgam.cli/IMPLEMENTATION_PLAN.md)
 for orchestration invariants and implementation structure.

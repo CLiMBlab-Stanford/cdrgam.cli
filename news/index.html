@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">cdrgam.cli</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.1.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.2.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -29,16 +29,25 @@
   <main id="main" class="col-md-9"><div class="page-header">
 
       <h1>Changelog</h1>
-      <small>Source: <a href="https://github.com/CLiMBlab-Stanford/cdrgam.cli/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
+      <small>Source: <a href="https://github.com/CLiMBlab-Stanford/cdrgam.cli/blob/dev/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.2.0" id="cdrgamcli-020">cdrgam.cli 0.2.0<a class="anchor" aria-label="anchor" href="#cdrgamcli-020"></a></h2>
+<ul><li>Gives clean installations a writable, cross-platform default CDR-GAM root in R’s user data directory. Root-local <code>.cdrgam/site.yml</code>, registry, scheduler state, and projects form one movable harness instance. <code>CDRGAM_ROOT</code> switches that complete instance without splitting configuration from data.</li>
+<li>Replaces the exported <code>checkout</code> argument with <code>cdrgam_root</code>. Existing sites migrate by placing their scheduler fields and concurrency setting in <code>&lt;CDRGAM_ROOT&gt;/.cdrgam/site.yml</code> and omitting the now-implicit <code>cdrgam_root</code> field.</li>
+<li>Speeds up work-graph construction by reusing source checksums while file size and modification time are unchanged and by removing redundant filesystem probes from managed-path construction.</li>
+<li>Reports the current <code>cdrgam run</code> stage on standard error. Interactive terminals receive an in-place, color-rotating activity indicator.</li>
+<li>Makes purge remove matching artifacts, attempts, logs, and registry records, and strengthens internal module boundaries for focused development tests.</li>
+</ul></div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.1.0" id="cdrgamcli-010">cdrgam.cli 0.1.0<a class="anchor" aria-label="anchor" href="#cdrgamcli-010"></a></h2>
 <ul><li>Establishes the first public development release of the CDR-GAM project harness.</li>
 <li>Provides version-controlled project definitions, validation, dependency planning, local execution, and shared Slurm orchestration.</li>
 <li>Manages atomic artifacts, logs, status, cleanup, publication, and retrieval across projects in one configured harness instance.</li>
 </ul></div>
-  </main></div>
+  </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
+    </nav></aside></div>
 
 
     <footer><div class="pkgdown-footer-left">

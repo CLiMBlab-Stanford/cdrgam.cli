@@ -1,33 +1,30 @@
-# Configure a CDR-GAM Source Checkout
+# Configure a CDR-GAM Root
 
-Validate and atomically write instance-local launcher and scheduler
-configuration. The configured root and its private state directories are
-created if needed. A checkout-level lock serializes configuration
-publication. Local execution is portable; direct Slurm execution
-requires a Unix platform with a POSIX shell and Slurm client commands.
+Validate and atomically write root-local site and scheduler
+configuration. The root and its private state directories are created if
+needed. A root-local lock serializes configuration publication. Local
+execution is portable; direct Slurm execution requires a Unix platform
+with a POSIX shell and Slurm client commands.
 
 ## Usage
 
 ``` r
-cdrgam_cli_configure(checkout = ".", cdrgam_root, concurrency = 1L,
+cdrgam_cli_configure(cdrgam_root = .cdrgam_cli_default_root(), concurrency = 1L,
   slurm_partition = NULL, slurm_account = NULL, slurm_cpus = NULL,
   slurm_memory = NULL, slurm_time = NULL, slurm_qos = NULL)
 ```
 
 ## Arguments
 
-- checkout:
-
-  Writable harness instance directory. It is normally the source
-  checkout during development, but need not contain package code.
-
 - cdrgam_root:
 
-  Root that will contain projects and private orchestration state.
+  Root containing site configuration, projects, and private
+  orchestration state. The default is R's platform-specific user data
+  directory for `cdrgam.cli`.
 
 - concurrency:
 
-  Maximum concurrent Slurm workers across the instance.
+  Maximum concurrent Slurm workers across the root.
 
 - slurm_partition, slurm_account:
 
@@ -40,4 +37,4 @@ cdrgam_cli_configure(checkout = ".", cdrgam_root, concurrency = 1L,
 
 ## Value
 
-The validated checkout configuration, invisibly.
+The validated site configuration, invisibly.

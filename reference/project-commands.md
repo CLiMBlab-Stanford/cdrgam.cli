@@ -1,20 +1,20 @@
 # Manage Configured CDR-GAM Projects
 
 These functions define, resolve, validate, plan, execute, inspect, and
-clean projects beneath the checkout's configured CDR-GAM root. Local
-execution is serial and isolates each work item in its own R process.
-Slurm execution uses the checkout-wide controller and concurrency limit.
-Cleanup is restricted to generated artifacts and private orchestration
-state. Status preserves the artifact lifecycle state and displays
-published fits as `Nonconverged` when their recorded optimizer
-diagnostics report that convergence was not reached. `cdrgam_cli_def()`
-initializes Git-managed projects, creates missing definitions, and edits
-existing YAML through a validated temporary file. A failed edit is
-retained in the managed private draft directory and reopened by the next
-edit of the same definition; the last valid published definition remains
-unchanged. With `source`, it initializes a new project or subordinate
-definition from an existing one. A project copy includes its definitions
-and project-owned `code/` tree. The `"rm"` operation removes only
+clean projects beneath the configured CDR-GAM root. Local execution is
+serial and isolates each work item in its own R process. Slurm execution
+uses the root-wide controller and concurrency limit. Cleanup is
+restricted to generated artifacts and private orchestration state.
+Status preserves the artifact lifecycle state and displays published
+fits as `Nonconverged` when their recorded optimizer diagnostics report
+that convergence was not reached. `cdrgam_cli_def()` initializes
+Git-managed projects, creates missing definitions, and edits existing
+YAML through a validated temporary file. A failed edit is retained in
+the managed private draft directory and reopened by the next edit of the
+same definition; the last valid published definition remains unchanged.
+With `source`, it initializes a new project or subordinate definition
+from an existing one. A project copy includes its definitions and
+project-owned `code/` tree. The `"rm"` operation removes only
 unreferenced subordinate definitions and refuses to remove definitions
 with generated results. The `"val"` operation validates a project or one
 definition and its prerequisites without changing files. Definition
@@ -36,33 +36,33 @@ worker logs when `worker = TRUE`.
 
 ``` r
 cdrgam_cli_def(project = NULL, type = NULL, name = NULL,
-  source = NULL, checkout = NULL, editor = NULL,
+  source = NULL, cdrgam_root = NULL, editor = NULL,
   operation = c("edit", "init", "rm", "val"), deep = FALSE)
 
-cdrgam_cli_validate(projects = NULL, deep = FALSE, checkout = NULL)
+cdrgam_cli_validate(projects = NULL, deep = FALSE, cdrgam_root = NULL)
 
-cdrgam_cli_list(projects = NULL, checkout = NULL)
+cdrgam_cli_list(projects = NULL, cdrgam_root = NULL)
 
 cdrgam_cli_log(projects = NULL, models = NULL, predictions = NULL,
   visualizations = NULL, comparisons = NULL, lines = NULL,
-  checkout = NULL, pager = NULL, worker = FALSE)
+  cdrgam_root = NULL, pager = NULL, worker = FALSE)
 
 cdrgam_cli_plan(projects = NULL, models = NULL, predictions = NULL,
-  visualizations = NULL, comparisons = NULL, checkout = NULL)
+  visualizations = NULL, comparisons = NULL, cdrgam_root = NULL)
 
 cdrgam_cli_run(projects = NULL, models = NULL, predictions = NULL,
   visualizations = NULL, comparisons = NULL, dry_run = FALSE,
   cpus = NULL, memory = NULL, time = NULL, qos = NULL,
-  checkout = NULL)
+  cdrgam_root = NULL)
 
-cdrgam_cli_status(projects = NULL, checkout = NULL, pager = NULL,
+cdrgam_cli_status(projects = NULL, cdrgam_root = NULL, pager = NULL,
   use_pager = TRUE)
 
 cdrgam_cli_purge(projects = NULL, models = NULL, predictions = NULL,
   visualizations = NULL, comparisons = NULL, datasets = NULL,
-  work = FALSE, logs = FALSE, yes = FALSE, checkout = NULL)
+  work = FALSE, logs = FALSE, yes = FALSE, cdrgam_root = NULL)
 
-find_cdrgam_project(project = NULL, checkout = NULL)
+find_cdrgam_project(project = NULL, cdrgam_root = NULL)
 ```
 
 ## Arguments
@@ -98,7 +98,7 @@ find_cdrgam_project(project = NULL, checkout = NULL)
 
 - project:
 
-  One project directory name, or `"site"` for checkout configuration.
+  One project directory name, or `"site"` for root-local configuration.
   The directory name is authoritative when it differs from the
   descriptive name in the project definition.
 
@@ -127,10 +127,10 @@ find_cdrgam_project(project = NULL, checkout = NULL)
 
   Dataset artifact selectors used by `cdrgam_cli_purge()`.
 
-- checkout:
+- cdrgam_root:
 
-  The configured harness instance. The launcher supplies it
-  automatically.
+  The configured CDR-GAM root. The launcher supplies it automatically
+  through `CDRGAM_ROOT`.
 
 - deep:
 

@@ -17,10 +17,10 @@ contracts and checksums determine freshness.
 cdrgam_cli_publish(project, results = c("none", "archive", "url", "git"),
   archive = NULL, url = NULL, sha256 = NULL, models = NULL,
   predictions = NULL, visualizations = NULL, comparisons = NULL,
-  commit = NULL, push = FALSE, checkout = NULL)
+  commit = NULL, push = FALSE, cdrgam_root = NULL)
 
 cdrgam_cli_fetch(location, project = NULL, source_only = FALSE,
-  results = NULL, checkout = NULL)
+  results = NULL, cdrgam_root = NULL)
 ```
 
 ## Arguments
@@ -61,9 +61,9 @@ cdrgam_cli_fetch(location, project = NULL, source_only = FALSE,
   Whether to push the current branch after publication. This requires
   `commit`.
 
-- checkout:
+- cdrgam_root:
 
-  Configured harness instance directory.
+  Configured CDR-GAM root.
 
 - location:
 

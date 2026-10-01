@@ -24,13 +24,25 @@ Definitions are user-owned and no cleanup operation may select them.
 
 ## Correctness and testing
 
-Install both packages into a clean temporary R library for integration
-tests. Run the standalone test and package check before handing off a
-broad change:
+Use the narrowest applicable `scripts/test` scope while developing. Add
+or run focused tests for the behavior changed by the task. Reserve the
+integration scope and clean temporary installation of both packages for
+changes that cross the core/CLI boundary or affect installed-package
+behavior.
+
+Do not run a full `R CMD check` for routine development changes. The
+hosted release gate is the authoritative full-suite, package-check,
+documentation, and cross-platform validation. Run equivalent full
+validation locally only when preparing a release, investigating a gate
+failure, or when the user asks for it explicitly.
+
+Available focused scopes are documented in `CONTRIBUTING.md`; for
+example:
 
 ``` sh
-Rscript tests/phase1.R
-R CMD check --no-manual --no-build-vignettes cdrgam.cli_*.tar.gz
+./scripts/test paths
+./scripts/test registry
+./scripts/test integration
 ```
 
 Do not commit package tarballs, check directories, installed libraries,

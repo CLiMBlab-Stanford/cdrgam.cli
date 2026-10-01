@@ -23,7 +23,7 @@ checksums determine freshness."></head><body>
 
     <a class="navbar-brand me-2" href="../index.html">cdrgam.cli</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.1.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.2.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -66,10 +66,10 @@ checksums determine freshness.</p>
     <div class="sourceCode"><pre class="sourceCode r"><code><span><span class="fu">cdrgam_cli_publish</span><span class="op">(</span><span class="va">project</span>, results <span class="op">=</span> <span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"none"</span>, <span class="st">"archive"</span>, <span class="st">"url"</span>, <span class="st">"git"</span><span class="op">)</span>,</span>
 <span>  archive <span class="op">=</span> <span class="cn">NULL</span>, url <span class="op">=</span> <span class="cn">NULL</span>, sha256 <span class="op">=</span> <span class="cn">NULL</span>, models <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  predictions <span class="op">=</span> <span class="cn">NULL</span>, visualizations <span class="op">=</span> <span class="cn">NULL</span>, comparisons <span class="op">=</span> <span class="cn">NULL</span>,</span>
-<span>  commit <span class="op">=</span> <span class="cn">NULL</span>, push <span class="op">=</span> <span class="cn">FALSE</span>, checkout <span class="op">=</span> <span class="cn">NULL</span><span class="op">)</span></span>
+<span>  commit <span class="op">=</span> <span class="cn">NULL</span>, push <span class="op">=</span> <span class="cn">FALSE</span>, cdrgam_root <span class="op">=</span> <span class="cn">NULL</span><span class="op">)</span></span>
 <span></span>
 <span><span class="fu">cdrgam_cli_fetch</span><span class="op">(</span><span class="va">location</span>, project <span class="op">=</span> <span class="cn">NULL</span>, source_only <span class="op">=</span> <span class="cn">FALSE</span>,</span>
-<span>  results <span class="op">=</span> <span class="cn">NULL</span>, checkout <span class="op">=</span> <span class="cn">NULL</span><span class="op">)</span></span></code></pre></div>
+<span>  results <span class="op">=</span> <span class="cn">NULL</span>, cdrgam_root <span class="op">=</span> <span class="cn">NULL</span><span class="op">)</span></span></code></pre></div>
     </div>
 
     <div class="section level2">
@@ -103,8 +103,8 @@ checksums determine freshness.</p>
 <dd><p>Whether to push the current branch after publication. This
   requires <code>commit</code>.</p></dd>
 
-  <dt id="arg-checkout">checkout<a class="anchor" aria-label="anchor" href="#arg-checkout"></a></dt>
-<dd><p>Configured harness instance directory.</p></dd>
+  <dt id="arg-cdrgam-root">cdrgam_root<a class="anchor" aria-label="anchor" href="#arg-cdrgam-root"></a></dt>
+<dd><p>Configured CDR-GAM root.</p></dd>
 
   <dt id="arg-location">location<a class="anchor" aria-label="anchor" href="#arg-location"></a></dt>
 <dd><p>Git repository, local Git repository, or direct project

@@ -423,7 +423,7 @@
 }
 
 .cdrgam_cli_project_has_active_work <- function(definitions) {
-    configuration <- definitions$checkout
+    configuration <- definitions$site
     .cdrgam_cli_registry_project_active(
         configuration,
         definitions$project$project$name,
@@ -448,7 +448,7 @@
                 'Definition selectors require one project name'
             )
         }
-        configuration <- .cdrgam_cli_checkout(checkout, create_root=TRUE)
+        configuration <- .cdrgam_cli_site(checkout, create_root=TRUE)
         projects_root <- file.path(configuration$cdrgam_root, 'projects')
         available <- if (dir.exists(projects_root)) {
             basename(list.dirs(
@@ -483,11 +483,11 @@
         if (length(selectors)) {
             .cdrgam_cli_abort('def ls site does not accept definition selectors')
         }
-        checkout_root <- .cdrgam_cli_checkout_root(checkout)
+        checkout_root <- .cdrgam_cli_root(checkout)
         output <- data.frame(
             type='site', name='site',
             path=as.character(fs::path_rel(
-                file.path(checkout_root, .cdrgam_cli_checkout_marker),
+                file.path(checkout_root, .cdrgam_cli_site_marker),
                 start=checkout_root
             )),
             stringsAsFactors=FALSE
@@ -557,7 +557,7 @@
     project_definition$project$name <- basename(root)
     definitions <- list(
         root=root, project=project_definition,
-        checkout=.cdrgam_cli_checkout(checkout)
+        site=.cdrgam_cli_site(checkout)
     )
     for (name in names) {
         references <- .cdrgam_cli_definition_references(
@@ -632,52 +632,41 @@
     invisible(stats::setNames(targets, names))
 }
 
-.cdrgam_cli_define_site <- function(checkout=NULL, editor=NULL) {
-    checkout <- tryCatch(
-        .cdrgam_cli_checkout_root(checkout, must_work=FALSE),
+.cdrgam_cli_define_site <- function(root=NULL, editor=NULL) {
+    root <- tryCatch(
+        .cdrgam_cli_root(root, must_work=FALSE),
         error=function(error) {
-            if (!is.null(checkout) ||
-                    !is.null(getOption('cdrgam.cli.checkout')) ||
-                    nzchar(Sys.getenv('CDRGAM_CHECKOUT', ''))) {
+            if (!is.null(root) ||
+                    !is.null(getOption('cdrgam.cli.root')) ||
+                    nzchar(Sys.getenv('CDRGAM_ROOT', ''))) {
                 stop(error)
             }
-            .cdrgam_cli_normalize_path(getwd(), must_work=TRUE)
+            .cdrgam_cli_default_root()
         }
     )
-    target <- file.path(checkout, .cdrgam_cli_checkout_marker)
-    configured_root <- Sys.getenv('CDRGAM_ROOT', '')
-    if (!nzchar(configured_root)) {
-        configured_root <- file.path(checkout, 'cdrgam-root')
-    }
-    initial <- list(
-        schema=1L,
-        cdrgam_root=.cdrgam_cli_normalize_path(
-            configured_root,
-            must_work=FALSE
-        ),
-        concurrency=1L
-    )
+    target <- file.path(root, .cdrgam_cli_site_marker)
+    initial <- list(schema=1L, concurrency=1L)
     saved <- .cdrgam_cli_edit_yaml(
         target, initial,
-        validate=function(path) .cdrgam_cli_validate_checkout(
+        validate=function(path) .cdrgam_cli_validate_site(
             .cdrgam_cli_read_yaml(path), path
         ),
         editor=editor,
-        draft=.cdrgam_cli_draft_path(checkout, 'site', 'checkout')
+        draft=.cdrgam_cli_draft_path(root, 'site', 'site')
     )
     if (!saved && !file.exists(target)) {
         message('No site definition created')
         return(invisible(target))
     }
-    options(cdrgam.cli.checkout=checkout)
-    .cdrgam_cli_checkout(checkout, create_root=TRUE)
+    options(cdrgam.cli.root=root)
+    .cdrgam_cli_site(root, create_root=TRUE)
     message(if (saved) 'Updated' else 'No changes to', ' site definition at ', target)
     invisible(target)
 }
 
 #' Create, edit, copy, or remove CDR-GAM definitions
 #'
-#' @param project Project name, or `"site"` for checkout configuration.
+#' @param project Project name, or `"site"` for root-local configuration.
 #' @param type Optional definition type.
 #' @param name One or more definition names when `type` is supplied. Validation
 #'   and removal accept `*` patterns; editing treats names literally.
@@ -691,14 +680,14 @@
 #'   `"val"` to validate definitions without changing them.
 #' @param deep Whether `operation="val"` should read data and prepare model
 #'   designs.
-#' @param checkout Configured harness instance directory.
+#' @param cdrgam_root Configured CDR-GAM root.
 #' @param editor Editor command or callback. The default uses `VISUAL`, then
 #'   `EDITOR`, then the R `editor` option.
 #' @return The created, updated, or removed path, invisibly.
 #' @export
 cdrgam_cli_def <- function(
         project=NULL, type=NULL, name=NULL, source=NULL,
-        checkout=NULL, editor=NULL, operation=c('edit', 'init', 'rm', 'val'),
+        cdrgam_root=NULL, editor=NULL, operation=c('edit', 'init', 'rm', 'val'),
         deep=FALSE
 ) {
     operation <- match.arg(operation)
@@ -709,7 +698,7 @@ cdrgam_cli_def <- function(
     project <- .cdrgam_cli_scalar_character(project, 'project')
     if (identical(operation, 'rm')) {
         if (identical(project, 'site')) {
-            .cdrgam_cli_abort('def rm does not remove checkout configuration')
+            .cdrgam_cli_abort('def rm does not remove site configuration')
         }
         if (is.null(type) || is.null(name)) {
             .cdrgam_cli_abort(
@@ -728,11 +717,11 @@ cdrgam_cli_def <- function(
                     'def val site does not accept definition selectors, source, or editor'
                 )
             }
-            configuration <- .cdrgam_cli_checkout(
-                checkout, create_root=FALSE
+            configuration <- .cdrgam_cli_site(
+                cdrgam_root, create_root=FALSE
             )
-            message('Valid checkout definition at ', file.path(
-                configuration$checkout, .cdrgam_cli_checkout_marker
+            message('Valid site definition at ', file.path(
+                configuration$cdrgam_root, .cdrgam_cli_site_marker
             ))
             return(invisible(configuration))
         }
@@ -741,7 +730,7 @@ cdrgam_cli_def <- function(
                 'The site definition cannot be combined with project selectors or source'
             )
         }
-        return(.cdrgam_cli_define_site(checkout, editor))
+        return(.cdrgam_cli_define_site(cdrgam_root, editor))
     }
     project <- .cdrgam_cli_name(project, 'project')
     if (!is.null(source)) {
@@ -768,25 +757,25 @@ cdrgam_cli_def <- function(
             )
         }
         root <- .cdrgam_cli_project_root(
-            project, checkout=checkout, must_work=FALSE
+            project, root=cdrgam_root, must_work=FALSE
         )
         if (file.exists(root) || dir.exists(root)) {
             .cdrgam_cli_abort(paste0('Project already exists: ', root))
         }
         if (is.null(source)) {
-            return(.cdrgam_cli_create_project(project, checkout))
+            return(.cdrgam_cli_create_project(project, cdrgam_root))
         }
-        return(.cdrgam_cli_copy_project_sources(source, project, checkout))
+        return(.cdrgam_cli_copy_project_sources(source, project, cdrgam_root))
     }
     if (identical(operation, 'val')) {
         if (!is.null(source) || !is.null(editor)) {
             .cdrgam_cli_abort('def val does not accept source or editor')
         }
         if (is.null(type)) {
-            return(cdrgam_cli_validate(project, deep=deep, checkout=checkout))
+            return(cdrgam_cli_validate(project, deep=deep, cdrgam_root=cdrgam_root))
         }
         return(.cdrgam_cli_validate_definitions(
-            project, type, name, deep=deep, checkout=checkout
+            project, type, name, deep=deep, checkout=cdrgam_root
         ))
     }
     if (is.null(type)) {
@@ -795,16 +784,16 @@ cdrgam_cli_def <- function(
                 .cdrgam_cli_abort('source cannot be combined with editor')
             }
             return(.cdrgam_cli_copy_project_sources(
-                source, project, checkout
+                source, project, cdrgam_root
             ))
         }
-        .cdrgam_cli_checkout(checkout, create_root=TRUE)
+        .cdrgam_cli_site(cdrgam_root, create_root=TRUE)
         root <- .cdrgam_cli_project_root(
-            project, checkout=checkout, must_work=FALSE
+            project, root=cdrgam_root, must_work=FALSE
         )
         target <- file.path(root, .cdrgam_cli_marker)
         if (!file.exists(target)) {
-            return(.cdrgam_cli_create_project(project, checkout))
+            return(.cdrgam_cli_create_project(project, cdrgam_root))
         }
         original <- .cdrgam_cli_validate_project(
             .cdrgam_cli_read_yaml(target), target
@@ -834,7 +823,7 @@ cdrgam_cli_def <- function(
     }
     if (identical(operation, 'rm')) {
         return(.cdrgam_cli_remove_definitions(
-            project, type, name, checkout
+            project, type, name, cdrgam_root
         ))
     }
     names <- vapply(
@@ -842,7 +831,7 @@ cdrgam_cli_def <- function(
     )
     paths <- vapply(names, function(name) {
         .cdrgam_cli_define_definition(
-            project, type, name, source, checkout, editor
+            project, type, name, source, cdrgam_root, editor
         )
     }, character(1))
     invisible(stats::setNames(paths, names))

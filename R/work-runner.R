@@ -135,7 +135,7 @@
         )
     } else NULL
     list(
-        checkout=definitions$checkout$checkout,
+        cdrgam_root=definitions$site$cdrgam_root,
         project_source=source,
         R=R.home(), R_version=as.character(getRversion()),
         BLAS=unname(extSoftVersion()[['BLAS']]),

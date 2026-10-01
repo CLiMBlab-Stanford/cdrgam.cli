@@ -78,12 +78,12 @@
 .cdrgam_cli_command_spec <- function() {
     selectors <- .cdrgam_cli_selector_options()
     definition_target <- list(.cdrgam_cli_argument(
-        'TARGET', 'A project name, or site for checkout configuration.'
+        'TARGET', 'A project name, or site for root configuration.'
     ))
     def <- .cdrgam_cli_command(
         'def', 'Create, edit, list, remove, or validate definitions.',
         description=paste(
-            'Manage checkout and project definitions. Definition names are',
+            'Manage root and project definitions. Definition names are',
             'derived from their YAML file names.'
         ),
         commands=list(
@@ -364,9 +364,9 @@
         handler='fetch'
     )
     scheduler=.cdrgam_cli_command(
-        'scheduler', 'Run the internal checkout scheduler.',
+        'scheduler', 'Run the internal root scheduler.',
         options=list(.cdrgam_cli_option(
-            'checkout', 'Checkout directory.', metavar='PATH', required=TRUE
+            'root', 'CDR-GAM root.', metavar='PATH', required=TRUE
         )),
         handler='scheduler', hidden=TRUE
     )
@@ -731,7 +731,7 @@ cli_main <- function(args=commandArgs(trailingOnly=TRUE)) {
     handler <- command$handler
     if (identical(handler, 'scheduler')) {
         .cdrgam_cli_controller_main(.cdrgam_cli_one(
-            flags$checkout, '--checkout', required=TRUE
+            flags$root, '--root', required=TRUE
         ))
         return(invisible(0L))
     }

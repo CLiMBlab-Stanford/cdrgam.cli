@@ -6,10 +6,10 @@
 cdrgam_cli_publish(project, results = c("none", "archive", "url", "git"),
   archive = NULL, url = NULL, sha256 = NULL, models = NULL,
   predictions = NULL, visualizations = NULL, comparisons = NULL,
-  commit = NULL, push = FALSE, checkout = NULL)
+  commit = NULL, push = FALSE, cdrgam_root = NULL)
 
 cdrgam_cli_fetch(location, project = NULL, source_only = FALSE,
-  results = NULL, checkout = NULL)
+  results = NULL, cdrgam_root = NULL)
 }
 \arguments{
   \item{project}{Project name. For fetching, an optional local project name.}
@@ -24,7 +24,7 @@ cdrgam_cli_fetch(location, project = NULL, source_only = FALSE,
   project repository are included.}
   \item{push}{Whether to push the current branch after publication. This
   requires \code{commit}.}
-  \item{checkout}{Configured harness instance directory.}
+  \item{cdrgam_root}{Configured CDR-GAM root.}
   \item{location}{Git repository, local Git repository, or direct project
   source archive location.}
   \item{source_only}{Whether to skip separately published results.}

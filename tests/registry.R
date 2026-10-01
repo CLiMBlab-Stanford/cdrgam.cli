@@ -18,7 +18,7 @@ yaml::write_yaml(
 )
 definitions <- list(
     root=project,
-    checkout=configuration,
+    site=configuration,
     project=project_definition
 )
 

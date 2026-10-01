@@ -2,7 +2,7 @@
         definitions, kind, name=NULL, dataset=NULL, product=NULL, identity=NULL
 ) {
     root <- definitions$root
-    configuration <- definitions$checkout
+    configuration <- definitions$site
     results <- file.path(root, 'results')
     if (identical(kind, 'dataset')) {
         parts <- c(results, 'datasets', name)
@@ -37,11 +37,16 @@
         parts <- c(parts, product)
     }
     path <- do.call(file.path, as.list(parts))
-    allowed <- c(root, file.path(configuration$cdrgam_root, '.cdrgam'))
-    if (!any(vapply(allowed, function(parent) .cdrgam_cli_within(path, parent), logical(1)))) {
+    allowed <- .cdrgam_cli_normalize_path(c(
+        root, file.path(configuration$cdrgam_root, '.cdrgam')
+    ), must_work=FALSE)
+    normalized <- .cdrgam_cli_normalize_path(path, must_work=FALSE)
+    if (!any(vapply(allowed, function(parent) {
+            isTRUE(fs::path_has_parent(normalized, parent))
+        }, logical(1)))) {
         .cdrgam_cli_abort('Managed path escapes the configured roots')
     }
-    path
+    as.character(normalized)
 }
 
 .cdrgam_cli_work_log_path <- function(definitions, kind, name) {
@@ -272,31 +277,47 @@
 
 .cdrgam_cli_pack_store_paths <- function(value, configuration) {
     prefix <- 'cdrgam-root://'
+    store_root <- .cdrgam_cli_normalize_path(
+        configuration$cdrgam_root, must_work=FALSE
+    )
     project_roots <- .cdrgam_cli_project_roots(configuration)
     project_roots <- project_roots[order(
         nchar(unlist(project_roots, use.names=FALSE)), decreasing=TRUE
     )]
+    converted <- new.env(hash=TRUE, parent=emptyenv())
+    pack_path <- function(element) {
+        if (is.na(element) || !.cdrgam_cli_absolute_path(element)) return(element)
+        if (exists(element, envir=converted, inherits=FALSE)) {
+            return(get(element, envir=converted, inherits=FALSE))
+        }
+        normalized <- .cdrgam_cli_normalize_path(element, must_work=FALSE)
+        output <- element
+        for (id in names(project_roots)) {
+            root <- project_roots[[id]]
+            if (isTRUE(fs::path_has_parent(normalized, root))) {
+                relative <- if (identical(normalized, root)) '.' else {
+                    substring(normalized, nchar(root) + 2L)
+                }
+                output <- paste0('cdrgam-project://', id, '/', relative)
+                break
+            }
+        }
+        if (identical(output, element) &&
+                isTRUE(fs::path_has_parent(normalized, store_root))) {
+            relative <- if (identical(normalized, store_root)) '.' else {
+                substring(normalized, nchar(store_root) + 2L)
+            }
+            output <- paste0(prefix, relative)
+        }
+        assign(element, output, envir=converted)
+        output
+    }
     transform <- function(object) {
         original_attributes <- attributes(object)
         if (is.character(object)) {
-            object[] <- vapply(object, function(element) {
-                if (is.na(element) || !grepl('^(/|[A-Za-z]:[/\\\\])', element)) {
-                    return(element)
-                }
-                normalized <- .cdrgam_cli_normalize_path(element, FALSE)
-                for (id in names(project_roots)) {
-                    root <- project_roots[[id]]
-                    if (.cdrgam_cli_within(normalized, root)) {
-                        relative <- if (identical(normalized, root)) '.' else {
-                            substring(normalized, nchar(root) + 2L)
-                        }
-                        return(paste0('cdrgam-project://', id, '/', relative))
-                    }
-                }
-                if (.cdrgam_cli_within(normalized, configuration$cdrgam_root)) {
-                    paste0(prefix, .cdrgam_cli_store_relative(configuration, normalized))
-                } else element
-            }, character(1), USE.NAMES=FALSE)
+            object[] <- vapply(
+                object, pack_path, character(1), USE.NAMES=FALSE
+            )
         } else if (is.list(object)) {
             object <- lapply(object, transform)
         }
@@ -312,23 +333,55 @@
 
 .cdrgam_cli_unpack_store_paths <- function(value, configuration) {
     prefix <- 'cdrgam-root://'
+    project_prefix <- 'cdrgam-project://'
+    store_root <- .cdrgam_cli_normalize_path(
+        configuration$cdrgam_root, must_work=FALSE
+    )
+    project_roots <- .cdrgam_cli_project_roots(configuration)
+    converted <- new.env(hash=TRUE, parent=emptyenv())
+    unpack_path <- function(element) {
+        if (is.na(element) || (!startsWith(element, prefix) &&
+                !startsWith(element, project_prefix))) {
+            return(element)
+        }
+        if (exists(element, envir=converted, inherits=FALSE)) {
+            return(get(element, envir=converted, inherits=FALSE))
+        }
+        if (startsWith(element, prefix)) {
+            root <- store_root
+            relative <- substring(element, nchar(prefix) + 1L)
+        } else {
+            reference <- substring(element, nchar(project_prefix) + 1L)
+            slash <- regexpr('/', reference, fixed=TRUE)
+            if (slash < 2L) {
+                .cdrgam_cli_abort('stored request path is not a valid project path')
+            }
+            id <- substring(reference, 1L, slash - 1L)
+            relative <- substring(reference, slash + 1L)
+            root <- project_roots[[id]]
+            if (is.null(root)) .cdrgam_cli_abort(paste0(
+                'stored request path refers to unknown project.id ', sQuote(id)
+            ))
+        }
+        if (!nzchar(relative) || .cdrgam_cli_absolute_path(relative) ||
+                any(strsplit(relative, '[/\\]')[[1L]] == '..')) {
+            .cdrgam_cli_abort('stored request path is not a valid relative path')
+        }
+        output <- .cdrgam_cli_normalize_path(
+            fs::path(root, relative), must_work=FALSE
+        )
+        if (!isTRUE(fs::path_has_parent(output, root))) {
+            .cdrgam_cli_abort('stored request path escapes its managed root')
+        }
+        assign(element, output, envir=converted)
+        output
+    }
     transform <- function(object) {
         original_attributes <- attributes(object)
         if (is.character(object)) {
-            object[] <- vapply(object, function(element) {
-                if (!is.na(element) && startsWith(element, prefix)) {
-                    .cdrgam_cli_store_resolve(
-                        configuration, substring(element, nchar(prefix) + 1L),
-                        field='stored request path'
-                    )
-                } else if (!is.na(element) && startsWith(
-                        element, 'cdrgam-project://'
-                )) {
-                    .cdrgam_cli_managed_resolve(
-                        configuration, element, field='stored request path'
-                    )
-                } else element
-            }, character(1), USE.NAMES=FALSE)
+            object[] <- vapply(
+                object, unpack_path, character(1), USE.NAMES=FALSE
+            )
         } else if (is.list(object)) {
             object <- lapply(object, transform)
         }

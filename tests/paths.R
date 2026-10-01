@@ -11,7 +11,7 @@ dir.create(file.path(project, 'definitions'), recursive=TRUE)
 configuration <- list(cdrgam_root=store)
 definitions <- list(
     root=project,
-    checkout=configuration,
+    site=configuration,
     project=list(project=list(id='project-path-test', name='example'))
 )
 yaml::write_yaml(
@@ -25,13 +25,20 @@ prediction <- internal('.cdrgam_cli_path')(
 )
 reference <- internal('.cdrgam_cli_project_relative')(definitions, prediction)
 roots <- internal('.cdrgam_cli_project_roots')(configuration)
+normalized_prediction <- internal('.cdrgam_cli_normalize_path')(
+    prediction, must_work=FALSE
+)
+expected_model <- internal('.cdrgam_cli_normalize_path')(
+    file.path(project, 'results', 'models', 'main'), must_work=FALSE
+)
+expected_prediction <- internal('.cdrgam_cli_normalize_path')(
+    file.path(project, 'results', 'models', 'main', 'predictions', 'test'),
+    must_work=FALSE
+)
 
 stopifnot(
-    identical(model, file.path(project, 'results', 'models', 'main')),
-    identical(
-        prediction,
-        file.path(project, 'results', 'models', 'main', 'predictions', 'test')
-    ),
+    identical(model, expected_model),
+    identical(prediction, expected_prediction),
     identical(
         reference,
         'cdrgam-project://project-path-test/results/models/main/predictions/test'
@@ -40,13 +47,13 @@ stopifnot(
         unname(internal('.cdrgam_cli_registry_resolve')(
             configuration, reference, project_roots=roots
         )),
-        prediction
+        normalized_prediction
     ),
     identical(
         internal('.cdrgam_cli_managed_resolve')(
             configuration, reference, project_roots=roots
         ),
-        prediction
+        normalized_prediction
     )
 )
 
@@ -68,5 +75,24 @@ stopifnot(
     inherits(unsafe, 'error'),
     inherits(unknown, 'error')
 )
+
+packed_model <- internal('.cdrgam_cli_pack_store_paths')(
+    list(path=model), configuration
+)
+renamed_project <- file.path(store, 'projects', 'renamed')
+stopifnot(
+    startsWith(packed_model$path, 'cdrgam-project://project-path-test/'),
+    file.rename(project, renamed_project)
+)
+unpacked_model <- internal('.cdrgam_cli_unpack_store_paths')(
+    packed_model, configuration
+)$path
+stopifnot(identical(
+    unpacked_model,
+    internal('.cdrgam_cli_normalize_path')(
+        file.path(renamed_project, 'results', 'models', 'main'),
+        must_work=FALSE
+    )
+))
 
 cat('paths: ok\n')

@@ -7,12 +7,13 @@ case "$scope" in
     cli) tests='tests/cli.R' ;;
     paths) tests='tests/paths.R' ;;
     registry) tests='tests/registry.R' ;;
+    fingerprints) tests='tests/fingerprints.R' ;;
     identities) tests='tests/definition-identities.R' ;;
     integration) tests='tests/phase1.R' ;;
-    all) tests='tests/architecture.R tests/cli.R tests/paths.R tests/registry.R tests/definition-identities.R tests/phase1.R' ;;
+    all) tests='tests/architecture.R tests/cli.R tests/paths.R tests/registry.R tests/fingerprints.R tests/definition-identities.R tests/phase1.R' ;;
     *)
         echo "Unknown test scope: $scope" >&2
-        echo 'Expected architecture, cli, paths, registry, identities, integration, or all' >&2
+        echo 'Expected architecture, cli, paths, registry, fingerprints, identities, integration, or all' >&2
         exit 2
         ;;
 esac

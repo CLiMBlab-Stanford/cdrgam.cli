@@ -76,7 +76,7 @@
 .cdrgam_cli_slurm_exports <- function(configuration, cpus) {
     environment <- list(
         R_LIBS_USER=paste(.libPaths(), collapse=.Platform$path.sep),
-        CDRGAM_CHECKOUT=configuration$checkout,
+        CDRGAM_ROOT=configuration$cdrgam_root,
         OMP_NUM_THREADS=as.character(cpus),
         OPENBLAS_NUM_THREADS=as.character(cpus),
         MKL_NUM_THREADS=as.character(cpus),
@@ -115,7 +115,7 @@
     invocation <- paste(
         'exec', shQuote(rscript),
         '-e', shQuote('cdrgam.cli::cli_main(commandArgs(trailingOnly=TRUE))'),
-        '--args scheduler --checkout', shQuote(configuration$checkout)
+        '--args scheduler --root', shQuote(configuration$cdrgam_root)
     )
     .cdrgam_cli_atomic_write(script_path, function(path) writeLines(c(
         '#!/bin/sh',
@@ -300,7 +300,7 @@
             .cdrgam_cli_abort('Scheduler returned an invalid worker action')
         }
         idle_started <- NULL
-        configuration <- .cdrgam_cli_checkout(create_root=TRUE)
+        configuration <- .cdrgam_cli_site(create_root=TRUE)
         submitted <- .cdrgam_cli_unpack_store_paths(
             readRDS(assignment$request_file), configuration
         )

@@ -209,14 +209,14 @@
 #' @param commit Optional Git commit message. All already staged definition
 #'   edits and publication changes are committed together.
 #' @param push Whether to push the current branch after publication.
-#' @param checkout Configured harness instance directory.
+#' @param cdrgam_root Configured CDR-GAM root.
 #' @return Publication metadata, invisibly.
 #' @export
 cdrgam_cli_publish <- function(
         project, results=c('none', 'archive', 'url', 'git'), archive=NULL,
         url=NULL, sha256=NULL, models=NULL, predictions=NULL,
         visualizations=NULL, comparisons=NULL, commit=NULL, push=FALSE,
-        checkout=NULL
+        cdrgam_root=NULL
 ) {
     project <- .cdrgam_cli_name(project, 'project')
     results <- match.arg(results)
@@ -225,7 +225,7 @@ cdrgam_cli_publish <- function(
         .cdrgam_cli_abort('push requires commit so publication changes reach the remote')
     }
     definitions <- .cdrgam_cli_read_definitions(
-        project, check_sources=TRUE, checkout=checkout
+        project, check_sources=TRUE, checkout=cdrgam_root
     )
     root <- definitions$root
     .cdrgam_cli_git_track_project(root)
@@ -236,7 +236,7 @@ cdrgam_cli_publish <- function(
         )
         built <- .cdrgam_cli_build_results_archive(
             project, archive, models, predictions, visualizations,
-            comparisons, checkout
+            comparisons, cdrgam_root
         )
         result_record$sha256 <- built$sha256
         result_record$archive <- basename(built$path)
@@ -251,7 +251,7 @@ cdrgam_cli_publish <- function(
         result_record$sha256 <- sha256
     } else if (identical(results, 'git')) {
         graph <- .cdrgam_cli_publication_items(
-            project, models, predictions, visualizations, comparisons, checkout
+            project, models, predictions, visualizations, comparisons, cdrgam_root
         )
         .cdrgam_cli_git_stage(
             root, unlist(lapply(
@@ -482,15 +482,15 @@ cdrgam_cli_publish <- function(
 #' @param source_only Whether to skip published results.
 #' @param results Optional local path or direct URL overriding the published
 #'   results location.
-#' @param checkout Configured harness instance directory.
+#' @param cdrgam_root Configured CDR-GAM root.
 #' @return The installed project root, invisibly.
 #' @export
 cdrgam_cli_fetch <- function(
-        location, project=NULL, source_only=FALSE, results=NULL, checkout=NULL
+        location, project=NULL, source_only=FALSE, results=NULL, cdrgam_root=NULL
 ) {
     location <- .cdrgam_cli_scalar_character(location, 'location')
     source_only <- .cdrgam_cli_scalar_logical(source_only, 'source_only')
-    configuration <- .cdrgam_cli_checkout(checkout, create_root=TRUE)
+    configuration <- .cdrgam_cli_site(cdrgam_root, create_root=TRUE)
     projects <- file.path(configuration$cdrgam_root, 'projects')
     stage <- tempfile('.cdrgam-fetch-', tmpdir=projects)
     complete <- FALSE
@@ -511,7 +511,7 @@ cdrgam_cli_fetch <- function(
         .cdrgam_cli_name(definition$project$name, 'published project name')
     } else .cdrgam_cli_name(project, 'project')
     destination <- .cdrgam_cli_project_root(
-        local_name, checkout=checkout, must_work=FALSE
+        local_name, root=cdrgam_root, must_work=FALSE
     )
     if (file.exists(destination) || dir.exists(destination)) {
         .cdrgam_cli_abort(paste0('Project already exists: ', destination))
@@ -556,7 +556,7 @@ cdrgam_cli_fetch <- function(
     }
     published <- TRUE
     definitions <- .cdrgam_cli_read_definitions(
-        local_name, check_sources=TRUE, checkout=checkout
+        local_name, check_sources=TRUE, checkout=cdrgam_root
     )
     graph <- .cdrgam_cli_resolve_graph(definitions, all=TRUE)
     .cdrgam_cli_registry_import_project(definitions, graph$items)

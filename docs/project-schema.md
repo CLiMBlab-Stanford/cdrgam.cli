@@ -1,16 +1,17 @@
-# Project and checkout schema
+# Project and site schema
 
-## Checkout configuration
+## Root and site configuration
 
-Installation creates `.cdrgam/checkout.yml` relative to a writable harness
-instance directory. The source checkout is the default instance during
-development, but an installed package may use any writable directory. The
-launcher records the instance path, so separate instances do not share
-configuration implicitly.
+Installation creates `.cdrgam/site.yml` inside the CDR-GAM root. The default
+root is `tools::R_user_dir("cdrgam.cli", "data")`, such as
+`~/.local/share/R/cdrgam.cli` on Linux. The launcher records this as a fallback;
+a nonempty `CDRGAM_ROOT` environment variable selects another complete root for
+that invocation. Because configuration, registry, scheduler state, and projects
+move together, selecting a root cannot silently pair data with configuration
+from another harness instance.
 
 ```yaml
 schema: 1
-cdrgam_root: /path/to/cdrgam-root
 concurrency: 4
 slurm_partition: sphinx
 slurm_account: nlp
@@ -19,13 +20,13 @@ slurm_memory: 64G
 slurm_time: 1-00:00:00
 ```
 
-`cdrgam_root` and `concurrency` are required. `slurm_partition` and
+`concurrency` is required. `slurm_partition` and
 `slurm_account` must either both be present or both be absent. Their presence
 selects Slurm execution. Their absence selects serial local execution. The
 remaining Slurm fields are optional defaults and may be overridden by
 `cdrgam run`.
 
-Use `cdrgam def edit site` to edit this checkout-local file. The edited YAML is
+Use `cdrgam def edit site` to edit this root-local file. The edited YAML is
 validated before it atomically replaces the current configuration.
 
 Local execution is supported on Linux, macOS, and Windows. Direct Slurm
@@ -55,10 +56,10 @@ and removed when the scheduler exits. Scheduler scripts and logs, generic
 worker scripts, and worker lifecycle logs remain as private execution records.
 
 Project-owned references are stored relative to the project root and anchored
-by the generated project ID. Checkout-wide scheduler and worker references are
+by the generated project ID. Root-wide scheduler and worker references are
 stored relative to `cdrgam_root`. To move a root, first let the scheduler and
-workers stop, move the complete directory, and then update `cdrgam_root` with
-`cdrgam def edit site`.
+workers stop, move the complete directory, and then select its new location
+through `CDRGAM_ROOT` or reinstall the launcher with that root as its fallback.
 
 An inactive project may be renamed by renaming its directory under `projects/`.
 The directory name is the effective project name; the stable ID preserves work
@@ -156,7 +157,7 @@ temporary file and replace the published YAML only after validation succeeds.
 If validation fails or the editor exits with an error, the edited content is
 saved under the project's `.cdrgam/drafts/` directory. Running the same command
 reopens that draft. Successful publication removes it. Site drafts use the
-checkout's `.cdrgam/drafts/` directory.
+root's `.cdrgam/drafts/` directory.
 Closing the editor without saving cancels the edit: no target is published and
 no draft is created.
 
@@ -192,7 +193,7 @@ definitions needed to identify references; those references still prevent
 removal. An unreadable definition that could refer to the target also prevents
 removal because dependency safety cannot be established.
 
-Bare `cdrgam def ls` lists every available project in the checkout.
+Bare `cdrgam def ls` lists every available project in the root.
 `cdrgam def ls PROJECT` lists the project definition and every subordinate
 definition. Dataset, model, visualization, and comparison selectors accept
 multiple names, `*` globs, and `re:`-prefixed Perl-compatible regular
@@ -207,7 +208,7 @@ def ls brown --model`.
 validates only that definition and its direct prerequisites, so an unrelated
 broken definition does not prevent focused diagnosis. Pass `--deep` to read
 referenced datasets and prepare model designs. `cdrgam def val site` validates
-the checkout configuration.
+the root-local site configuration.
 
 Definition selectors accept multiple values after one option, or through a
 repeated option. `def edit` treats each value as a literal definition name and
@@ -567,11 +568,11 @@ worker lifecycle logs.
 
 In local mode the request graph executes serially, with each work item in an
 isolated R process. In Slurm mode an ephemeral `cdrgam-scheduler` job is the
-only parallel writer to the SQLite registry and enforces the checkout-wide
+only parallel writer to the SQLite registry and enforces the root-wide
 concurrency limit across projects. It launches generic `cdrgam-worker` jobs
 that claim ready work over TCP. A worker may run multiple compatible items,
 even across projects. Workers validate the recorded R and package environment
-before loading inputs. Short checkout-level locks serialize configuration and
+before loading inputs. Short root-level locks serialize configuration and
 scheduler publication; SQLite manages registry locking.
 
 If a worker disappears while it owns an item, that item becomes failed and its
@@ -607,7 +608,7 @@ archive. It validates the stable project ID and publication metadata. When a
 direct results URL is present, or `--results LOCATION` supplies an override,
 the command downloads the archive, verifies its SHA-256 and per-file inventory,
 and installs it under `results/`. The completed project is moved into the local
-root atomically, and the checkout registry is reconstructed from complete
+root atomically, and the root registry is reconstructed from complete
 artifact manifests. `--source-only` skips result hydration.
 
 Git revisions are provenance rather than freshness inputs. Result publications

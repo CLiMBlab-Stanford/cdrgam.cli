@@ -218,7 +218,7 @@
         path <- file.path(stage, paste0(stem, '.', format))
         device <- switch(
             format,
-            pdf=grDevices::cairo_pdf,
+            pdf=grDevices::pdf,
             png=grDevices::png,
             svg=grDevices::svg
         )

@@ -240,7 +240,7 @@
         .cdrgam_cli_complete_artifact(item$output, item$identity)
     }, items)
     if (!length(items)) return(invisible(character()))
-    configuration <- definitions$checkout
+    configuration <- definitions$site
     .cdrgam_cli_registry_initialize(configuration)
     connection <- .cdrgam_cli_registry_connect(configuration)
     on.exit(DBI::dbDisconnect(connection), add=TRUE)

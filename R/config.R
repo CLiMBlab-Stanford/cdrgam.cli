@@ -933,6 +933,6 @@
     list(
         root=root, project=project, datasets=datasets, models=models,
         visualizations=visualizations, comparisons=comparisons,
-        checkout=.cdrgam_cli_checkout(checkout)
+        site=.cdrgam_cli_site(checkout)
     )
 }

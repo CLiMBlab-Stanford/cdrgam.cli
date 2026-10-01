@@ -5,7 +5,7 @@
 #'   dataset artifacts directly.
 #' @param work,logs Include private attempts or logs.
 #' @param yes Remove selected paths. The default previews them.
-#' @param checkout Configured harness instance directory.
+#' @param cdrgam_root Configured CDR-GAM root.
 #' @return Selected generated paths, invisibly.
 #' @details Registry records and private attempt directories for selected work
 #'   items are removed even when their generated artifacts are already absent.
@@ -13,7 +13,7 @@
 cdrgam_cli_purge <- function(
         projects=NULL, models=NULL, predictions=NULL, visualizations=NULL,
         comparisons=NULL, datasets=NULL, work=FALSE, logs=FALSE,
-        yes=FALSE, checkout=NULL
+        yes=FALSE, cdrgam_root=NULL
 ) {
     workload_selected <- any(c(
         length(models), length(predictions), length(visualizations),
@@ -22,7 +22,7 @@ cdrgam_cli_purge <- function(
     if (!workload_selected && !isTRUE(work) && !isTRUE(logs) &&
             (is.null(projects) || !length(projects))) {
         inferred <- tryCatch(
-            .cdrgam_cli_infer_project(checkout),
+            .cdrgam_cli_infer_project(cdrgam_root),
             error=function(error) NULL
         )
         if (is.null(inferred)) {
@@ -33,13 +33,13 @@ cdrgam_cli_purge <- function(
         }
         projects <- inferred
     }
-    selected <- .cdrgam_cli_select_projects(projects, checkout)
-    configuration <- .cdrgam_cli_checkout(checkout, create_root=TRUE)
+    selected <- .cdrgam_cli_select_projects(projects, cdrgam_root)
+    configuration <- .cdrgam_cli_site(cdrgam_root, create_root=TRUE)
     targets <- character()
     registry_keys <- character()
     for (project in selected) {
         definitions <- .cdrgam_cli_read_definitions(
-            project, check_sources=FALSE, checkout=checkout
+            project, check_sources=FALSE, checkout=cdrgam_root
         )
         model_names <- if (length(models)) {
             .cdrgam_cli_match_names(

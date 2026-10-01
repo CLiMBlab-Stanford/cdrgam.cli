@@ -42,6 +42,9 @@ jobs:
       - name: Install the released core package
         run: install.packages('cdrgam-core', repos = NULL, type = 'source')
         shell: Rscript {0}
+      - name: Install the candidate CLI package
+        run: install.packages('.', repos = NULL, type = 'source')
+        shell: Rscript {0}
       - name: Run the correctness lint profile
         run: |
           lints <- lintr::lint_package('.')

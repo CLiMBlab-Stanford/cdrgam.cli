@@ -37,10 +37,10 @@
         parts <- c(parts, product)
     }
     path <- do.call(file.path, as.list(parts))
-    allowed <- fs::path_norm(c(
+    allowed <- .cdrgam_cli_normalize_path(c(
         root, file.path(configuration$cdrgam_root, '.cdrgam')
-    ))
-    normalized <- fs::path_norm(path)
+    ), must_work=FALSE)
+    normalized <- .cdrgam_cli_normalize_path(path, must_work=FALSE)
     if (!any(vapply(allowed, function(parent) {
             isTRUE(fs::path_has_parent(normalized, parent))
         }, logical(1)))) {

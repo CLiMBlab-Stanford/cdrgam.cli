@@ -1751,7 +1751,7 @@ probe_socket <- tryCatch(serverSocket(sample.int(10000L, 1L) + 39999L),
     error=function(error) NULL)
 can_bind_controller <- !is.null(probe_socket)
 if (can_bind_controller) close(probe_socket)
-if (can_bind_controller) {
+if (can_bind_controller && .Platform$OS.type != 'windows') {
 restored_model <- yaml::read_yaml(
     file.path(project, 'definitions', 'models', 'decay-two.yml')
 )
@@ -1889,7 +1889,9 @@ available_worker_keys <- getFromNamespace(
 ))
 stopifnot(identical(available_worker_keys, 'shared'))
 } else {
-    message('Skipping TCP controller test because local socket binding is unavailable')
+    message(
+        'Skipping Slurm controller test because it is unavailable on this platform'
+    )
 }
 
 # Managed references remain valid after moving the complete store and updating

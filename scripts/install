@@ -21,22 +21,29 @@ else
 fi
 
 script_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
-checkout=$(dirname "$script_directory")
-"$r_bin" CMD INSTALL "$checkout"
+source_root=$(dirname "$script_directory")
+"$r_bin" CMD INSTALL "$source_root"
 
-if [ ! -f "$checkout/.cdrgam/checkout.yml" ] || [ "$reconfigure" = 1 ]; then
-    if [ -z "${CDRGAM_ROOT:-}" ]; then
-        if [ ! -t 0 ]; then
-            echo "CDRGAM_ROOT is required when configuring noninteractively" >&2
-            exit 1
-        fi
-        printf 'CDR-GAM root: '
-        read -r CDRGAM_ROOT
+default_root=$("$r_bin" --vanilla --slave -e \
+    'cat(tools::R_user_dir("cdrgam.cli", "data"))')
+if [ -z "${CDRGAM_ROOT:-}" ]; then
+    CDRGAM_ROOT=$default_root
+    if [ -t 0 ]; then
+        printf 'CDR-GAM root [%s]: ' "$default_root"
+        read -r configured_root
+        CDRGAM_ROOT=${configured_root:-$default_root}
     fi
+fi
+export CDRGAM_ROOT
+
+if [ ! -f "$CDRGAM_ROOT/.cdrgam/site.yml" ] || [ "$reconfigure" = 1 ]; then
     if [ -z "${CDRGAM_CONCURRENCY:-}" ]; then
-        printf 'Checkout-wide concurrency [1]: '
-        read -r CDRGAM_CONCURRENCY
-        CDRGAM_CONCURRENCY=${CDRGAM_CONCURRENCY:-1}
+        CDRGAM_CONCURRENCY=1
+        if [ -t 0 ]; then
+            printf 'Root-wide concurrency [1]: '
+            read -r configured_concurrency
+            CDRGAM_CONCURRENCY=${configured_concurrency:-1}
+        fi
     fi
     if [ -t 0 ] && [ -z "${CDRGAM_SLURM_PARTITION:-}" ] && [ -z "${CDRGAM_SLURM_ACCOUNT:-}" ]; then
         printf 'Slurm partition (blank for local execution): '
@@ -55,7 +62,6 @@ if [ ! -f "$checkout/.cdrgam/checkout.yml" ] || [ "$reconfigure" = 1 ]; then
             if (nzchar(value)) value else NULL
         }
         cdrgam.cli::cdrgam_cli_configure(
-            checkout=commandArgs(TRUE)[[1L]],
             cdrgam_root=Sys.getenv("CDRGAM_ROOT"),
             concurrency=as.integer(Sys.getenv("CDRGAM_CONCURRENCY", "1")),
             slurm_partition=optional("CDRGAM_SLURM_PARTITION"),
@@ -65,9 +71,8 @@ if [ ! -f "$checkout/.cdrgam/checkout.yml" ] || [ "$reconfigure" = 1 ]; then
             slurm_time=optional("CDRGAM_SLURM_TIME"),
             slurm_qos=optional("CDRGAM_SLURM_QOS")
         )
-    ' --args "$checkout"
+    '
 fi
 
 "$r_bin" --vanilla --slave -e \
-    'cdrgam.cli::install_cli(path=path.expand("~/.local/bin/cdrgam"), checkout=commandArgs(TRUE)[[1L]])' \
-    --args "$checkout"
+    'cdrgam.cli::install_cli(path=path.expand("~/.local/bin/cdrgam"), root=Sys.getenv("CDRGAM_ROOT"))'

@@ -68,27 +68,26 @@ stopifnot(grepl('file name', invalid_name, fixed=TRUE))
 
 local({
     temporary <- tempfile('cdrgam-definition-identities-')
-    checkout <- file.path(temporary, 'checkout')
     root <- file.path(temporary, 'root')
-    dir.create(checkout, recursive=TRUE)
+    checkout <- root
     on.exit(unlink(temporary, recursive=TRUE), add=TRUE)
 
-    cdrgam_cli_configure(checkout, root)
-    cdrgam_cli_def('example', checkout=checkout)
+    cdrgam_cli_configure(root)
+    cdrgam_cli_def('example', cdrgam_root=checkout)
     cdrgam_cli_def(
-        'example', 'dataset', 'training', checkout=checkout,
+        'example', 'dataset', 'training', cdrgam_root=checkout,
         editor=function(path) yaml::write_yaml(definitions$dataset, path)
     )
     cdrgam_cli_def(
-        'example', 'model', 'main', checkout=checkout,
+        'example', 'model', 'main', cdrgam_root=checkout,
         editor=function(path) yaml::write_yaml(definitions$model, path)
     )
     cdrgam_cli_def(
-        'example', 'model', 'alternative', source='main', checkout=checkout,
+        'example', 'model', 'alternative', source='main', cdrgam_root=checkout,
         editor=function(path) Sys.setFileTime(path, Sys.time())
     )
     cdrgam_cli_def(
-        'example', 'visualization', 'diagnostics', checkout=checkout,
+        'example', 'visualization', 'diagnostics', cdrgam_root=checkout,
         editor=function(path) {
             value <- yaml::read_yaml(path)
             value$model <- 'main'
@@ -96,11 +95,11 @@ local({
         }
     )
     cdrgam_cli_def(
-        'example', 'comparison', 'models', checkout=checkout,
+        'example', 'comparison', 'models', cdrgam_root=checkout,
         editor=function(path) yaml::write_yaml(definitions$comparison, path)
     )
     cdrgam_cli_def(
-        'example', 'model', 'spare', source='main', checkout=checkout,
+        'example', 'model', 'spare', source='main', cdrgam_root=checkout,
         editor=function(path) Sys.setFileTime(path, Sys.time())
     )
 

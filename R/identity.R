@@ -118,15 +118,20 @@
     unique(selected)
 }
 
-.cdrgam_cli_fit_item <- function(definitions, model_name) {
+.cdrgam_cli_fit_item <- function(definitions, model_name, fingerprints=NULL) {
+    cache_key <- paste(definitions$project$project$id, model_name, sep=':')
+    if (!is.null(fingerprints) &&
+            exists(cache_key, envir=fingerprints$fits, inherits=FALSE)) {
+        return(get(cache_key, envir=fingerprints$fits, inherits=FALSE))
+    }
     model <- definitions$models[[model_name]]
     dataset_name <- model$datasets$train
     dataset <- definitions$datasets[[dataset_name]]
-    dataset_identity <- .cdrgam_cli_dataset_identity(dataset)
+    dataset_identity <- .cdrgam_cli_dataset_identity(dataset, fingerprints)
     identity <- .cdrgam_cli_model_identity(model, dataset_identity$resolved)
     key <- paste('fit', definitions$project$project$id, model_name, identity$identity,
         sep=':')
-    list(
+    output <- list(
         key=key, kind='fit', project=definitions$project$project$name,
         name=model_name, label=model_name, identity=identity$identity,
         resolved_identity=identity, dependencies=character(), model=model,
@@ -134,6 +139,10 @@
         dataset_identity=dataset_identity,
         output=.cdrgam_cli_path(definitions, 'model', model_name)
     )
+    if (!is.null(fingerprints)) {
+        assign(cache_key, output, envir=fingerprints$fits)
+    }
+    output
 }
 
 .cdrgam_cli_resolve_prediction_dataset <- function(definitions, model, selector) {
@@ -148,13 +157,17 @@
     ))
 }
 
-.cdrgam_cli_prediction_item <- function(definitions, model_name, selector, fit=NULL) {
-    fit <- .cdrgam_cli_null(fit, .cdrgam_cli_fit_item(definitions, model_name))
+.cdrgam_cli_prediction_item <- function(
+        definitions, model_name, selector, fit=NULL, fingerprints=NULL
+) {
+    fit <- .cdrgam_cli_null(
+        fit, .cdrgam_cli_fit_item(definitions, model_name, fingerprints)
+    )
     dataset_name <- .cdrgam_cli_resolve_prediction_dataset(
         definitions, fit$model, selector
     )
     dataset <- definitions$datasets[[dataset_name]]
-    dataset_identity <- .cdrgam_cli_dataset_identity(dataset)
+    dataset_identity <- .cdrgam_cli_dataset_identity(dataset, fingerprints)
     identity <- .cdrgam_cli_prediction_identity(
         fit$resolved_identity$resolved, dataset_identity$resolved
     )
@@ -174,15 +187,19 @@
     )
 }
 
-.cdrgam_cli_visualization_item <- function(definitions, name) {
+.cdrgam_cli_visualization_item <- function(definitions, name, fingerprints=NULL) {
     value <- definitions$visualizations[[name]]
-    fit <- .cdrgam_cli_fit_item(definitions, value$model)
+    fit <- .cdrgam_cli_fit_item(definitions, value$model, fingerprints)
     prediction_selectors <- .cdrgam_cli_null(value$predictions, character())
     predictions <- lapply(prediction_selectors, function(selector) {
-        .cdrgam_cli_prediction_item(definitions, value$model, selector, fit)
+        .cdrgam_cli_prediction_item(
+            definitions, value$model, selector, fit, fingerprints
+        )
     })
     effect <- if (is.null(value$kind)) {
-        .cdrgam_cli_effect_item(definitions, value$model, value, fit)
+        .cdrgam_cli_effect_item(
+            definitions, value$model, value, fit, fingerprints
+        )
     } else NULL
     inputs <- if (is.null(effect)) c(
         list(model=fit$resolved_identity$resolved),
@@ -212,8 +229,12 @@
     )
 }
 
-.cdrgam_cli_effect_item <- function(definitions, model_name, value, fit=NULL) {
-    fit <- .cdrgam_cli_null(fit, .cdrgam_cli_fit_item(definitions, model_name))
+.cdrgam_cli_effect_item <- function(
+        definitions, model_name, value, fit=NULL, fingerprints=NULL
+) {
+    fit <- .cdrgam_cli_null(
+        fit, .cdrgam_cli_fit_item(definitions, model_name, fingerprints)
+    )
     identity <- .cdrgam_cli_effect_identity(
         value$query, value$layers, fit$resolved_identity$resolved
     )
@@ -236,7 +257,7 @@
     )
 }
 
-.cdrgam_cli_comparison_item <- function(definitions, name) {
+.cdrgam_cli_comparison_item <- function(definitions, name, fingerprints=NULL) {
     value <- definitions$comparisons[[name]]
     if (is.null(value$evaluation)) {
         .cdrgam_cli_abort(paste0(
@@ -245,7 +266,8 @@
     }
     predictions <- lapply(value$models, function(model_name) {
         .cdrgam_cli_prediction_item(
-            definitions, model_name, value$evaluation$dataset
+            definitions, model_name, value$evaluation$dataset,
+            fingerprints=fingerprints
         )
     })
     datasets <- unique(vapply(predictions, `[[`, character(1), 'dataset_name'))
@@ -304,7 +326,7 @@
 
 .cdrgam_cli_resolve_graph <- function(
         definitions, models=NULL, predictions=NULL, visualizations=NULL,
-        comparisons=NULL, all=FALSE
+        comparisons=NULL, all=FALSE, fingerprints=NULL
 ) {
     explicit <- any(c(
         length(models), length(predictions), length(visualizations), length(comparisons)
@@ -317,20 +339,26 @@
     if (isTRUE(all) || (length(models) && !length(predictions) &&
             !length(visualizations) && !length(comparisons))) {
         terminals <- c(terminals, lapply(model_names, function(name) {
-            .cdrgam_cli_fit_item(definitions, name)
+            .cdrgam_cli_fit_item(definitions, name, fingerprints)
         }))
     }
     if (isTRUE(all)) {
         for (model_name in model_names) {
             partitions <- setdiff(names(definitions$models[[model_name]]$datasets), 'train')
             terminals <- c(terminals, lapply(partitions, function(partition) {
-                .cdrgam_cli_prediction_item(definitions, model_name, partition)
+                .cdrgam_cli_prediction_item(
+                    definitions, model_name, partition,
+                    fingerprints=fingerprints
+                )
             }))
         }
     } else if (length(predictions)) {
         for (model_name in model_names) {
             terminals <- c(terminals, lapply(predictions, function(partition) {
-                .cdrgam_cli_prediction_item(definitions, model_name, partition)
+                .cdrgam_cli_prediction_item(
+                    definitions, model_name, partition,
+                    fingerprints=fingerprints
+                )
             }))
         }
     }
@@ -348,7 +376,7 @@
         }
     }
     terminals <- c(terminals, lapply(visualization_names, function(name) {
-        .cdrgam_cli_visualization_item(definitions, name)
+        .cdrgam_cli_visualization_item(definitions, name, fingerprints)
     }))
     comparison_names <- if (isTRUE(all)) names(definitions$comparisons) else
         if (length(comparisons)) .cdrgam_cli_match_names(
@@ -364,7 +392,7 @@
         }
     }
     terminals <- c(terminals, lapply(comparison_names, function(name) {
-        .cdrgam_cli_comparison_item(definitions, name)
+        .cdrgam_cli_comparison_item(definitions, name, fingerprints)
     }))
     graph <- list()
     for (item in terminals) graph <- .cdrgam_cli_add_item(graph, item)

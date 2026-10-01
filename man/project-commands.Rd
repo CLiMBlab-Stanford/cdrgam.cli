@@ -11,33 +11,33 @@
 \title{Manage Configured CDR-GAM Projects}
 \usage{
 cdrgam_cli_def(project = NULL, type = NULL, name = NULL,
-  source = NULL, checkout = NULL, editor = NULL,
+  source = NULL, cdrgam_root = NULL, editor = NULL,
   operation = c("edit", "init", "rm", "val"), deep = FALSE)
 
-cdrgam_cli_validate(projects = NULL, deep = FALSE, checkout = NULL)
+cdrgam_cli_validate(projects = NULL, deep = FALSE, cdrgam_root = NULL)
 
-cdrgam_cli_list(projects = NULL, checkout = NULL)
+cdrgam_cli_list(projects = NULL, cdrgam_root = NULL)
 
 cdrgam_cli_log(projects = NULL, models = NULL, predictions = NULL,
   visualizations = NULL, comparisons = NULL, lines = NULL,
-  checkout = NULL, pager = NULL, worker = FALSE)
+  cdrgam_root = NULL, pager = NULL, worker = FALSE)
 
 cdrgam_cli_plan(projects = NULL, models = NULL, predictions = NULL,
-  visualizations = NULL, comparisons = NULL, checkout = NULL)
+  visualizations = NULL, comparisons = NULL, cdrgam_root = NULL)
 
 cdrgam_cli_run(projects = NULL, models = NULL, predictions = NULL,
   visualizations = NULL, comparisons = NULL, dry_run = FALSE,
   cpus = NULL, memory = NULL, time = NULL, qos = NULL,
-  checkout = NULL)
+  cdrgam_root = NULL)
 
-cdrgam_cli_status(projects = NULL, checkout = NULL, pager = NULL,
+cdrgam_cli_status(projects = NULL, cdrgam_root = NULL, pager = NULL,
   use_pager = TRUE)
 
 cdrgam_cli_purge(projects = NULL, models = NULL, predictions = NULL,
   visualizations = NULL, comparisons = NULL, datasets = NULL,
-  work = FALSE, logs = FALSE, yes = FALSE, checkout = NULL)
+  work = FALSE, logs = FALSE, yes = FALSE, cdrgam_root = NULL)
 
-find_cdrgam_project(project = NULL, checkout = NULL)
+find_cdrgam_project(project = NULL, cdrgam_root = NULL)
 }
 \arguments{
   \item{name}{One or more definition names. Validation and removal accept
@@ -54,7 +54,7 @@ find_cdrgam_project(project = NULL, checkout = NULL)
   \code{"val"} to validate definitions without changing them.}
   \item{editor}{Editor command or callback. The default uses \env{VISUAL},
   then \env{EDITOR}, then R's configured editor.}
-  \item{project}{One project directory name, or \code{"site"} for checkout
+  \item{project}{One project directory name, or \code{"site"} for root-local
   configuration. The directory name is authoritative when it differs from
   the descriptive name in the project definition.}
   \item{projects}{Project selectors. The default uses the current project when
@@ -65,8 +65,8 @@ find_cdrgam_project(project = NULL, checkout = NULL)
   \item{comparisons}{Comparison selectors.}
   \item{datasets}{Dataset artifact selectors used by
   \code{cdrgam_cli_purge()}.}
-  \item{checkout}{The configured harness instance. The launcher supplies it
-  automatically.}
+  \item{cdrgam_root}{The configured CDR-GAM root. The launcher supplies it
+  automatically through \env{CDRGAM_ROOT}.}
   \item{deep}{Whether to read datasets and compile training model designs.}
   \item{lines}{Optional maximum number of trailing lines from each log.}
   \item{worker}{Whether to show generic worker lifecycle logs instead of
@@ -82,9 +82,9 @@ find_cdrgam_project(project = NULL, checkout = NULL)
 }
 \description{
 These functions define, resolve, validate, plan, execute, inspect, and
-clean projects beneath the checkout's configured CDR-GAM root. Local execution
+clean projects beneath the configured CDR-GAM root. Local execution
 is serial and isolates each work item in its own R process. Slurm execution
-uses the checkout-wide controller and concurrency limit. Cleanup is restricted
+uses the root-wide controller and concurrency limit. Cleanup is restricted
 to generated artifacts and private orchestration state.
 Status preserves the artifact lifecycle state and displays published fits as
 \code{Nonconverged} when their recorded optimizer diagnostics report that

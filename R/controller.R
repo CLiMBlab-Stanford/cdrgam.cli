@@ -47,7 +47,7 @@
 }
 
 .cdrgam_cli_controller_submit <- function(graph, request, resources=list()) {
-    configuration <- graph$definitions[[1L]]$checkout
+    configuration <- graph$definitions[[1L]]$site
     request_directory <- file.path(configuration$cdrgam_root, '.cdrgam', 'work', 'requests')
     if (!dir.exists(request_directory)) dir.create(request_directory, recursive=TRUE)
     request_file <- file.path(request_directory, paste0(request, '.rds'))
@@ -68,7 +68,7 @@
         }, error=function(error) NULL))
     }
     scheduler <- if (contacted) NULL else .cdrgam_cli_submit_scheduler(configuration)
-    message('Accepted checkout request ', request)
+    message('Accepted root request ', request)
     invisible(list(
         status='accepted', request_id=request,
         scheduler_id=if (is.null(scheduler)) endpoint$job_id else scheduler$job_id
@@ -115,9 +115,9 @@
     vapply(available, function(worker) worker$resource_key, character(1))
 }
 
-.cdrgam_cli_controller_main <- function(checkout) {
-    options(cdrgam.cli.checkout=checkout)
-    configuration <- .cdrgam_cli_checkout(checkout, create_root=TRUE)
+.cdrgam_cli_controller_main <- function(root) {
+    options(cdrgam.cli.root=root)
+    configuration <- .cdrgam_cli_site(root, create_root=TRUE)
     bound <- .cdrgam_cli_controller_bind()
     on.exit(close(bound$server), add=TRUE)
     startup <- .cdrgam_cli_random_id('scheduler')

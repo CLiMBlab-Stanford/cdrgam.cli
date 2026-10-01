@@ -169,7 +169,7 @@
 .cdrgam_cli_status_rows <- function(configuration, selected) {
     project_ids <- if (length(selected)) vapply(selected, function(project) {
         definition <- .cdrgam_cli_read_project_definition(
-            project, checkout=configuration$checkout
+            project, checkout=configuration$cdrgam_root
         )
         definition$definition$project$id
     }, character(1)) else character()
@@ -237,20 +237,20 @@
     output
 }
 
-#' Report checkout work state
+#' Report root work state
 #'
 #' @param projects Project selectors.
-#' @param checkout Configured harness instance directory.
+#' @param cdrgam_root Configured CDR-GAM root.
 #' @param pager Optional pager executable or function.
 #' @param use_pager Whether interactive output may open the pager.
 #' @return The current registry work-item state, invisibly. `display_state`
 #' distinguishes a published fit whose optimizer did not converge.
 #' @export
 cdrgam_cli_status <- function(
-        projects=NULL, checkout=NULL, pager=NULL, use_pager=TRUE
+        projects=NULL, cdrgam_root=NULL, pager=NULL, use_pager=TRUE
 ) {
-    selected <- .cdrgam_cli_select_projects(projects, checkout)
-    configuration <- .cdrgam_cli_checkout(checkout, create_root=TRUE)
+    selected <- .cdrgam_cli_select_projects(projects, cdrgam_root)
+    configuration <- .cdrgam_cli_site(cdrgam_root, create_root=TRUE)
     output <- .cdrgam_cli_status_rows(configuration, selected)
     color <- isatty(stdout()) && is.na(Sys.getenv(
         'NO_COLOR', unset=NA_character_
@@ -431,16 +431,16 @@ cdrgam_cli_status <- function(
 #' @param lines Optional maximum number of trailing lines from each log.
 #' @param worker Whether to show generic worker lifecycle logs instead of
 #'   work-item logs. Worker mode does not accept workload selectors.
-#' @param checkout Configured harness instance directory.
+#' @param cdrgam_root Configured CDR-GAM root.
 #' @param pager Optional pager executable or function. Interactive terminals
 #'   use `less` by default; non-interactive calls print labeled sections.
 #' @return The selected log paths, newest first, invisibly.
 #' @export
 cdrgam_cli_log <- function(
         projects=NULL, models=NULL, predictions=NULL, visualizations=NULL,
-        comparisons=NULL, lines=NULL, checkout=NULL, pager=NULL, worker=FALSE
+        comparisons=NULL, lines=NULL, cdrgam_root=NULL, pager=NULL, worker=FALSE
 ) {
-    configuration <- .cdrgam_cli_checkout(checkout, create_root=TRUE)
+    configuration <- .cdrgam_cli_site(cdrgam_root, create_root=TRUE)
     if (isTRUE(worker)) {
         if (any(c(
                 length(projects), length(models), length(predictions),
@@ -458,11 +458,11 @@ cdrgam_cli_log <- function(
             lines=lines, pager=pager
         ))
     }
-    selected_projects <- .cdrgam_cli_select_projects(projects, checkout)
+    selected_projects <- .cdrgam_cli_select_projects(projects, cdrgam_root)
     records <- list()
     for (project in selected_projects) {
         definitions <- .cdrgam_cli_read_definitions(
-            project, check_sources=FALSE, checkout=checkout
+            project, check_sources=FALSE, checkout=cdrgam_root
         )
         rows <- .cdrgam_cli_status_rows(configuration, project)
         candidates <- lapply(seq_len(nrow(rows)), function(index) {

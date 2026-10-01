@@ -2,6 +2,46 @@
     stop(message, call.=call.)
 }
 
+.cdrgam_cli_progress_context <- function(enabled=TRUE) {
+    context <- new.env(parent=emptyenv())
+    context$enabled <- isTRUE(enabled) &&
+        !identical(getOption('cdrgam.cli.progress', TRUE), FALSE)
+    context$terminal <- context$enabled && isatty(stderr())
+    context$index <- 0L
+    context$open <- FALSE
+    context
+}
+
+.cdrgam_cli_progress <- function(context, stage, pulse=FALSE) {
+    if (is.null(context) || !isTRUE(context$enabled)) return(invisible(FALSE))
+    stage <- .cdrgam_cli_scalar_character(stage, 'progress stage')
+    context$index <- context$index + 1L
+    if (!isTRUE(context$terminal)) {
+        if (!isTRUE(pulse)) message('cdrgam run: ', stage)
+        return(invisible(TRUE))
+    }
+    colors <- c(36L, 34L, 35L, 33L, 32L)
+    color <- colors[[((context$index - 1L) %% length(colors)) + 1L]]
+    cat(
+        '\r\u001b[2K\u001b[', color, 'm\u25cf\u001b[0m cdrgam run: ', stage,
+        sep='', file=stderr()
+    )
+    flush(stderr())
+    context$open <- TRUE
+    invisible(TRUE)
+}
+
+.cdrgam_cli_progress_finish <- function(context, stage=NULL) {
+    if (is.null(context) || !isTRUE(context$enabled)) return(invisible(FALSE))
+    if (!is.null(stage)) .cdrgam_cli_progress(context, stage)
+    if (isTRUE(context$terminal) && isTRUE(context$open)) {
+        cat('\n', file=stderr())
+        flush(stderr())
+        context$open <- FALSE
+    }
+    invisible(TRUE)
+}
+
 .cdrgam_cli_scalar_character <- function(value, field, allow_empty=FALSE) {
     if (!is.character(value) || length(value) != 1L || is.na(value) ||
             (!allow_empty && !nzchar(value))) {
@@ -183,7 +223,7 @@
     handle <- filelock::lock(path, timeout=timeout)
     if (is.null(handle)) {
         .cdrgam_cli_abort(paste0(
-            'Timed out waiting for checkout lock ', sQuote(as.character(path))
+            'Timed out waiting for root lock ', sQuote(as.character(path))
         ))
     }
     on.exit(filelock::unlock(handle), add=TRUE)

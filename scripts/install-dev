@@ -13,7 +13,9 @@ fi
 script_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 source_root=$(dirname "$script_directory")
 core_source=${CDRGAM_CORE_SOURCE:-$(dirname "$source_root")/cdrgam}
-checkout=${CDRGAM_CHECKOUT:-$source_root}
+default_root=$("$r_bin" --vanilla --slave -e \
+    'cat(tools::R_user_dir("cdrgam.cli", "data"))')
+cdrgam_root=${CDRGAM_ROOT:-$default_root}
 launcher=${CDRGAM_DEV_LAUNCHER:-$HOME/.local/bin/cdrgam-dev}
 
 if [ ! -f "$core_source/DESCRIPTION" ]; then
@@ -21,9 +23,9 @@ if [ ! -f "$core_source/DESCRIPTION" ]; then
     echo "Set CDRGAM_CORE_SOURCE to the flattened core checkout" >&2
     exit 1
 fi
-if [ ! -f "$checkout/.cdrgam/checkout.yml" ]; then
-    echo "Checkout configuration is missing: $checkout/.cdrgam/checkout.yml" >&2
-    echo "Set CDRGAM_CHECKOUT to a configured harness instance" >&2
+if [ ! -f "$cdrgam_root/.cdrgam/site.yml" ]; then
+    echo "Site configuration is missing: $cdrgam_root/.cdrgam/site.yml" >&2
+    echo "Set CDRGAM_ROOT to a configured root" >&2
     exit 1
 fi
 
@@ -32,7 +34,7 @@ if [ "${CDRGAM_DEV_LIBRARY+x}" = x ]; then
 else
     dev_library=$(
         "$r_bin" --vanilla --slave -e \
-            'cat(file.path(tools::R_user_dir("cdrgam.cli", "data"), "dev-library"))'
+            'cat(file.path(tools::R_user_dir("cdrgam.cli", "cache"), "dev-library"))'
     )
 fi
 mkdir -p "$dev_library"
@@ -60,8 +62,8 @@ R_LIBS_USER="$dev_library" \
     "$r_bin" --vanilla --slave -e '
         cdrgam.cli::install_cli(
             path=commandArgs(TRUE)[[1L]],
-            checkout=commandArgs(TRUE)[[2L]]
+            root=commandArgs(TRUE)[[2L]]
         )
-    ' --args "$launcher" "$checkout"
+    ' --args "$launcher" "$cdrgam_root"
 
 echo "Installed development launcher at $launcher"

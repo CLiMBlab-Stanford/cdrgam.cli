@@ -58,11 +58,10 @@ if (!nzchar(Sys.getenv('CDRGAM_TEST_KEEP', ''))) {
 } else {
     message('Keeping test directory ', temporary_parent)
 }
-checkout <- file.path(temporary_parent, 'checkout')
 root <- file.path(temporary_parent, 'root')
-dir.create(checkout)
-cdrgam_cli_configure(checkout, root, concurrency=2L)
-options(cdrgam.cli.checkout=checkout)
+cdrgam_cli_configure(root, concurrency=2L)
+checkout <- root
+options(cdrgam.cli.root=root)
 
 internal <- function(name) getFromNamespace(name, 'cdrgam.cli')
 same_path <- function(left, right) {
@@ -84,6 +83,56 @@ under_path <- function(paths, root) {
             paste0(normalized_root, .Platform$file.sep)
         )
 }
+
+if (.Platform$OS.type != 'windows') local({
+    environment_names <- c(
+        'CDRGAM_ROOT', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME'
+    )
+    old_environment <- Sys.getenv(environment_names, unset=NA_character_)
+    old_option <- getOption('cdrgam.cli.root')
+    on.exit({
+        for (name in environment_names) {
+            value <- old_environment[[name]]
+            if (is.na(value)) {
+                Sys.unsetenv(name)
+            } else {
+                do.call(Sys.setenv, stats::setNames(list(value), name))
+            }
+        }
+        options(cdrgam.cli.root=old_option)
+    })
+    isolated <- file.path(temporary_parent, 'clean-install')
+    Sys.setenv(
+        CDRGAM_ROOT='',
+        XDG_CONFIG_HOME=file.path(isolated, 'config'),
+        XDG_DATA_HOME=file.path(isolated, 'data')
+    )
+    options(cdrgam.cli.root=NULL)
+    launcher <- file.path(isolated, 'bin', 'cdrgam')
+    install_cli(launcher)
+    automatic_root <- internal('.cdrgam_cli_default_root')()
+    stopifnot(
+        file.exists(launcher),
+        file.exists(file.path(automatic_root, '.cdrgam', 'site.yml')),
+        dir.exists(file.path(automatic_root, 'projects')),
+        dir.exists(file.path(automatic_root, '.cdrgam', 'work'))
+    )
+})
+
+default_root <- internal('.cdrgam_cli_default_root')()
+stopifnot(
+    same_path(default_root, tools::R_user_dir('cdrgam.cli', 'data'))
+)
+
+new_root <- file.path(temporary_parent, 'new-root')
+cdrgam_cli_configure(new_root)
+stopifnot(
+    file.exists(file.path(new_root, '.cdrgam', 'site.yml')),
+    dir.exists(file.path(new_root, 'projects')),
+    dir.exists(file.path(new_root, '.cdrgam', 'work'))
+)
+options(cdrgam.cli.root=root)
+
 selector_choices <- c(
     'brown-linear', 'natstor-linear', 'natstor-nonlinear', 'unrelated'
 )
@@ -246,7 +295,7 @@ windows_slurm <- tryCatch({
 options(cdrgam.cli.os_type=old_os_type)
 stopifnot(
     identical(windows_launcher[[1L]], '@echo off'),
-    any(grepl('CDRGAM_CHECKOUT', windows_launcher, fixed=TRUE)),
+    any(grepl('CDRGAM_ROOT', windows_launcher, fixed=TRUE)),
     any(grepl('--args %*', windows_launcher, fixed=TRUE)),
     isTRUE(windows_process_probe),
     inherits(windows_slurm, 'error')
@@ -281,7 +330,7 @@ stopifnot(
     grepl('.gitignore', initial_git_status, fixed=TRUE),
     same_path(find_cdrgam_project('test-project'), project)
 )
-test_configuration <- internal('.cdrgam_cli_checkout')(checkout)
+test_configuration <- internal('.cdrgam_cli_site')(checkout)
 test_project_roots <- internal('.cdrgam_cli_project_roots')(test_configuration)
 test_project_id <- yaml::read_yaml(
     file.path(project, 'definitions', 'project.yml')
@@ -1428,7 +1477,7 @@ stopifnot(
 
 # Publication archives contain only verified, dependency-closed artifacts.
 # Fetch installs them atomically into a second root and reconstructs status
-# from their manifests rather than copying the source checkout's registry.
+# from their manifests rather than copying the source root's registry.
 invisible(internal('.cdrgam_cli_git')(
     project, c('config', 'user.name', 'CDR-GAM test')
 ))
@@ -1442,7 +1491,7 @@ archive_path <- file.path(temporary_parent, 'test-project-results.tar.gz')
 publication <- cdrgam_cli_publish(
     'test-project', results='archive', archive=archive_path,
     models='decay', predictions='val', commit='Test publication',
-    checkout=checkout
+    cdrgam_root=checkout
 )
 stopifnot(
     identical(publication$results$mode, 'archive'),
@@ -1454,20 +1503,19 @@ stopifnot(
     ),
     !internal('.cdrgam_cli_git_dirty')(project)
 )
-published_checkout <- file.path(temporary_parent, 'published-checkout')
 published_root <- file.path(temporary_parent, 'published-root')
-dir.create(published_checkout)
-cdrgam_cli_configure(published_checkout, published_root, concurrency=1L)
+published_checkout <- published_root
+cdrgam_cli_configure(published_root, concurrency=1L)
 fetched <- cdrgam_cli_fetch(
     project, project='fetched-project', results=archive_path,
-    checkout=published_checkout
+    cdrgam_root=published_checkout
 )
 fetched_plan <- cdrgam_cli_plan(
     projects='fetched-project', models='decay',
-    checkout=published_checkout
+    cdrgam_root=published_checkout
 )
 fetched_status <- cdrgam_cli_status(
-    'fetched-project', checkout=published_checkout, use_pager=FALSE
+    'fetched-project', cdrgam_root=published_checkout, use_pager=FALSE
 )
 stopifnot(
     same_path(fetched, file.path(
@@ -1478,7 +1526,7 @@ stopifnot(
         fetched_status$kind == 'fit' & fetched_status$state == 'complete'
     )
 )
-options(cdrgam.cli.checkout=checkout)
+options(cdrgam.cli.root=checkout)
 
 status_text <- NULL
 status <- cdrgam_cli_status(
@@ -1531,7 +1579,7 @@ stopifnot(identical(
 unlink(seeded_attempt, recursive=TRUE)
 unlink(checkpoint_path)
 internal('.cdrgam_cli_registry_state')(
-    seed_graph$definitions[['test-project']]$checkout, seed_item, 'failed'
+    seed_graph$definitions[['test-project']]$site, seed_item, 'failed'
 )
 nonconverged_text <- NULL
 nonconverged_status <- cdrgam_cli_status(
@@ -1545,7 +1593,7 @@ stopifnot(
     grepl('test convergence diagnostic', nonconverged_text, fixed=TRUE)
 )
 internal('.cdrgam_cli_registry_state')(
-    seed_graph$definitions[['test-project']]$checkout, seed_item, 'running'
+    seed_graph$definitions[['test-project']]$site, seed_item, 'running'
 )
 retry_status <- cdrgam_cli_status(
     'test-project', pager=function(text) invisible(text)
@@ -1573,7 +1621,7 @@ stopifnot(
 )
 unlink(lightweight_directory, recursive=TRUE)
 internal('.cdrgam_cli_registry_state')(
-    seed_graph$definitions[['test-project']]$checkout, seed_item, 'complete'
+    seed_graph$definitions[['test-project']]$site, seed_item, 'complete'
 )
 log_paths <- cdrgam_cli_log('test-project', models='decay', lines=5L)
 stopifnot(length(log_paths) >= 3L, all(file.exists(log_paths)))
@@ -1621,11 +1669,11 @@ stopifnot(
 )
 
 launcher <- file.path(temporary_parent, 'bin', 'cdrgam')
-install_cli(launcher, checkout=checkout)
+install_cli(launcher, root=root)
 stopifnot(
     file.exists(launcher),
     .Platform$OS.type == 'windows' || file.access(launcher, mode=1L) == 0L,
-    any(grepl('CDRGAM_CHECKOUT', readLines(launcher), fixed=TRUE)),
+    any(grepl('CDRGAM_ROOT', readLines(launcher), fixed=TRUE)),
     any(grepl('R_LIBS_USER', readLines(launcher), fixed=TRUE))
 )
 
@@ -1682,7 +1730,7 @@ changed_graph <- getFromNamespace(
     '.cdrgam_cli_combined_graph', 'cdrgam.cli'
 )(projects='test-project', models='decay')
 configuration <- getFromNamespace(
-    '.cdrgam_cli_checkout', 'cdrgam.cli'
+    '.cdrgam_cli_site', 'cdrgam.cli'
 )(checkout)
 getFromNamespace('.cdrgam_cli_registry_record_graph', 'cdrgam.cli')(
     configuration, changed_graph, 'lifecycle-test'
@@ -1803,7 +1851,7 @@ old_path <- Sys.getenv('PATH')
 Sys.setenv(PATH=paste(fake_bin, old_path, sep=.Platform$path.sep))
 on.exit(Sys.setenv(PATH=old_path), add=TRUE)
 cdrgam_cli_configure(
-    checkout, root, concurrency=2L,
+    root, concurrency=2L,
     slurm_partition='test', slurm_account='test', slurm_cpus=1L
 )
 writeLines('', slow_squeue)
@@ -1863,7 +1911,7 @@ writeLines(c(
 ), worker_log)
 seen_worker_logs <- NULL
 worker_paths <- cdrgam_cli_log(
-    worker=TRUE, checkout=checkout,
+    worker=TRUE, cdrgam_root=checkout,
     pager=function(paths, labels) {
         seen_worker_logs <<- list(paths=paths, labels=labels)
     }
@@ -1874,7 +1922,7 @@ stopifnot(
 )
 worker_selector_error <- tryCatch(
     cdrgam_cli_log(
-        projects='test-project', worker=TRUE, checkout=checkout,
+        projects='test-project', worker=TRUE, cdrgam_root=checkout,
         pager=function(paths, labels) invisible(paths)
     ),
     error=function(error) conditionMessage(error)
@@ -1895,9 +1943,9 @@ stopifnot(identical(available_worker_keys, 'shared'))
 }
 
 # Managed references remain valid after moving the complete store and updating
-# only the checkout's root pointer.
+# only the selected root.
 pre_move_plan <- cdrgam_cli_plan(
-    projects='test-project', models='decay', checkout=checkout
+    projects='test-project', models='decay', cdrgam_root=checkout
 )
 stopifnot(nrow(pre_move_plan) == 1L)
 pre_move_state <- pre_move_plan$state[[1L]]
@@ -1911,9 +1959,11 @@ relocation_parent <- file.path(temporary_parent, 'relocated')
 dir.create(relocation_parent)
 moved_root <- file.path(relocation_parent, basename(root))
 stopifnot(file.rename(root, moved_root))
-cdrgam_cli_configure(checkout, moved_root, concurrency=2L)
+root <- moved_root
+checkout <- moved_root
+options(cdrgam.cli.root=moved_root)
 moved_configuration <- getFromNamespace(
-    '.cdrgam_cli_checkout', 'cdrgam.cli'
+    '.cdrgam_cli_site', 'cdrgam.cli'
 )(checkout)
 registry_paths <- getFromNamespace(
     '.cdrgam_cli_registry_exec', 'cdrgam.cli'
@@ -1934,7 +1984,7 @@ stopifnot(
     all(!startsWith(registry_paths, root))
 )
 moved_status <- cdrgam_cli_status(
-    'test-project', checkout=checkout, use_pager=FALSE
+    'test-project', cdrgam_root=checkout, use_pager=FALSE
 )
 stopifnot(
     nrow(moved_status) > 0L,
@@ -1945,7 +1995,7 @@ stopifnot(
     )
 )
 moved_plan <- cdrgam_cli_plan(
-    projects='test-project', models='decay', checkout=checkout
+    projects='test-project', models='decay', cdrgam_root=checkout
 )
 stopifnot(
     nrow(moved_plan) == 1L,
@@ -1971,7 +2021,7 @@ stopifnot(same_path(
     unpacked_project_path, file.path(renamed_project, 'results', 'models', 'decay')
 ))
 renamed_plan <- cdrgam_cli_plan(
-    projects='renamed-project', models='decay', checkout=checkout
+    projects='renamed-project', models='decay', cdrgam_root=checkout
 )
 stopifnot(
     nrow(renamed_plan) == 1L,
@@ -1979,7 +2029,7 @@ stopifnot(
     under_path(renamed_plan$path, renamed_project)
 )
 renamed_status <- cdrgam_cli_status(
-    'renamed-project', checkout=checkout, use_pager=FALSE
+    'renamed-project', cdrgam_root=checkout, use_pager=FALSE
 )
 stopifnot(
     nrow(renamed_status) > 0L,

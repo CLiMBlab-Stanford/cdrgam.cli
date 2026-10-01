@@ -40,7 +40,12 @@
     value
 }
 
-.cdrgam_cli_dataset_identity <- function(dataset) {
+.cdrgam_cli_dataset_identity <- function(dataset, fingerprints=NULL) {
+    cache_key <- attr(dataset, 'path')
+    if (!is.null(fingerprints) && !is.null(cache_key) &&
+            exists(cache_key, envir=fingerprints$datasets, inherits=FALSE)) {
+        return(get(cache_key, envir=fingerprints$datasets, inherits=FALSE))
+    }
     source_identity <- lapply(dataset$sources, function(source) {
         info <- file.info(source$resolved_path)
         list(
@@ -48,12 +53,16 @@
             external=isTRUE(source$external),
             format=source$format,
             size=unname(info$size),
-            content_md5=.cdrgam_cli_source_hash(source$resolved_path)
+            content_md5=.cdrgam_cli_source_fingerprint(
+                source$resolved_path, fingerprints
+            )
         )
     })
     preprocess <- dataset$preprocess
     if (!is.null(preprocess)) {
-        preprocess$script_md5 <- .cdrgam_cli_source_hash(preprocess$resolved_script)
+        preprocess$script_md5 <- .cdrgam_cli_source_fingerprint(
+            preprocess$resolved_script, fingerprints
+        )
         preprocess$resolved_script <- NULL
     }
     scientific <- .cdrgam_cli_scientific_definition(dataset)
@@ -68,7 +77,11 @@
         'dataset', scientific,
         list(sources=source_identity, preprocess=preprocess)
     )
-    list(identity=.cdrgam_cli_short_hash(resolved), resolved=resolved)
+    output <- list(identity=.cdrgam_cli_short_hash(resolved), resolved=resolved)
+    if (!is.null(fingerprints) && !is.null(cache_key)) {
+        assign(cache_key, output, envir=fingerprints$datasets)
+    }
+    output
 }
 
 .cdrgam_cli_apply_filters <- function(data, filters, dataset) {

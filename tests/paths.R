@@ -11,7 +11,7 @@ dir.create(file.path(project, 'definitions'), recursive=TRUE)
 configuration <- list(cdrgam_root=store)
 definitions <- list(
     root=project,
-    checkout=configuration,
+    site=configuration,
     project=list(project=list(id='project-path-test', name='example'))
 )
 yaml::write_yaml(

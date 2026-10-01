@@ -2,14 +2,14 @@
 #'
 #' @param projects Project selectors.
 #' @param deep Read datasets and compile training model designs.
-#' @param checkout Configured harness instance directory.
+#' @param cdrgam_root Configured CDR-GAM root.
 #' @return Validation reports grouped by project, invisibly.
 #' @export
-cdrgam_cli_validate <- function(projects=NULL, deep=FALSE, checkout=NULL) {
-    selected <- .cdrgam_cli_select_projects(projects, checkout)
+cdrgam_cli_validate <- function(projects=NULL, deep=FALSE, cdrgam_root=NULL) {
+    selected <- .cdrgam_cli_select_projects(projects, cdrgam_root)
     reports <- lapply(stats::setNames(selected, selected), function(project) {
         definitions <- .cdrgam_cli_read_definitions(
-            project, check_sources=TRUE, checkout=checkout
+            project, check_sources=TRUE, checkout=cdrgam_root
         )
         external <- unlist(lapply(definitions$datasets, function(dataset) {
             names(dataset$sources)[vapply(
@@ -54,7 +54,7 @@ cdrgam_cli_validate <- function(projects=NULL, deep=FALSE, checkout=NULL) {
         .cdrgam_cli_read_yaml(project_path), project_path
     )
     project_definition$project$name <- basename(root)
-    configuration <- .cdrgam_cli_checkout(checkout, create_root=FALSE)
+    configuration <- .cdrgam_cli_site(checkout, create_root=FALSE)
     datasets <- new.env(parent=emptyenv())
     models <- new.env(parent=emptyenv())
     read_definition <- function(kind, definition_name) {
@@ -147,7 +147,7 @@ cdrgam_cli_validate <- function(projects=NULL, deep=FALSE, checkout=NULL) {
     report <- list(
         valid=TRUE, project=project_definition$project$name,
         type=type, name=name, path=attr(value, 'path'),
-        deep=isTRUE(deep), checkout=configuration$checkout
+        deep=isTRUE(deep), checkout=configuration$cdrgam_root
     )
     message(
         'Valid ', type, ' definition ', report$project, '/', name,

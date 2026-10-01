@@ -4,15 +4,15 @@
 #'
 #' @param project Atomic project directory name. When omitted, infer it from
 #'   the current directory if it lies beneath the configured projects directory.
-#' @param checkout Configured harness instance directory.
+#' @param cdrgam_root Configured CDR-GAM root.
 #' @return The normalized project root.
 #' @export
-find_cdrgam_project <- function(project=NULL, checkout=NULL) {
+find_cdrgam_project <- function(project=NULL, cdrgam_root=NULL) {
     if (is.null(project) || !length(project) || !nzchar(project[[1L]])) {
-        project <- .cdrgam_cli_infer_project(checkout)
+        project <- .cdrgam_cli_infer_project(cdrgam_root)
     }
     if (length(project) != 1L) .cdrgam_cli_abort('Select exactly one project')
-    root <- .cdrgam_cli_project_root(project, checkout, must_work=TRUE)
+    root <- .cdrgam_cli_project_root(project, cdrgam_root, must_work=TRUE)
     if (!file.exists(file.path(root, .cdrgam_cli_marker))) {
         .cdrgam_cli_abort(paste0(
             'Project ', sQuote(project), ' is missing ', .cdrgam_cli_marker
@@ -44,7 +44,7 @@ find_cdrgam_project <- function(project=NULL, checkout=NULL) {
         '# ', name, '\n\n',
         'This directory is a CDR-GAM analysis project. Edit definitions under ',
         '`definitions/`, keep project scripts under `code/`, and let the ',
-        'configured checkout manage generated state under `results/`.\n'
+        'configured root manage generated state under `results/`.\n'
     )
 }
 
@@ -58,7 +58,7 @@ find_cdrgam_project <- function(project=NULL, checkout=NULL) {
 
 .cdrgam_cli_create_project <- function(name, checkout=NULL) {
     name <- .cdrgam_cli_name(name, 'project.name')
-    .cdrgam_cli_checkout(checkout, create_root=TRUE)
+    .cdrgam_cli_site(checkout, create_root=TRUE)
     root <- .cdrgam_cli_project_root(name, checkout, must_work=FALSE)
     created_root <- !dir.exists(root)
     if (!dir.exists(root) && !dir.create(root, recursive=TRUE)) {
@@ -135,9 +135,9 @@ find_cdrgam_project <- function(project=NULL, checkout=NULL) {
     source_definitions <- .cdrgam_cli_read_definitions(
         from, check_sources=FALSE, checkout=checkout
     )
-    .cdrgam_cli_checkout(checkout, create_root=TRUE)
+    .cdrgam_cli_site(checkout, create_root=TRUE)
     destination <- .cdrgam_cli_project_root(
-        to, checkout=checkout, must_work=FALSE
+        to, root=checkout, must_work=FALSE
     )
     projects <- dirname(destination)
     if (file.exists(destination) || dir.exists(destination)) {

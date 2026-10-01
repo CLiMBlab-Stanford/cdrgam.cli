@@ -1896,6 +1896,11 @@ stopifnot(identical(available_worker_keys, 'shared'))
 
 # Managed references remain valid after moving the complete store and updating
 # only the checkout's root pointer.
+pre_move_plan <- cdrgam_cli_plan(
+    projects='test-project', models='decay', checkout=checkout
+)
+stopifnot(nrow(pre_move_plan) == 1L)
+pre_move_state <- pre_move_plan$state[[1L]]
 controller_path <- file.path(root, '.cdrgam', 'controller.yml')
 for (attempt in seq_len(240L)) {
     if (!file.exists(controller_path)) break
@@ -1942,7 +1947,11 @@ stopifnot(
 moved_plan <- cdrgam_cli_plan(
     projects='test-project', models='decay', checkout=checkout
 )
-stopifnot(nrow(moved_plan) > 0L, all(under_path(moved_plan$path, moved_root)))
+stopifnot(
+    nrow(moved_plan) == 1L,
+    identical(moved_plan$state[[1L]], pre_move_state),
+    all(under_path(moved_plan$path, moved_root))
+)
 
 # Project-owned references follow the stable project ID, so renaming the
 # directory does not invalidate artifacts, registry paths, or queued payloads.
@@ -1966,7 +1975,7 @@ renamed_plan <- cdrgam_cli_plan(
 )
 stopifnot(
     nrow(renamed_plan) == 1L,
-    renamed_plan$state == 'complete',
+    identical(renamed_plan$state[[1L]], pre_move_state),
     under_path(renamed_plan$path, renamed_project)
 )
 renamed_status <- cdrgam_cli_status(

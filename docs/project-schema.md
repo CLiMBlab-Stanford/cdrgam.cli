@@ -363,6 +363,11 @@ chain records the original definition contract and every exact formula
 replacement. If no eligible edit yields convergence within `max_steps`, the
 work item fails and no nonconverged model is published at the standard path.
 
+`fit.rescale_predictors` defaults to `true` in the core package: continuous
+predictors and lag coordinates are divided by their training standard
+deviations, and effects are still reported in native units. Set it to `false`
+to fit in native units.
+
 `fit.center_predictors` defaults to `true` in the core package: linear IRF
 predictors, including binary ones, are centered at their training means, so
 `irf(1)` is the response to an event with average linear predictors. Set it to

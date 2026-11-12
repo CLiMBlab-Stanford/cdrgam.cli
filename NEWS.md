@@ -1,5 +1,10 @@
 # cdrgam.cli (development version)
 
+- Definitions without `fit.rescale_predictors` now fit with rescaled
+  predictors, because the core default changed to `true`. Their model
+  identities and fitted results change accordingly; set
+  `fit.rescale_predictors: false` to keep native-unit fits.
+
 - `diagnostics.yml` now includes the core's `notes`, the interior and full
   outer-Hessian minimum eigenvalues, and one `hessian_boundary` record per
   smoothing parameter on the boundary of its range, with its profile bound.

@@ -9,20 +9,19 @@ case "$scope" in
     registry) tests='tests/registry.R' ;;
     fingerprints) tests='tests/fingerprints.R' ;;
     identities) tests='tests/definition-identities.R' ;;
+    viz) tests='tests/viz.R' ;;
+    effects) tests='tests/effect-queries.R' ;;
     integration) tests='tests/phase1.R' ;;
-    all) tests='tests/architecture.R tests/cli.R tests/paths.R tests/registry.R tests/fingerprints.R tests/definition-identities.R tests/phase1.R' ;;
+    portability) tests='tests/paths.R tests/phase1.R'; policy_test=true ;;
+    all) tests='tests/architecture.R tests/cli.R tests/paths.R tests/registry.R tests/fingerprints.R tests/definition-identities.R tests/effect-queries.R tests/viz.R tests/phase1.R' ;;
     *)
         echo "Unknown test scope: $scope" >&2
-        echo 'Expected architecture, cli, paths, registry, fingerprints, identities, integration, or all' >&2
+        echo 'Expected architecture, cli, paths, registry, fingerprints, identities, effects, viz, integration, portability, or all' >&2
         exit 2
         ;;
 esac
 
-if [ "${R_BIN+x}" = x ]; then
-    r_bin=$R_BIN
-else
-    r_bin=$(command -v R)
-fi
+r_bin=$(./scripts/r-bin)
 
 temporary_root=${TMPDIR:-/tmp}
 if [ ! -d "$temporary_root" ] || [ ! -w "$temporary_root" ]; then
@@ -39,3 +38,7 @@ for test_file in $tests; do
     R_LIBS="$test_library${R_LIBS:+:$R_LIBS}" \
         "$r_bin" --vanilla --slave -f "$test_file"
 done
+
+if [ "${policy_test:-false}" = true ]; then
+    ./scripts/test-preflight-policy
+fi

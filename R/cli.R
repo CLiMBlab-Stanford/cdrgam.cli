@@ -59,29 +59,37 @@
 .cdrgam_cli_definition_options <- function(arity) list(
     .cdrgam_cli_option(
         'dataset', 'Select dataset definitions by file name.',
-        metavar='DATASET', arity=arity
+        short='-d', metavar='DATASET', arity=arity
     ),
     .cdrgam_cli_option(
         'model', 'Select model definitions by file name.',
-        metavar='MODEL', arity=arity
+        short='-m', metavar='MODEL', arity=arity
     ),
     .cdrgam_cli_option(
         'visualization', 'Select visualization definitions by file name.',
-        metavar='VISUALIZATION', arity=arity
+        short='-v', metavar='VISUALIZATION', arity=arity
     ),
     .cdrgam_cli_option(
         'comparison', 'Select comparison definitions by file name.',
-        metavar='COMPARISON', arity=arity
+        short='-c', metavar='COMPARISON', arity=arity
     )
 )
 
 .cdrgam_cli_command_spec <- function() {
     selectors <- .cdrgam_cli_selector_options()
+    project_selector <- .cdrgam_cli_option(
+        'project', paste(
+            'Select one project. Omission infers the project from the current',
+            'directory where possible.'
+        ),
+        short='-P', metavar='PROJECT'
+    )
     definition_target <- list(.cdrgam_cli_argument(
-        'TARGET', 'A project name, or site for root configuration.'
+        'TARGET', 'A project name, or site for root configuration.',
+        required=FALSE
     ))
     def <- .cdrgam_cli_command(
-        'def', 'Create, edit, list, remove, or validate definitions.',
+        'def', 'Create, edit, list, rename, remove, or validate definitions.',
         description=paste(
             'Manage root and project definitions. Definition names are',
             'derived from their YAML file names.'
@@ -114,6 +122,7 @@
                     'be selected in one invocation.'
                 ),
                 options=c(
+                    list(project_selector),
                     .cdrgam_cli_definition_options('one-or-more'),
                     list(.cdrgam_cli_option(
                         'source', 'Initialize from an existing project or definition.',
@@ -122,9 +131,9 @@
                 ),
                 arguments=definition_target,
                 examples=c(
-                    'cdrgam def edit brown',
-                    'cdrgam def edit brown --model main',
-                    'cdrgam def edit brown --model alternative --source main'
+                    'cdrgam def edit -P brown',
+                    'cdrgam def edit -P brown --model main',
+                    'cdrgam def edit -P brown --model alternative --source main'
                 ),
                 handler='def-edit'
             ),
@@ -135,15 +144,18 @@
                     'matches every definition of that type. Values accept exact',
                     'names, * globs, and re: regular expressions.'
                 ),
-                options=.cdrgam_cli_definition_options('zero-or-more'),
+                options=c(
+                    list(project_selector),
+                    .cdrgam_cli_definition_options('zero-or-more')
+                ),
                 arguments=list(.cdrgam_cli_argument(
                     'PROJECT', 'Project whose definitions should be listed.',
                     required=FALSE
                 )),
                 examples=c(
                     'cdrgam def ls',
-                    'cdrgam def ls brown --model',
-                    "cdrgam def ls brown --dataset 'brown-*' --model 'main*'"
+                    'cdrgam def ls -P brown --model',
+                    "cdrgam def ls -P brown --dataset 'brown-*' --model 'main*'"
                 ),
                 handler='def-ls'
             ),
@@ -155,10 +167,34 @@
                     'be removed. Values accept exact names, * globs, and re:',
                     'regular expressions.'
                 ),
-                options=.cdrgam_cli_definition_options('one-or-more'),
-                arguments=definition_target,
-                examples='cdrgam def rm brown --model alternative',
+                options=c(
+                    list(project_selector),
+                    .cdrgam_cli_definition_options('one-or-more')
+                ),
+                arguments=list(.cdrgam_cli_argument(
+                    'PROJECT', 'Project containing the definition to remove.',
+                    required=FALSE
+                )),
+                examples='cdrgam def rm -P brown --model alternative',
                 handler='def-rm'
+            ),
+            mv=.cdrgam_cli_command(
+                'mv', 'Rename an unused definition.',
+                description=paste(
+                    'Rename exactly one subordinate definition without changing',
+                    'its contents. The source must have no references, generated',
+                    'results, registry workloads, or active work.'
+                ),
+                options=c(
+                    list(project_selector),
+                    .cdrgam_cli_definition_options('one-or-more')
+                ),
+                arguments=list(.cdrgam_cli_argument(
+                    'PROJECT', 'Project containing the definition to rename.',
+                    required=FALSE
+                )),
+                examples='cdrgam def mv -P brown --model old-name new-name',
+                handler='def-mv'
             ),
             val=.cdrgam_cli_command(
                 'val', 'Validate definitions.',
@@ -168,6 +204,7 @@
                     'accept exact names, * globs, and re: regular expressions.'
                 ),
                 options=c(
+                    list(project_selector),
                     .cdrgam_cli_definition_options('one-or-more'),
                     list(.cdrgam_cli_option(
                         'deep', 'Read datasets and compile training model designs.',
@@ -176,8 +213,8 @@
                 ),
                 arguments=definition_target,
                 examples=c(
-                    'cdrgam def val brown',
-                    'cdrgam def val brown --model main alternative --deep'
+                    'cdrgam def val -P brown',
+                    'cdrgam def val -P brown --model main alternative --deep'
                 ),
                 handler='def-val'
             )
@@ -211,11 +248,19 @@
                 metavar='N', type='positive-integer'
             ),
             .cdrgam_cli_option(
+                'partition', 'Override the Slurm partition for this request.',
+                metavar='NAME'
+            ),
+            .cdrgam_cli_option(
                 'memory', 'Override the configured Slurm memory allocation.',
                 metavar='SIZE'
             ),
             .cdrgam_cli_option(
                 'time', 'Override the configured Slurm time limit.', metavar='LIMIT'
+            ),
+            .cdrgam_cli_option(
+                'scheduler-time', 'Override the root scheduler time limit.',
+                metavar='LIMIT'
             ),
             .cdrgam_cli_option(
                 'qos', 'Override the configured Slurm quality of service.',
@@ -225,9 +270,35 @@
         examples=c(
             'cdrgam run -P brown -m main',
             'cdrgam run -P brown -m main -p val test',
+            paste(
+                'cdrgam run -P brown -m main --partition john',
+                '--scheduler-time 24:00:00'
+            ),
             'cdrgam run -P brown -v diagnostics --dry-run'
         ),
         handler='run'
+    )
+    stop=.cdrgam_cli_command(
+        'stop', 'Stop selected Slurm-managed work.',
+        description=paste(
+            'Cancel selected active Slurm workers and prevent selected queued',
+            'work from being claimed. Definitions, results, logs, and',
+            'checkpoints are retained; run the selection again to resume it.',
+            'Use --scheduler to stop an idle root scheduler.'
+        ),
+        options=c(selectors, list(.cdrgam_cli_option(
+            'force', 'Record the stop after the root scheduler has become unreachable.',
+            arity='flag'
+        ), .cdrgam_cli_option(
+            'scheduler', 'Stop the idle root scheduler instead of selected work.',
+            arity='flag'
+        ))),
+        examples=c(
+            'cdrgam stop -P brown -m main',
+            'cdrgam stop --scheduler',
+            'cdrgam stop -P brown -m main -p test'
+        ),
+        handler='stop'
     )
     status=.cdrgam_cli_command(
         'status', 'Display current work-item state.',
@@ -255,25 +326,31 @@
             .cdrgam_cli_option(
                 'worker', 'Show worker lifecycle logs instead of work-item logs.',
                 arity='flag'
+            ),
+            .cdrgam_cli_option(
+                'running', 'Show only logs for work items currently running.',
+                arity='flag'
             )
         )),
         examples=c(
             'cdrgam log -P brown -m main',
+            'cdrgam log -P brown --running',
             'cdrgam log --worker --lines 50'
         ),
         handler='log'
     )
     purge=.cdrgam_cli_command(
-        'purge', 'Preview or remove generated results.',
+        'purge', 'Review and remove generated results.',
         description=paste(
             'Select generated artifacts, private work state, and corresponding',
-            'registry workloads. Definitions are never selected. Removal',
-            'requires --yes.'
+            'registry workloads. Definitions are never selected. In a terminal,',
+            'the selection is shown in a pager and removal is confirmed after',
+            'the pager closes.'
         ),
         options=c(selectors, list(
             .cdrgam_cli_option(
                 'dataset', 'Select generated dataset artifacts.',
-                metavar='DATASET', arity='one-or-more'
+                short='-d', metavar='DATASET', arity='one-or-more'
             ),
             .cdrgam_cli_option(
                 'work', 'Include private work attempts.', arity='flag'
@@ -282,14 +359,33 @@
                 'logs', 'Include project-private work-item logs.', arity='flag'
             ),
             .cdrgam_cli_option(
-                'yes', 'Remove the selected paths after preview.', arity='flag'
+                'force', 'Remove without showing the preview or prompting.',
+                short='-f', arity='flag'
             )
         )),
         examples=c(
             'cdrgam purge -P brown -m main',
-            'cdrgam purge -P brown -m main --work --logs --yes'
+            'cdrgam purge -P brown -m main --work --logs',
+            'cdrgam purge -P brown -m main --force'
         ),
         handler='purge'
+    )
+    rm=.cdrgam_cli_command(
+        'rm', 'Remove an entire project.',
+        description=paste(
+            'Remove the project directory, including its definitions, code,',
+            'results, private state, and registry workloads. Active work or',
+            'cross-project dependencies prevent removal.'
+        ),
+        options=list(.cdrgam_cli_option(
+            'force', 'Remove without showing the preview or prompting.',
+            short='-f', arity='flag'
+        )),
+        arguments=list(.cdrgam_cli_argument(
+            'PROJECT', 'Exact project name to remove.'
+        )),
+        examples=c('cdrgam rm brown', 'cdrgam rm brown --force'),
+        handler='project-rm'
     )
     publish=.cdrgam_cli_command(
         'publish', 'Prepare and optionally push a project publication.',
@@ -298,7 +394,7 @@
             'publication metadata, and stage the changes in the project Git',
             'repository. Uploading results is separate from archive creation.'
         ),
-        options=c(selectors[2:5], list(
+        options=c(list(project_selector), selectors[2:5], list(
             .cdrgam_cli_option(
                 'results', 'Results mode: none, archive, url, or git.',
                 metavar='MODE'
@@ -324,11 +420,14 @@
                 arity='flag'
             )
         )),
-        arguments=list(.cdrgam_cli_argument('PROJECT', 'Project to publish.')),
+        arguments=list(.cdrgam_cli_argument(
+            'PROJECT', 'Project to publish. Omission infers the current project.',
+            required=FALSE
+        )),
         examples=c(
-            'cdrgam publish brown --results archive',
-            'cdrgam publish brown --results url --url URL --sha256 DIGEST',
-            "cdrgam publish brown --results none --commit 'Publish sources' --push"
+            'cdrgam publish -P brown --results archive',
+            'cdrgam publish -P brown --results url --url URL --sha256 DIGEST',
+            "cdrgam publish -P brown --results none --commit 'Publish sources' --push"
         ),
         handler='publish'
     )
@@ -363,6 +462,55 @@
         ),
         handler='fetch'
     )
+    viz=.cdrgam_cli_command(
+        'viz', 'Serve the browser viewer for completed fits.',
+        description=paste(
+            'Start or reuse your viewer server and print the ssh command that',
+            'forwards it to your workstation. On a Slurm-configured root the',
+            'server runs in a long-lived Slurm job; otherwise it serves from',
+            'this process until interrupted. The viewer draws effect lines and',
+            'surfaces for any completed fit under the root.'
+        ),
+        options=list(
+            .cdrgam_cli_option('stop', 'Cancel your viewer job.', arity='flag'),
+            .cdrgam_cli_option(
+                'restart', 'Cancel your viewer job and start a new one.', arity='flag'
+            ),
+            .cdrgam_cli_option(
+                'local', 'Serve from this process even on a Slurm-configured root.',
+                arity='flag'
+            ),
+            .cdrgam_cli_option(
+                'port', 'Listen on PORT instead of your default port.',
+                metavar='PORT', type='positive-integer'
+            ),
+            .cdrgam_cli_option(
+                'cpus', 'Viewer job CPUs (default 1).', metavar='N',
+                type='positive-integer'
+            ),
+            .cdrgam_cli_option('memory', 'Viewer job memory (default 16G).', metavar='MEM'),
+            .cdrgam_cli_option(
+                'time', 'Viewer job time limit (default 12:00:00).', metavar='TIME'
+            ),
+            .cdrgam_cli_option('partition', 'Viewer job partition.', metavar='NAME'),
+            .cdrgam_cli_option('qos', 'Viewer job QOS.', metavar='NAME'),
+            .cdrgam_cli_option(
+                'wait', 'Seconds to wait for a new job to start (default 120).',
+                metavar='SECONDS', type='positive-integer'
+            )
+        ),
+        examples=c('cdrgam viz', 'cdrgam viz --time 2-00:00:00', 'cdrgam viz --stop'),
+        handler='viz'
+    )
+    viz_server=.cdrgam_cli_command(
+        'viz-server', 'Run the internal viewer server.',
+        options=list(
+            .cdrgam_cli_option('root', 'CDR-GAM root.', metavar='PATH', required=TRUE),
+            .cdrgam_cli_option('state', 'Viewer state directory.', metavar='PATH', required=TRUE),
+            .cdrgam_cli_option('port', 'Port.', metavar='PORT', type='positive-integer')
+        ),
+        handler='viz-server', hidden=TRUE
+    )
     scheduler=.cdrgam_cli_command(
         'scheduler', 'Run the internal root scheduler.',
         options=list(.cdrgam_cli_option(
@@ -388,9 +536,9 @@
             'workloads locally or through Slurm, and inspect generated results.'
         ),
         commands=list(
-            def=def, list=list_command, plan=plan, run=run, status=status,
-            log=log, purge=purge, publish=publish, fetch=fetch,
-            scheduler=scheduler, worker=worker
+            def=def, list=list_command, plan=plan, run=run, stop=stop, status=status,
+            log=log, purge=purge, rm=rm, publish=publish, fetch=fetch, viz=viz,
+            `viz-server`=viz_server, scheduler=scheduler, worker=worker
         )
     )
 }
@@ -638,15 +786,19 @@
 .cdrgam_cli_def_command <- function(parsed, operation) {
     positional <- parsed$positional
     flags <- parsed$flags
-    project <- if (length(positional)) positional[[1L]] else NULL
+    positional_project <- if (length(positional)) positional[[1L]] else NULL
+    selected_project <- .cdrgam_cli_one(flags$project, '--project')
+    if (!is.null(positional_project) && !is.null(selected_project)) {
+        .cdrgam_cli_abort(
+            'Select the project either positionally or with -P/--project, not both'
+        )
+    }
+    project <- if (!is.null(selected_project)) {
+        selected_project
+    } else positional_project
     supported <- c('dataset', 'model', 'visualization', 'comparison')
     selected <- intersect(names(flags), supported)
     if (identical(operation, 'ls')) {
-        if (is.null(project) && length(selected)) {
-            .cdrgam_cli_abort(
-                'def ls requires a project name when definition selectors are supplied'
-            )
-        }
         return(.cdrgam_cli_list_definitions(
             project, flags[selected]
         ))
@@ -660,11 +812,12 @@
             operation='init'
         ))
     }
-    expected <- if (identical(operation, 'rm')) 1L else c(0L, 1L)
+    exact_type <- operation %in% c('rm', 'mv')
+    expected <- if (exact_type) 1L else c(0L, 1L)
     if (!(length(selected) %in% expected)) {
         .cdrgam_cli_abort(paste0(
             'def ', operation, ' accepts ',
-            if (identical(operation, 'rm')) 'exactly' else 'at most',
+            if (exact_type) 'exactly' else 'at most',
             ' one definition selector'
         ))
     }
@@ -746,8 +899,38 @@ cli_main <- function(args=commandArgs(trailingOnly=TRUE)) {
         do.call(.cdrgam_cli_worker, stats::setNames(values, gsub('-', '_', required)))
         return(invisible(0L))
     }
+    if (identical(handler, 'viz-server')) {
+        root <- .cdrgam_cli_one(flags$root, '--root', required=TRUE)
+        configuration <- .cdrgam_cli_site(root)
+        .cdrgam_cli_viz_serve(
+            configuration, .cdrgam_cli_one(flags$state, '--state', required=TRUE),
+            port=.cdrgam_cli_one(flags$port, '--port'), host='0.0.0.0'
+        )
+        return(invisible(0L))
+    }
+    if (identical(handler, 'viz')) {
+        arguments <- list(
+            stop=isTRUE(flags$stop), restart=isTRUE(flags$restart),
+            local=isTRUE(flags$local), port=.cdrgam_cli_one(flags$port, '--port'),
+            cpus=.cdrgam_cli_one(flags$cpus, '--cpus'),
+            memory=.cdrgam_cli_one(flags$memory, '--memory'),
+            time=.cdrgam_cli_one(flags$time, '--time'),
+            partition=.cdrgam_cli_one(flags$partition, '--partition'),
+            qos=.cdrgam_cli_one(flags$qos, '--qos')
+        )
+        wait <- .cdrgam_cli_one(flags$wait, '--wait')
+        if (!is.null(wait)) arguments$wait <- wait
+        do.call(cdrgam_cli_viz, arguments)
+        return(invisible(0L))
+    }
     if (startsWith(handler, 'def-')) {
         .cdrgam_cli_def_command(parsed, sub('^def-', '', handler))
+        return(invisible(0L))
+    }
+    if (identical(handler, 'project-rm')) {
+        .cdrgam_cli_remove_project(
+            parsed$positional[[1L]], force=isTRUE(flags$force)
+        )
         return(invisible(0L))
     }
     selectors <- .cdrgam_cli_selector_arguments(flags)
@@ -759,11 +942,19 @@ cli_main <- function(args=commandArgs(trailingOnly=TRUE)) {
         arguments <- c(selectors, list(
             dry_run=isTRUE(flags$`dry-run`),
             cpus=.cdrgam_cli_one(flags$cpus, '--cpus'),
+            partition=.cdrgam_cli_one(flags$partition, '--partition'),
             memory=.cdrgam_cli_one(flags$memory, '--memory'),
             time=.cdrgam_cli_one(flags$time, '--time'),
+            scheduler_time=.cdrgam_cli_one(
+                flags$`scheduler-time`, '--scheduler-time'
+            ),
             qos=.cdrgam_cli_one(flags$qos, '--qos')
         ))
         do.call(cdrgam_cli_run, arguments)
+    } else if (identical(handler, 'stop')) {
+        do.call(cdrgam_cli_stop, c(selectors, list(
+            force=isTRUE(flags$force), scheduler=isTRUE(flags$scheduler)
+        )))
     } else if (identical(handler, 'status')) {
         cdrgam_cli_status(
             flags$project, use_pager=!isTRUE(flags$`no-pager`)
@@ -771,7 +962,7 @@ cli_main <- function(args=commandArgs(trailingOnly=TRUE)) {
     } else if (identical(handler, 'log')) {
         arguments <- c(selectors, list(
             lines=.cdrgam_cli_one(flags$lines, '--lines'),
-            worker=isTRUE(flags$worker)
+            worker=isTRUE(flags$worker), running=isTRUE(flags$running)
         ))
         do.call(cdrgam_cli_log, arguments)
     } else if (identical(handler, 'purge')) {
@@ -781,11 +972,21 @@ cli_main <- function(args=commandArgs(trailingOnly=TRUE)) {
             visualizations=flags$visualization,
             comparisons=flags$comparison, datasets=flags$dataset,
             work=isTRUE(flags$work), logs=isTRUE(flags$logs),
-            yes=isTRUE(flags$yes)
+            force=isTRUE(flags$force)
         )
     } else if (identical(handler, 'publish')) {
+        positional_project <- if (length(parsed$positional)) {
+            parsed$positional[[1L]]
+        } else NULL
+        selected_project <- .cdrgam_cli_one(flags$project, '--project')
+        if (!is.null(positional_project) && !is.null(selected_project)) {
+            .cdrgam_cli_abort(paste(
+                'Select the project either positionally or with',
+                '-P/--project, not both'
+            ))
+        }
         cdrgam_cli_publish(
-            parsed$positional[[1L]],
+            if (!is.null(selected_project)) selected_project else positional_project,
             results=.cdrgam_cli_null(
                 .cdrgam_cli_one(flags$results, '--results'), 'none'
             ),

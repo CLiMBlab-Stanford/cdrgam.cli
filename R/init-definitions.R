@@ -419,7 +419,7 @@
         visualization=paste('-v', name),
         comparison=paste('-c', name)
     )
-    paste('cdrgam purge -P', project, selector, '--yes')
+    paste('cdrgam purge -P', project, selector)
 }
 
 .cdrgam_cli_project_has_active_work <- function(definitions) {
@@ -429,6 +429,66 @@
         definitions$project$project$name,
         definitions$project$project$id
     )
+}
+
+.cdrgam_cli_resolve_definition_project <- function(
+        project=NULL, type=NULL, names=NULL, operation='edit', source=NULL,
+        checkout=NULL
+) {
+    if (!is.null(project)) {
+        return(.cdrgam_cli_scalar_character(project, 'project'))
+    }
+    inferred <- tryCatch(
+        .cdrgam_cli_infer_project(checkout), error=function(error) NULL
+    )
+    if (!is.null(inferred)) return(inferred)
+    if (is.null(type) || is.null(names)) {
+        .cdrgam_cli_abort(
+            'Select a project with -P/--project when outside a project directory'
+        )
+    }
+    directory <- switch(
+        type,
+        dataset='datasets', model='models', visualization='visualizations',
+        comparison='comparisons',
+        .cdrgam_cli_abort(paste0('Unsupported definition type: ', type))
+    )
+    patterns <- if (identical(operation, 'mv')) {
+        names[[1L]]
+    } else if (identical(operation, 'edit') && !is.null(source)) {
+        source
+    } else names
+    literal <- identical(operation, 'edit') || identical(operation, 'mv')
+    projects <- .cdrgam_cli_select_projects('*', checkout)
+    matches <- projects[vapply(projects, function(candidate) {
+        root <- find_cdrgam_project(candidate, checkout)
+        available <- sub(
+            '\\.ya?ml$', '', basename(
+                .cdrgam_cli_definition_files(root, directory)
+            )
+        )
+        all(vapply(patterns, function(pattern) {
+            if (literal) {
+                pattern %in% available
+            } else {
+                length(.cdrgam_cli_match_name_pattern(
+                    pattern, available, type
+                )) > 0L
+            }
+        }, logical(1)))
+    }, logical(1))]
+    if (length(matches) == 1L) return(matches[[1L]])
+    if (!length(matches)) {
+        .cdrgam_cli_abort(paste0(
+            'No project could be inferred from the current directory or the ',
+            type, ' selection; select one with -P/--project'
+        ))
+    }
+    .cdrgam_cli_abort(paste0(
+        'The ', type, ' selection matches multiple projects: ',
+        paste(matches, collapse=', '),
+        '. Select one with -P/--project.'
+    ))
 }
 
 .cdrgam_cli_list_definitions <- function(
@@ -444,40 +504,48 @@
     }
     if (is.null(project)) {
         if (length(selectors)) {
-            .cdrgam_cli_abort(
-                'Definition selectors require one project name'
+            if (length(selectors) != 1L) {
+                .cdrgam_cli_abort(paste(
+                    'Select a project with -P/--project when combining',
+                    'definition types outside a project directory'
+                ))
+            }
+            project <- .cdrgam_cli_resolve_definition_project(
+                type=names(selectors)[[1L]], names=selectors[[1L]],
+                operation='ls', checkout=checkout
             )
-        }
-        configuration <- .cdrgam_cli_site(checkout, create_root=TRUE)
-        projects_root <- file.path(configuration$cdrgam_root, 'projects')
-        available <- if (dir.exists(projects_root)) {
-            basename(list.dirs(
-                projects_root, recursive=FALSE, full.names=TRUE
-            ))
         } else {
-            character()
-        }
-        available <- sort(available[vapply(available, function(name) {
-            tryCatch({
-                .cdrgam_cli_name(name, 'project')
-                file.exists(file.path(projects_root, name, .cdrgam_cli_marker))
-            }, error=function(error) FALSE)
-        }, logical(1))])
-        paths <- vapply(available, function(name) {
-            marker <- file.path(
-                .cdrgam_cli_project_root(name, checkout, must_work=FALSE),
-                .cdrgam_cli_marker
+            configuration <- .cdrgam_cli_site(checkout, create_root=TRUE)
+            projects_root <- file.path(configuration$cdrgam_root, 'projects')
+            available <- if (dir.exists(projects_root)) {
+                basename(list.dirs(
+                    projects_root, recursive=FALSE, full.names=TRUE
+                ))
+            } else {
+                character()
+            }
+            available <- sort(available[vapply(available, function(name) {
+                tryCatch({
+                    .cdrgam_cli_name(name, 'project')
+                    file.exists(file.path(projects_root, name, .cdrgam_cli_marker))
+                }, error=function(error) FALSE)
+            }, logical(1))])
+            paths <- vapply(available, function(name) {
+                marker <- file.path(
+                    .cdrgam_cli_project_root(name, checkout, must_work=FALSE),
+                    .cdrgam_cli_marker
+                )
+                as.character(fs::path_rel(
+                    marker, start=configuration$cdrgam_root
+                ))
+            }, character(1))
+            output <- data.frame(
+                type=rep('project', length(available)),
+                name=available, path=paths, stringsAsFactors=FALSE
             )
-            as.character(fs::path_rel(
-                marker, start=configuration$cdrgam_root
-            ))
-        }, character(1))
-        output <- data.frame(
-            type=rep('project', length(available)),
-            name=available, path=paths, stringsAsFactors=FALSE
-        )
-        print(output, row.names=FALSE)
-        return(invisible(output))
+            print(output, row.names=FALSE)
+            return(invisible(output))
+        }
     }
     if (identical(project, 'site')) {
         if (length(selectors)) {
@@ -632,6 +700,123 @@
     invisible(stats::setNames(targets, names))
 }
 
+.cdrgam_cli_rename_definition <- function(
+        project, type, names, checkout=NULL
+) {
+    if (length(names) != 2L) {
+        .cdrgam_cli_abort(paste0(
+            'def mv requires exactly two ', type,
+            ' names: the existing name and the new name'
+        ))
+    }
+    names <- vapply(
+        names, .cdrgam_cli_name, character(1), field=paste0(type, ' name')
+    )
+    source_name <- names[[1L]]
+    target_name <- names[[2L]]
+    if (identical(source_name, target_name)) {
+        .cdrgam_cli_abort('The existing and new definition names must differ')
+    }
+    root <- find_cdrgam_project(project, checkout)
+    source <- .cdrgam_cli_definition_target(root, type, source_name)
+    target <- .cdrgam_cli_definition_target(root, type, target_name)
+    if (!file.exists(source)) {
+        .cdrgam_cli_abort(paste0(
+            'Source ', type, ' definition does not exist: ', source_name
+        ))
+    }
+    if (file.exists(target)) {
+        .cdrgam_cli_abort(paste0(
+            'Target ', type, ' definition already exists: ', target_name
+        ))
+    }
+    references <- .cdrgam_cli_definition_references(
+        root, type, source_name
+    )
+    if (length(references)) {
+        .cdrgam_cli_abort(paste0(
+            'Cannot rename ', type, ' definition ', sQuote(source_name),
+            '; it is referenced by: ', paste(references, collapse=', '),
+            '. Edit those definitions first.'
+        ))
+    }
+    definitions <- .cdrgam_cli_read_definitions(
+        project, check_sources=FALSE, checkout=checkout
+    )
+    artifacts <- .cdrgam_cli_definition_artifacts(
+        definitions, type, source_name
+    )
+    existing_artifacts <- artifacts[file.exists(artifacts)]
+    registry_keys <- .cdrgam_cli_registry_keys_for_artifacts(
+        definitions$site, artifacts
+    )
+    if (length(existing_artifacts) || length(registry_keys)) {
+        command <- .cdrgam_cli_definition_purge_command(
+            project, type, source_name
+        )
+        .cdrgam_cli_abort(paste0(
+            'Cannot rename ', type, ' definition ', sQuote(source_name),
+            ' while generated results or registry workloads exist. First run `',
+            command, '`, then retry this command.'
+        ))
+    }
+    if (.cdrgam_cli_project_has_active_work(definitions)) {
+        .cdrgam_cli_abort(
+            'Cannot rename definitions while this project has active work'
+        )
+    }
+    context <- .cdrgam_cli_definition_edit_context(root)
+    .cdrgam_cli_validate_definition_candidate(
+        type, target_name, source, context
+    )
+    source_draft <- .cdrgam_cli_draft_path(root, type, source_name)
+    target_draft <- .cdrgam_cli_draft_path(root, type, target_name)
+    if (file.exists(target_draft)) {
+        .cdrgam_cli_abort(paste0(
+            'Cannot rename definition while a draft exists for the new name: ',
+            target_draft
+        ))
+    }
+    moved_definition <- FALSE
+    moved_draft <- FALSE
+    complete <- FALSE
+    on.exit({
+        if (!complete) {
+            if (moved_draft && file.exists(target_draft)) {
+                .cdrgam_cli_try_move_path(target_draft, source_draft)
+            }
+            if (moved_definition && file.exists(target)) {
+                .cdrgam_cli_try_move_path(target, source)
+            }
+        }
+    }, add=TRUE)
+    if (!.cdrgam_cli_try_move_path(source, target)) {
+        .cdrgam_cli_abort(paste0(
+            'Could not rename definition ', sQuote(source_name), ' to ',
+            sQuote(target_name)
+        ))
+    }
+    moved_definition <- TRUE
+    if (file.exists(source_draft)) {
+        if (!.cdrgam_cli_try_move_path(source_draft, target_draft)) {
+            .cdrgam_cli_abort(paste0(
+                'Could not rename the definition draft at ', source_draft
+            ))
+        }
+        moved_draft <- TRUE
+    }
+    .cdrgam_cli_read_definitions(
+        project, check_sources=FALSE, checkout=checkout
+    )
+    .cdrgam_cli_git_track_project(root)
+    .cdrgam_cli_git_stage(root, c(source, target))
+    complete <- TRUE
+    message(
+        'Renamed ', type, ' definition ', source_name, ' to ', target_name
+    )
+    invisible(target)
+}
+
 .cdrgam_cli_define_site <- function(root=NULL, editor=NULL) {
     root <- tryCatch(
         .cdrgam_cli_root(root, must_work=FALSE),
@@ -666,10 +851,13 @@
 
 #' Create, edit, copy, or remove CDR-GAM definitions
 #'
-#' @param project Project name, or `"site"` for root-local configuration.
+#' @param project Optional project name, inferred from the current directory
+#'   when omitted, or `"site"` for root-local configuration. Project
+#'   initialization always requires an explicit new name.
 #' @param type Optional definition type.
 #' @param name One or more definition names when `type` is supplied. Validation
-#'   and removal accept `*` patterns; editing treats names literally.
+#'   and removal accept `*` patterns; editing treats names literally. Renaming
+#'   requires the existing and new names, in that order.
 #' @param source Optional source project or subordinate definition name. The
 #'   source initializes the requested target without generated artifacts. A
 #'   project copy includes its definitions and `code/`; subordinate definitions
@@ -677,17 +865,19 @@
 #' @param operation Either `"init"` to initialize a project, `"edit"` to
 #'   create or edit a definition, or
 #'   `"rm"` to remove a subordinate definition after safety checks, or
-#'   `"val"` to validate definitions without changing them.
+#'   `"mv"` to rename one unused subordinate definition, or `"val"` to
+#'   validate definitions without changing them.
 #' @param deep Whether `operation="val"` should read data and prepare model
 #'   designs.
 #' @param cdrgam_root Configured CDR-GAM root.
 #' @param editor Editor command or callback. The default uses `VISUAL`, then
 #'   `EDITOR`, then the R `editor` option.
-#' @return The created, updated, or removed path, invisibly.
+#' @return The created, updated, renamed, or removed path, invisibly.
 #' @export
 cdrgam_cli_def <- function(
         project=NULL, type=NULL, name=NULL, source=NULL,
-        cdrgam_root=NULL, editor=NULL, operation=c('edit', 'init', 'rm', 'val'),
+        cdrgam_root=NULL, editor=NULL,
+        operation=c('edit', 'init', 'rm', 'mv', 'val'),
         deep=FALSE
 ) {
     operation <- match.arg(operation)
@@ -695,18 +885,32 @@ cdrgam_cli_def <- function(
     if (!identical(operation, 'val') && isTRUE(deep)) {
         .cdrgam_cli_abort('deep applies only to def val')
     }
-    project <- .cdrgam_cli_scalar_character(project, 'project')
-    if (identical(operation, 'rm')) {
+    if (operation %in% c('rm', 'mv') &&
+            (is.null(type) || is.null(name))) {
+        .cdrgam_cli_abort(paste0(
+            'def ', operation,
+            ' requires exactly one subordinate definition selector'
+        ))
+    }
+    if (!is.null(project)) {
+        project <- .cdrgam_cli_scalar_character(project, 'project')
+    }
+    if (is.null(project) && !identical(operation, 'init')) {
+        project <- .cdrgam_cli_resolve_definition_project(
+            type=type, names=name, operation=operation, source=source,
+            checkout=cdrgam_root
+        )
+    }
+    if (operation %in% c('rm', 'mv')) {
         if (identical(project, 'site')) {
-            .cdrgam_cli_abort('def rm does not remove site configuration')
-        }
-        if (is.null(type) || is.null(name)) {
-            .cdrgam_cli_abort(
-                'def rm requires exactly one subordinate definition selector'
-            )
+            .cdrgam_cli_abort(paste0(
+                'def ', operation, ' does not operate on site configuration'
+            ))
         }
         if (!is.null(source) || !is.null(editor)) {
-            .cdrgam_cli_abort('def rm does not accept source or editor')
+            .cdrgam_cli_abort(paste0(
+                'def ', operation, ' does not accept source or editor'
+            ))
         }
     }
     if (identical(project, 'site')) {
@@ -823,6 +1027,11 @@ cdrgam_cli_def <- function(
     }
     if (identical(operation, 'rm')) {
         return(.cdrgam_cli_remove_definitions(
+            project, type, name, cdrgam_root
+        ))
+    }
+    if (identical(operation, 'mv')) {
+        return(.cdrgam_cli_rename_definition(
             project, type, name, cdrgam_root
         ))
     }

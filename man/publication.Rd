@@ -3,7 +3,7 @@
 \alias{cdrgam_cli_fetch}
 \title{Publish and Fetch CDR-GAM Projects}
 \usage{
-cdrgam_cli_publish(project, results = c("none", "archive", "url", "git"),
+cdrgam_cli_publish(project = NULL, results = c("none", "archive", "url", "git"),
   archive = NULL, url = NULL, sha256 = NULL, models = NULL,
   predictions = NULL, visualizations = NULL, comparisons = NULL,
   commit = NULL, push = FALSE, cdrgam_root = NULL)
@@ -12,7 +12,9 @@ cdrgam_cli_fetch(location, project = NULL, source_only = FALSE,
   results = NULL, cdrgam_root = NULL)
 }
 \arguments{
-  \item{project}{Project name. For fetching, an optional local project name.}
+  \item{project}{For publication, an optional project name inferred from the
+  current directory when omitted. For fetching, an optional local project
+  name.}
   \item{results}{For publication, the result mode. For fetching, an optional
   local path or direct URL overriding the publication manifest.}
   \item{archive}{Destination for a generated compressed tar archive.}

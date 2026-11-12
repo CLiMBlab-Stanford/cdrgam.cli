@@ -48,8 +48,13 @@
     if (is.null(manifest) || !identical(manifest$status, 'complete') ||
             is.null(manifest$outputs)) return(FALSE)
     if (!is.null(identity) && !identical(manifest$identity, identity)) return(FALSE)
-    if (identical(manifest$kind, 'fit') &&
-            identical(manifest$result$diagnostics$converged, FALSE)) return(FALSE)
+    if (identical(manifest$kind, 'fit') && identical(
+            .cdrgam_cli_fit_outcome(manifest$result$diagnostics),
+            'nonconverged'
+        )) return(FALSE)
+    if (identical(manifest$kind, 'fit') && identical(
+            manifest$result$derivation$outcome, 'unresolved'
+        )) return(FALSE)
     if (identical(manifest$kind, 'fit') && !.cdrgam_cli_valid_derivation(
             directory, manifest$result$derivation
     )) return(FALSE)

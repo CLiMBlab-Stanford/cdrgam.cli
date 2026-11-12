@@ -363,6 +363,12 @@ chain records the original definition contract and every exact formula
 replacement. If no eligible edit yields convergence within `max_steps`, the
 work item fails and no nonconverged model is published at the standard path.
 
+`fit.center_predictors` defaults to `true` in the core package: linear IRF
+predictors, including binary ones, are centered at their training means, so
+`irf(1)` is the response to an event with average linear predictors. Set it to
+`false` for uncentered predictors. Individual terms can override it in the
+formula with `irf(..., center=)`.
+
 `fit.family` accepts `gaussian`, `binomial`, `poisson`, `Gamma`, or `gaulss`
 through
 the core package's validated family registry. `fit.link` is optional and
@@ -436,8 +442,13 @@ that matches no terms fails before rendering.
 
 `composition` controls the effect being evaluated. `term` returns only the
 selected term. `total` adds its fitted marginal hierarchy, using the joint
-coefficient covariance for uncertainty. `deviation` retains the selected term
-without its marginals. `grouping` separately selects the population IRF,
+coefficient covariance for uncertainty. The hierarchy contains every ungrouped
+term whose predictors are a subset of the selected term's, so the total for
+`irf(wlen, repetition_index, k_p=list(NULL, 3))` adds `irf(wlen)`,
+`irf(repetition_index, k_p=3)`, and `irf(1)`. The total is therefore the
+response to an event with the requested predictor values. To isolate one
+predictor's effect, subtract a `reference` in that predictor: terms that do
+not involve it cancel. `grouping` separately selects the population IRF,
 group-specific deviation, or their conditional sum. `groups` can restrict the
 factor levels used by `deviation` and `conditional` requests.
 
@@ -457,6 +468,49 @@ Unspecified lag axes vary over their fitted domains. Other unspecified axes
 are fixed at their training median. The wildcard predictor entry supplies a
 fallback for every predictor axis. Axis values and effect-grid columns use
 source data units.
+
+`reference` subtracts the same effect evaluated at reference values of some
+axes. Axes not named in `reference` keep their evaluated values. Each entry
+uses the axis-request syntax and must resolve to one value, or is `default`
+for a predictor. A `default` predictor stays at the model default: every term
+that involves it drops out of the reference. For a centered linear predictor
+this equals its center; for a smooth predictor it is the training-average
+contribution implied by the term's identifiability constraint. With every
+predictor at `default` and `composition: total`, the reference is `irf(1)`,
+the response to an average event. Reference axes add an `AXIS_reference`
+column to the effect grid, which is empty for a default, and the intervals
+account for the covariance of the two evaluations. This query plots the
+effect of a one-SD increase in word length at each repetition:
+
+```yaml
+query:
+  terms: [wlen:repetition_index]
+  composition: total
+  axes:
+    lag: {grid: fitted, n: 300}
+    predictors:
+      wlen: {at: {summary: mean, offset-sd: 1}}
+      repetition_index: {values: [1, 2, 3, 4, 5]}
+  reference:
+    wlen: {at: {summary: mean}}
+  test: true
+render:
+  geometry: line
+  mappings: {x: lag, y: estimate, color: "predictor:repetition_index"}
+  interval: ribbon
+```
+
+`wlen: default` gives the same result here because word length is a centered
+linear predictor. A reference in `repetition_index` instead, such as
+`repetition_index: 1`, plots each repetition's difference from the first. With `test: true`, the effect
+work item also writes `effect-tests.csv`. It holds one joint Wald test per
+term, group, and layer of the null hypothesis that the effect is zero at every
+grid point. The test uses the same grid, so the grid should be dense enough to
+span the effect.
+
+Line renderings draw one curve per term, group, layer, and value of every
+other varying axis. A numeric `color` or `linetype` mapping with at most 12
+values uses a discrete legend.
 
 Line renderings support ribbon, boundary-line, or no interval display. Raster,
 contour, and combined raster-contour geometries support predictor-by-lag,

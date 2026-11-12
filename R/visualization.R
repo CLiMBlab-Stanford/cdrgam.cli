@@ -25,8 +25,11 @@
     } else .cdrgam_cli_load_dataset(item$fit$dataset)
     query <- item$query
     layers <- .cdrgam_cli_effect_layers(query, item$layers)
+    # References and tests need cdrgam > 0.2.0; omit the argument otherwise so
+    # that other queries still run against older core releases.
+    reference <- if (is.null(query$reference)) list() else list(reference=query$reference)
     tables <- lapply(layers, function(layer) {
-        value <- .cdrgam_cli_core_estimate_effect(
+        value <- do.call(.cdrgam_cli_core_estimate_effect, c(list(
             fit,
             terms=query$terms,
             axes=query$axes,
@@ -39,10 +42,31 @@
             unconditional=query$uncertainty$unconditional,
             level=query$uncertainty$level,
             n=query$n
-        )
+        ), reference))
         value$layer <- layer$id
         value
     })
+    if (isTRUE(query$test)) {
+        tests <- lapply(layers, function(layer) {
+            value <- do.call(.cdrgam_cli_core_test_effect, c(list(
+                fit,
+                terms=query$terms,
+                axes=query$axes,
+                impulses=training$impulses,
+                responses=training$responses,
+                composition=layer$composition,
+                grouping=layer$grouping,
+                groups=layer$groups,
+                unconditional=query$uncertainty$unconditional,
+                n=query$n
+            ), reference))
+            value$layer <- rep.int(layer$id, nrow(value))
+            as.data.frame(value)
+        })
+        tests <- do.call(rbind, tests)
+        rownames(tests) <- NULL
+        utils::write.csv(tests, file.path(stage, 'effect-tests.csv'), row.names=FALSE)
+    }
     columns <- unique(unlist(lapply(tables, names), use.names=FALSE))
     tables <- lapply(tables, function(value) {
         for (name in setdiff(columns, names(value))) value[[name]] <- NA
@@ -133,15 +157,55 @@
     plot
 }
 
+# Evaluation-axis columns, other than the x and y mappings, that take several
+# values. Line series are split on these so that, for example, curves at
+# different moderator values are not joined into one path.
+.cdrgam_cli_series_axes <- function(data, mappings) {
+    reserved <- c(
+        'term_id', 'term', 'group', 'composition', 'grouping', 'estimate',
+        'se', 'lower', 'upper', 'layer'
+    )
+    mapped <- vapply(
+        mappings[intersect(c('x', 'y'), names(mappings))],
+        .cdrgam_cli_mapping_column, character(1)
+    )
+    candidates <- setdiff(names(data), c(reserved, mapped))
+    candidates <- candidates[!startsWith(candidates, '.') &
+        !endsWith(candidates, '_reference')]
+    candidates[vapply(candidates, function(name) {
+        is.numeric(data[[name]]) && length(unique(data[[name]])) > 1L
+    }, logical(1))]
+}
+
+# Numeric color and linetype mappings with few distinct values are shown as
+# discrete legends, one entry per evaluated value.
+.cdrgam_cli_discrete_mappings <- function(data, mappings) {
+    for (aesthetic in intersect(c('color', 'linetype'), names(mappings))) {
+        column <- .cdrgam_cli_mapping_column(mappings[[aesthetic]])
+        values <- data[[column]]
+        if (!is.numeric(values)) next
+        levels <- sort(unique(values))
+        if (length(levels) > 12L && identical(aesthetic, 'color')) next
+        labels <- format(signif(levels, 4L), trim=TRUE, drop0trailing=TRUE)
+        data[[column]] <- factor(match(values, levels), seq_along(levels), labels)
+    }
+    data
+}
+
 .cdrgam_cli_visualization_plot <- function(data, definition) {
     render <- definition$render
     mappings <- render$mappings
-    data$.cdrgam_series <- interaction(
-        data$term,
-        ifelse(is.na(data$group), '<population>', as.character(data$group)),
-        data$layer,
-        drop=TRUE, lex.order=TRUE
-    )
+    series_axes <- .cdrgam_cli_series_axes(data, mappings)
+    data <- .cdrgam_cli_discrete_mappings(data, mappings)
+    data$.cdrgam_series <- do.call(interaction, c(
+        list(
+            data$term,
+            ifelse(is.na(data$group), '<population>', as.character(data$group)),
+            data$layer
+        ),
+        unname(as.list(data[series_axes])),
+        list(drop=TRUE, lex.order=TRUE)
+    ))
     if (is.null(mappings$group)) mappings$group <- '.cdrgam_series'
     plot <- ggplot2::ggplot()
     layers <- .cdrgam_cli_effect_layers(definition$query, definition$layers)

@@ -8,8 +8,15 @@
         !identical(getOption('cdrgam.cli.progress', TRUE), FALSE)
     context$terminal <- context$enabled && isatty(stderr())
     context$index <- 0L
+    context$started <- Sys.time()
     context$open <- FALSE
     context
+}
+
+.cdrgam_cli_progress_color <- function(context, now=Sys.time()) {
+    elapsed <- max(0, as.numeric(difftime(now, context$started, units='secs')))
+    palette <- c(15L, 157L, 121L, 85L, 49L, 85L, 121L, 157L)
+    palette[[(floor(elapsed) %% length(palette)) + 1L]]
 }
 
 .cdrgam_cli_progress <- function(context, stage, pulse=FALSE) {
@@ -20,10 +27,9 @@
         if (!isTRUE(pulse)) message('cdrgam run: ', stage)
         return(invisible(TRUE))
     }
-    colors <- c(36L, 34L, 35L, 33L, 32L)
-    color <- colors[[((context$index - 1L) %% length(colors)) + 1L]]
+    color <- .cdrgam_cli_progress_color(context)
     cat(
-        '\r\u001b[2K\u001b[', color, 'm\u25cf\u001b[0m cdrgam run: ', stage,
+        '\r\u001b[2K\u001b[38;5;', color, 'm\u25cf\u001b[0m cdrgam run: ', stage,
         sep='', file=stderr()
     )
     flush(stderr())
@@ -151,25 +157,36 @@
     identical(tolower(left), tolower(right))
 }
 
+# Process start times are stored as strings: YAML keeps about 8 significant
+# digits of a number, which rounds a Unix time by up to 50 seconds.
 .cdrgam_cli_process_started <- function(pid=Sys.getpid()) {
     tryCatch(
-        as.numeric(ps::ps_create_time(ps::ps_handle(as.integer(pid)))),
-        error=function(error) NA_real_
+        sprintf('%.3f', as.numeric(ps::ps_create_time(ps::ps_handle(as.integer(pid))))),
+        error=function(error) NA_character_
     )
+}
+
+# Tolerance for comparing a recorded start time with the process's own. Values
+# recorded as numbers by earlier versions were rounded to 8 significant digits.
+.cdrgam_cli_start_time_tolerance <- function(started) {
+    if (is.character(started)) return(0.01)
+    max(0.01, 10^(floor(log10(abs(started))) - 7))
 }
 
 .cdrgam_cli_process_alive <- function(pid, started=NULL) {
     pid <- suppressWarnings(as.integer(pid))
     if (length(pid) != 1L || is.na(pid) || pid < 1L) return(FALSE)
+    expected <- NULL
+    if (!is.null(started)) {
+        expected <- suppressWarnings(as.numeric(started))
+        if (length(expected) != 1L || is.na(expected)) return(NA)
+    }
     tryCatch({
-        handle <- if (is.null(started)) {
-            ps::ps_handle(pid)
-        } else {
-            started <- suppressWarnings(as.numeric(started))
-            if (length(started) != 1L || is.na(started)) return(NA)
-            ps::ps_handle(pid, time=as.POSIXct(started, origin='1970-01-01', tz='GMT'))
-        }
-        isTRUE(ps::ps_is_running(handle))
+        handle <- ps::ps_handle(pid)
+        if (!isTRUE(ps::ps_is_running(handle))) return(FALSE)
+        if (is.null(expected)) return(TRUE)
+        actual <- as.numeric(ps::ps_create_time(handle))
+        abs(actual - expected) <= .cdrgam_cli_start_time_tolerance(started)
     }, error=function(error) {
         if (inherits(error, 'no_such_process')) FALSE else NA
     })
@@ -201,7 +218,9 @@
 }
 
 .cdrgam_cli_absolute_path <- function(path) {
-    fs::is_absolute_path(path)
+    path <- as.character(path)
+    home <- grepl('^~($|[/\\\\])', path)
+    home | (!startsWith(path, '~') & fs::is_absolute_path(path))
 }
 
 .cdrgam_cli_within <- function(path, root) {

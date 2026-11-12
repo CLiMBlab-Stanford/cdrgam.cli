@@ -271,7 +271,8 @@
         arguments[field] <- model[field]
     }
     for (field in c(
-            'history', 'chunk_size', 'rescale_predictors', 'drop.unused.levels'
+            'history', 'chunk_size', 'rescale_predictors', 'center_predictors',
+            'drop.unused.levels'
     )) {
         value <- fit[[field, exact=TRUE]]
         if (!is.null(value)) arguments[[field]] <- value

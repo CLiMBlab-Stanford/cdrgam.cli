@@ -1,0 +1,43 @@
+#!/bin/sh
+set -eu
+
+if [ "${R_BIN+x}" = x ]; then
+    printf '%s\n' "$R_BIN"
+    exit 0
+fi
+
+if [ -n "${CONDA_PREFIX:-}" ] && [ -x "$CONDA_PREFIX/bin/R" ]; then
+    printf '%s\n' "$CONDA_PREFIX/bin/R"
+    exit 0
+fi
+
+conda_base=''
+if [ -n "${CONDA_EXE:-}" ]; then
+    conda_base=$(dirname "$(dirname "$CONDA_EXE")")
+elif command -v conda >/dev/null 2>&1; then
+    conda_command=$(command -v conda)
+    case "$conda_command" in
+        */condabin/conda) conda_base=$(dirname "$(dirname "$conda_command")") ;;
+    esac
+fi
+if [ -n "$conda_base" ]; then
+    conda_environment=${CDRGAM_CONDA_ENV:-cdrgam}
+    conda_r="$conda_base/envs/$conda_environment/bin/R"
+    if [ -x "$conda_r" ]; then
+        printf '%s\n' "$conda_r"
+        exit 0
+    fi
+fi
+
+if [ "${GITHUB_ACTIONS:-}" = true ] || [ "${CDRGAM_ALLOW_SYSTEM_R:-}" = 1 ]; then
+    if ! command -v R >/dev/null 2>&1; then
+        echo 'R was not found in the hosted or explicitly allowed system environment' >&2
+        exit 1
+    fi
+    command -v R
+    exit 0
+fi
+
+echo 'Conda R was not found; activate a Conda environment, set CDRGAM_CONDA_ENV, or set R_BIN' >&2
+echo 'Set CDRGAM_ALLOW_SYSTEM_R=1 only to deliberately use a non-Conda R' >&2
+exit 1

@@ -44,10 +44,10 @@ stopifnot(
     grepl('ls', def_help, fixed=TRUE),
     grepl('rm', def_help, fixed=TRUE),
     grepl('val', def_help, fixed=TRUE),
-    grepl('Usage: cdrgam def edit TARGET', edit_help, fixed=TRUE),
+    grepl('Usage: cdrgam def edit [TARGET]', edit_help, fixed=TRUE),
     grepl('--source SOURCE', edit_help, fixed=TRUE),
     grepl('Usage: cdrgam def init PROJECT', init_help, fixed=TRUE),
-    grepl('Usage: cdrgam publish PROJECT', publish_help, fixed=TRUE),
+    grepl('Usage: cdrgam publish [PROJECT]', publish_help, fixed=TRUE),
     grepl('Usage: cdrgam fetch LOCATION', fetch_help, fixed=TRUE)
 )
 
@@ -155,6 +155,12 @@ stopifnot(
         ),
         c('natstor-linear', 'natstor-nonlinear')
     ),
+    identical(
+        internal('.cdrgam_cli_match_names')(
+            c('os*', 'spr*'), c('os-main', 'unrelated'), 'model', strict=FALSE
+        ),
+        'os-main'
+    ),
     internal('.cdrgam_cli_log_selector_matches')(
         selector_choices, 're:^natstor-.*linear$', 'model'
     )
@@ -183,6 +189,37 @@ nonconverged_distributional_fit <- structure(list(
 nonconverged_distributional_diagnostics <- internal(
     '.cdrgam_cli_core_diagnostics'
 )(nonconverged_distributional_fit)
+# Boundary smoothing parameters are published one record each and leave the
+# outcome unchanged.
+boundary_fit <- structure(list(
+    sparse=list(
+        convergence=list(
+            converged=TRUE, code=0L, message='converged',
+            hessian_positive_definite=TRUE,
+            hessian_boundary=data.frame(
+                smoothing_parameter='s(cdr_term_2)1', log_sp=16.8,
+                side='upper', curvature=2e-5, bound_log_sp=5.6,
+                criterion_increase=2.66, status='bounded', evaluations=11L,
+                stringsAsFactors=FALSE
+            )
+        ),
+        condition_indicator=1
+    ),
+    cdrgam=list()
+), class=c('cdrgam_sparse', 'cdrgam'))
+boundary_diagnostics <- internal('.cdrgam_cli_core_diagnostics')(boundary_fit)
+stopifnot(
+    identical(boundary_diagnostics$outcome, 'success'),
+    identical(
+        boundary_diagnostics$notes[[1L]]$code,
+        'boundary_variance_components'
+    ),
+    identical(
+        boundary_diagnostics$hessian_boundary[[1L]]$smoothing_parameter,
+        's(cdr_term_2)1'
+    ),
+    identical(boundary_diagnostics$hessian_boundary[[1L]]$status, 'bounded')
+)
 idle_now <- as.POSIXct('2026-01-01 00:05:00', tz='UTC')
 idle_started <- as.POSIXct('2026-01-01 00:00:00', tz='UTC')
 idle_fresh <- internal('.cdrgam_cli_worker_idle_state')(
@@ -212,12 +249,27 @@ stopifnot(
     internal('.cdrgam_cli_absolute_path')('/tmp/example'),
     internal('.cdrgam_cli_absolute_path')('C:\\example'),
     internal('.cdrgam_cli_absolute_path')('\\\\server\\share'),
+    internal('.cdrgam_cli_absolute_path')('~/example'),
+    !internal('.cdrgam_cli_absolute_path')('~s(subject, bs = "re")'),
     !internal('.cdrgam_cli_absolute_path')('relative/example'),
     isTRUE(internal('.cdrgam_cli_process_alive')(Sys.getpid())),
     isTRUE(internal('.cdrgam_cli_process_alive')(
         Sys.getpid(), internal('.cdrgam_cli_process_started')()
     )),
     identical(internal('.cdrgam_cli_process_alive')(-1L), FALSE)
+)
+stopifnot(
+    internal('.cdrgam_cli_attempt_active')(list(
+        status='running', host=internal('.cdrgam_cli_host_name')(),
+        pid=Sys.getpid(), process_started=internal('.cdrgam_cli_process_started')()
+    )),
+    !internal('.cdrgam_cli_attempt_active')(list(
+        status='running', pid=Sys.getpid()
+    )),
+    !internal('.cdrgam_cli_attempt_active')(list(
+        status='running', host='other-host', pid=Sys.getpid(),
+        process_started=internal('.cdrgam_cli_process_started')()
+    ))
 )
 process_result <- internal('.cdrgam_cli_process_run')(
     file.path(R.home('bin'), 'Rscript'),
@@ -542,6 +594,22 @@ stopifnot(
     identical(validated_multiline$formula, validated_single_line$formula),
     !grepl('\n', validated_multiline$formula, fixed=TRUE)
 )
+uncentered_model <- single_line_model
+uncentered_model$fit$center_predictors <- FALSE
+stopifnot(identical(getFromNamespace('.cdrgam_cli_validate_model', 'cdrgam.cli')(
+    uncentered_model, 'uncentered.yml'
+)$fit$center_predictors, FALSE))
+invalid_centering <- uncentered_model
+invalid_centering$fit$center_predictors <- 'yes'
+invalid_centering_error <- tryCatch({
+    getFromNamespace('.cdrgam_cli_validate_model', 'cdrgam.cli')(
+        invalid_centering, 'invalid-centering.yml'
+    )
+    NA_character_
+}, error=function(error) conditionMessage(error))
+stopifnot(grepl(
+    'fit.center_predictors must be true or false', invalid_centering_error, fixed=TRUE
+))
 legacy_history_model <- model_definition
 legacy_history_model$fit$history_length <- 8L
 legacy_history_error <- tryCatch({
@@ -938,7 +1006,7 @@ result_guard_error <- tryCatch({
     NA_character_
 }, error=function(error) conditionMessage(error))
 stopifnot(grepl(
-    'cdrgam purge -P test-project -m decay-copy-b --yes',
+    'cdrgam purge -P test-project -m decay-copy-b',
     result_guard_error, fixed=TRUE
 ))
 stopifnot(all(file.exists(copied_model_paths)))
@@ -976,7 +1044,7 @@ internal('.cdrgam_cli_registry_attempt')(
 )
 stopifnot(!file.exists(orphan_output), dir.exists(orphan_attempt))
 cdrgam_cli_purge(
-    projects='test-project', models='decay-copy-a', yes=TRUE
+    projects='test-project', models='decay-copy-a', force=TRUE
 )
 orphan_count <- internal('.cdrgam_cli_registry_exec')(
     test_configuration,
@@ -987,9 +1055,39 @@ orphan_count <- internal('.cdrgam_cli_registry_exec')(
     query=TRUE
 )$n[[1L]]
 stopifnot(orphan_count == 0L, !dir.exists(orphan_attempt))
-cdrgam_cli_purge(
-    projects='test-project', models='decay-copy-b', yes=TRUE
+# A failed attempt that the registry no longer references must still be
+# removed with its model; otherwise the next run resumes it and its stale
+# optimizer checkpoints.
+unregistered_attempt <- file.path(
+    project, '.cdrgam', 'work', 'fit_decay-copy-b',
+    'unregistered-identity', 'attempt', '.cdrgam', 'autosimplify', 'steps',
+    '002'
 )
+dir.create(unregistered_attempt, recursive=TRUE)
+writeLines('stale', file.path(unregistered_attempt, 'optimizer-checkpoint.rds'))
+unrelated_attempt <- file.path(
+    project, '.cdrgam', 'work', 'fit_decay-copy-bb', 'identity', 'attempt'
+)
+dir.create(unrelated_attempt, recursive=TRUE)
+work_purge_preview <- cdrgam_cli_purge(
+    projects='test-project', models='decay-copy-b', force=FALSE
+)
+stopifnot(
+    any(vapply(work_purge_preview, same_path, logical(1), right=file.path(
+        project, '.cdrgam', 'work', 'fit_decay-copy-b'
+    ))),
+    !any(under_path(work_purge_preview, file.path(
+        project, '.cdrgam', 'work', 'fit_decay-copy-bb'
+    )))
+)
+cdrgam_cli_purge(
+    projects='test-project', models='decay-copy-b', force=TRUE
+)
+stopifnot(
+    !dir.exists(file.path(project, '.cdrgam', 'work', 'fit_decay-copy-b')),
+    dir.exists(unrelated_attempt)
+)
+unlink(dirname(dirname(unrelated_attempt)), recursive=TRUE)
 stopifnot(identical(cli_main(c(
     'def', 'rm', 'test-project', '--model', 'decay-copy-*'
 )), 0L))
@@ -1280,6 +1378,107 @@ stopifnot(internal('.cdrgam_cli_valid_derivation')(
     autosimplify_stage, autosimplify_result$derivation
 ))
 
+# Each finished autosimplification step is published provisionally; earlier
+# steps move to model_history/, and an unresolved chain still yields a model.
+local({
+    namespace <- asNamespace('cdrgam.cli')
+    replaced <- c(
+        '.cdrgam_cli_execute_fit_once',
+        '.cdrgam_cli_core_suggest_simplifications',
+        '.cdrgam_cli_select_simplification',
+        '.cdrgam_cli_render_step_booklet'
+    )
+    originals <- mget(replaced, envir=namespace)
+    on.exit(for (name in replaced) {
+        assignInNamespace(name, originals[[name]], 'cdrgam.cli')
+    }, add=TRUE)
+    item <- autosimplify_item
+    item$output <- file.path(temporary_parent, 'staged-publication', 'model')
+    stage <- file.path(temporary_parent, 'staged-publication', 'attempt-1')
+    dir.create(stage, recursive=TRUE)
+    seen <- list()
+    fits <- 0L
+    warning_diagnostics <- list(
+        outcome='warning', converged=TRUE,
+        reasons=list(list(code='indefinite_outer_hessian', message='Indefinite.'))
+    )
+    assignInNamespace('.cdrgam_cli_execute_fit_once', function(
+            item, stage, model=item$model, data=NULL, render_booklet=TRUE
+    ) {
+        fits <<- fits + 1L
+        seen[[fits]] <<- internal('.cdrgam_cli_read_manifest')(item$output)
+        writeLines(paste('fit', fits), file.path(stage, 'fit.rds'))
+        list(
+            diagnostics=warning_diagnostics,
+            formulas=list(effective=model$formula), .fit=fits
+        )
+    }, 'cdrgam.cli')
+    assignInNamespace(
+        '.cdrgam_cli_core_suggest_simplifications',
+        function(fit, ...) structure(list(fit=fit), class='fake_report'),
+        'cdrgam.cli'
+    )
+    assignInNamespace('.cdrgam_cli_select_simplification', function(report, policy) {
+        if (report$fit > 1L) return(NULL)
+        list(
+            candidate=list(term='x', action='drop_term'),
+            patch=internal('.cdrgam_cli_formula_patch')(
+                'formula', item$model$formula, 'response ~ 1', 'test'
+            )
+        )
+    }, 'cdrgam.cli')
+    assignInNamespace(
+        '.cdrgam_cli_render_step_booklet', function(fit, step) NULL, 'cdrgam.cli'
+    )
+    registerS3method('as.data.frame', 'fake_report', function(x, ...) {
+        data.frame(term=character())
+    })
+    registerS3method('print', 'fake_report', function(x, ...) invisible(x))
+    published <- 0L
+    result <- internal('.cdrgam_cli_execute_fit')(
+        item, stage, publish=function(build) {
+            published <<- published + 1L
+            internal('.cdrgam_cli_publish_directory')(
+                build, item$output, loaded_definitions, item
+            )
+        }
+    )
+    stopifnot(
+        identical(published, 2L),
+        is.null(seen[[1L]]),
+        identical(seen[[2L]]$status, 'provisional'),
+        identical(seen[[2L]]$autosimplify_step, 1L),
+        identical(seen[[2L]]$attempt, 'attempt-1'),
+        identical(result$derivation$outcome, 'unresolved'),
+        grepl('stopped after 2 fits: no allowed simplification',
+            result$derivation$message, fixed=TRUE),
+        grepl('model_history/', result$derivation$message, fixed=TRUE),
+        identical(readLines(file.path(stage, 'fit.rds')), 'fit 2'),
+        identical(readLines(file.path(
+            stage, 'model_history', '001', 'fit.rds'
+        )), 'fit 1'),
+        file.exists(file.path(stage, 'model_history', '001', 'derived-config.yml')),
+        !dir.exists(file.path(stage, '.cdrgam', 'autosimplify', 'steps')),
+        identical(
+            internal('.cdrgam_cli_publication_outputs')(stage)[
+                startsWith(internal('.cdrgam_cli_publication_outputs')(stage),
+                    'model_history')
+            ],
+            character()
+        ),
+        internal('.cdrgam_cli_valid_derivation')(stage, result$derivation)
+    )
+    unresolved_manifest <- list(
+        schema=1L, status='complete', kind='fit', identity=item$identity,
+        result=list(diagnostics=warning_diagnostics, derivation=result$derivation),
+        outputs=list()
+    )
+    internal('.cdrgam_cli_write_yaml')(
+        unresolved_manifest, file.path(stage, 'manifest.yml')
+    )
+    stopifnot(!internal('.cdrgam_cli_complete_artifact')(stage, item$identity))
+})
+
 prediction_plan <- cdrgam_cli_plan(
     projects='test-project', models='decay', predictions='val'
 )
@@ -1431,6 +1630,33 @@ stopifnot(
 )
 unlink(alternate_effect_path)
 
+# A reference subtracts the functional at reference axis values, and a test
+# request writes joint Wald tests beside the effect grid.
+contrast_definition <- effect_definition
+contrast_definition$query$reference <- list(x=list(at=list(summary='mean')))
+contrast_definition$query$test <- TRUE
+contrast_definition_path <- file.path(
+    project, 'definitions', 'visualizations', 'effect-contrast.yml'
+)
+yaml::write_yaml(contrast_definition, contrast_definition_path)
+contrast_plan <- cdrgam_cli_plan(
+    projects='test-project', visualizations='effect-contrast'
+)
+cdrgam_cli_run(projects='test-project', visualizations='effect-contrast')
+contrast_artifact <- contrast_plan$path[contrast_plan$kind == 'effect']
+stopifnot(!identical(contrast_artifact, effect_artifact))
+contrast_grid <- readRDS(file.path(contrast_artifact, 'effect-grid.rds'))
+contrast_tests <- utils::read.csv(file.path(contrast_artifact, 'effect-tests.csv'))
+stopifnot(
+    nrow(contrast_grid) == 31L,
+    'x_reference' %in% names(contrast_grid),
+    all(contrast_grid$x_reference < contrast_grid$x),
+    nrow(contrast_tests) >= 1L,
+    all(c('statistic', 'df', 'p_value', 'layer') %in% names(contrast_tests)),
+    all(contrast_tests$df >= 1L)
+)
+unlink(contrast_definition_path)
+
 surface_definition <- effect_definition
 surface_definition$query$axes$lag$n <- 17L
 surface_definition$query$axes$predictors <- list(
@@ -1557,6 +1783,10 @@ fit_manifest_path <- file.path(project, 'results', 'models', 'decay', 'manifest.
 fit_manifest <- yaml::read_yaml(fit_manifest_path)
 converged_manifest <- fit_manifest
 fit_manifest$result$diagnostics$converged <- FALSE
+# Cores that report `outcome` derive it from `converged`; keep them consistent.
+if (!is.null(fit_manifest$result$diagnostics$outcome)) {
+    fit_manifest$result$diagnostics$outcome <- 'nonconverged'
+}
 fit_manifest$result$diagnostics$message <- 'test convergence diagnostic'
 yaml::write_yaml(fit_manifest, fit_manifest_path)
 stopifnot(!internal('.cdrgam_cli_complete_artifact')(
@@ -1602,6 +1832,39 @@ stopifnot(
     retry_status$display_state[
         retry_status$kind == 'fit' & retry_status$name == 'decay'
     ] == 'Running'
+)
+running_logs <- cdrgam_cli_log(
+    'test-project', models='decay', running=TRUE, lines=5L
+)
+stopifnot(length(running_logs) == 1L)
+warning_manifest <- converged_manifest
+warning_manifest$result$diagnostics$outcome <- 'warning'
+warning_manifest$result$diagnostics$reasons <- list(list(
+    code='indefinite_outer_hessian',
+    message='test Hessian diagnostic'
+))
+yaml::write_yaml(warning_manifest, fit_manifest_path)
+internal('.cdrgam_cli_registry_state')(
+    seed_graph$definitions[['test-project']]$site, seed_item, 'complete'
+)
+warning_text <- NULL
+warning_status <- cdrgam_cli_status(
+    'test-project', pager=function(text) warning_text <<- text
+)
+stopifnot(
+    warning_status$display_state[
+        warning_status$kind == 'fit' & warning_status$name == 'decay'
+    ] == 'Warning',
+    grepl('Fits requiring review', warning_text, fixed=TRUE),
+    grepl('test Hessian diagnostic', warning_text, fixed=TRUE),
+    internal('.cdrgam_cli_complete_artifact')(
+        dirname(fit_manifest_path), warning_manifest$identity
+    ),
+    grepl(
+        'Fits requiring review',
+        internal('.cdrgam_cli_status_report')(warning_status, color=TRUE),
+        fixed=TRUE
+    )
 )
 yaml::write_yaml(converged_manifest, fit_manifest_path)
 lightweight_directory <- file.path(root, '.cdrgam', 'lightweight-artifact-test')
@@ -1679,7 +1942,7 @@ stopifnot(
 
 protected_code <- file.path(project, 'code', 'protected.R')
 writeLines('project source', protected_code)
-project_preview <- cdrgam_cli_purge(projects='test-project', yes=FALSE)
+project_preview <- cdrgam_cli_purge(projects='test-project', force=FALSE)
 stopifnot(
     !any(vapply(project_preview, same_path, logical(1), right=protected_code)),
     !any(under_path(project_preview, file.path(project, 'code'))),
@@ -1687,33 +1950,55 @@ stopifnot(
 )
 unlink(protected_code)
 
+purge_preview_text <- NULL
 preview <- cdrgam_cli_purge(
-    projects='test-project', models='decay', yes=FALSE
+    projects='test-project', models='decay', force=FALSE, confirm=FALSE,
+    pager=function(text) purge_preview_text <<- text
 )
-stopifnot(same_path(preview, file.path(project, 'results', 'models', 'decay')))
+preview_results <- preview[!under_path(preview, work_root)]
+stopifnot(
+    same_path(preview_results, file.path(project, 'results', 'models', 'decay')),
+    any(vapply(preview, same_path, logical(1), right=file.path(
+        work_root, 'fit_decay'
+    ))),
+    any(vapply(preview, same_path, logical(1), right=file.path(
+        work_root, 'prediction_decay_validation'
+    ))),
+    grepl('Selected generated artifacts:', purge_preview_text, fixed=TRUE),
+    grepl(file.path(project, 'results', 'models', 'decay'), purge_preview_text,
+        fixed=TRUE)
+)
 prediction_preview <- cdrgam_cli_purge(
-    projects='test-project', models='decay', predictions='val', yes=FALSE
+    projects='test-project', models='decay', predictions='val', force=FALSE
 )
 stopifnot(same_path(
-    prediction_preview,
+    prediction_preview[!under_path(prediction_preview, work_root)],
     file.path(project, 'results', 'models', 'decay', 'predictions', 'validation')
 ))
+stopifnot(
+    any(vapply(prediction_preview, same_path, logical(1), right=file.path(
+        work_root, 'prediction_decay_validation'
+    ))),
+    !any(vapply(prediction_preview, same_path, logical(1), right=file.path(
+        work_root, 'fit_decay'
+    )))
+)
 visualization_preview <- cdrgam_cli_purge(
-    projects='test-project', visualizations='diagnostics', yes=FALSE
+    projects='test-project', visualizations='diagnostics', force=FALSE
 )
 stopifnot(same_path(
-    visualization_preview,
+    visualization_preview[!under_path(visualization_preview, work_root)],
     file.path(project, 'results', 'models', 'decay', 'visualizations', 'diagnostics')
 ))
 comparison_preview <- cdrgam_cli_purge(
-    projects='test-project', comparisons='alternatives', yes=FALSE
+    projects='test-project', comparisons='alternatives', force=FALSE
 )
 stopifnot(same_path(
-    comparison_preview,
+    comparison_preview[!under_path(comparison_preview, work_root)],
     file.path(project, 'results', 'comparisons', 'alternatives')
 ))
 work_preview <- cdrgam_cli_purge(
-    projects='test-project', work=TRUE, yes=FALSE
+    projects='test-project', work=TRUE, force=FALSE
 )
 stopifnot(
     any(vapply(work_preview, same_path, logical(1), right=work_root)),
@@ -1846,7 +2131,21 @@ writeLines(c(
     'done',
     'IFS=$old_ifs'
 ), file.path(fake_bin, 'squeue'))
-Sys.chmod(file.path(fake_bin, c('sbatch', 'squeue')), mode='0755')
+fake_sacct_state <- file.path(temporary_parent, 'fake-sacct-state')
+writeLines(c(
+    '#!/bin/sh',
+    'job=',
+    'while [ "$#" -gt 0 ]; do',
+    '  if [ "$1" = "-j" ]; then shift; job=$1; fi',
+    '  shift',
+    'done',
+    paste0('state=$(cat ', shQuote(fake_sacct_state), ' 2>/dev/null || echo COMPLETED)'),
+    'old_ifs=$IFS',
+    'IFS=,',
+    'for candidate in $job; do printf "%s|%s\\n" "$candidate" "$state"; done',
+    'IFS=$old_ifs'
+), file.path(fake_bin, 'sacct'))
+Sys.chmod(file.path(fake_bin, c('sbatch', 'squeue', 'sacct')), mode='0755')
 old_path <- Sys.getenv('PATH')
 Sys.setenv(PATH=paste(fake_bin, old_path, sep=.Platform$path.sep))
 on.exit(Sys.setenv(PATH=old_path), add=TRUE)
@@ -1870,6 +2169,18 @@ if (!file.exists(file.path(prediction_path, 'manifest.yml'))) {
     ))
 }
 controller_path <- file.path(root, '.cdrgam', 'controller.yml')
+for (attempt in seq_len(240L)) {
+    endpoint <- internal('.cdrgam_cli_controller_read')(configuration)
+    if (is.null(endpoint)) break
+    stopped_scheduler <- tryCatch({
+        internal('.cdrgam_cli_controller_call')(
+            endpoint, list(type='shutdown', force=FALSE), retries=1L
+        )
+        TRUE
+    }, error=function(error) FALSE)
+    if (isTRUE(stopped_scheduler)) break
+    Sys.sleep(0.25)
+}
 for (attempt in seq_len(240L)) {
     if (!file.exists(controller_path)) break
     Sys.sleep(0.25)
@@ -1928,6 +2239,14 @@ worker_selector_error <- tryCatch(
     error=function(error) conditionMessage(error)
 )
 stopifnot(grepl('cannot be combined', worker_selector_error, fixed=TRUE))
+worker_running_error <- tryCatch(
+    cdrgam_cli_log(
+        worker=TRUE, running=TRUE, cdrgam_root=checkout,
+        pager=function(paths, labels) invisible(paths)
+    ),
+    error=function(error) conditionMessage(error)
+)
+stopifnot(grepl('cannot be combined', worker_running_error, fixed=TRUE))
 available_worker_keys <- getFromNamespace(
     '.cdrgam_cli_available_worker_resource_keys', 'cdrgam.cli'
 )(list(
@@ -1936,6 +2255,107 @@ available_worker_keys <- getFromNamespace(
     list(resource_key='other', status='stopping', current_work_key=NULL)
 ))
 stopifnot(identical(available_worker_keys, 'shared'))
+
+# Worker exits that cannot succeed on retry fail the item instead of returning
+# it to the queue indefinitely.
+exit_states <- internal('.cdrgam_cli_slurm_exit_states')(c('101', '102'))
+stopifnot(identical(unname(exit_states), c('COMPLETED', 'COMPLETED')))
+writeLines('CANCELLED by 1000', fake_sacct_state)
+stopifnot(identical(
+    unname(internal('.cdrgam_cli_slurm_exit_states')('101')), 'CANCELLED'
+))
+unlink(fake_sacct_state)
+# Start times survive YAML and still identify the live process; values that
+# earlier versions rounded to 8 significant digits remain recognized.
+process_started <- internal('.cdrgam_cli_process_started')()
+process_alive <- internal('.cdrgam_cli_process_alive')
+started_path <- tempfile(fileext='.yml')
+internal('.cdrgam_cli_write_yaml')(
+    list(process_started=process_started), started_path
+)
+started_back <- internal('.cdrgam_cli_read_yaml')(started_path)$process_started
+legacy_started <- signif(as.numeric(process_started), 8L)
+stopifnot(
+    is.character(process_started),
+    identical(started_back, process_started),
+    isTRUE(process_alive(Sys.getpid(), started_back)),
+    isTRUE(process_alive(Sys.getpid(), legacy_started)),
+    identical(process_alive(
+        Sys.getpid(), sprintf('%.3f', as.numeric(process_started) - 5)
+    ), FALSE),
+    identical(process_alive(Sys.getpid(), legacy_started - 1000), FALSE)
+)
+
+exit_failure <- internal('.cdrgam_cli_worker_exit_failure')
+stopifnot(
+    grepl('ran out of memory', exit_failure('7', 'OUT_OF_MEMORY', 1L)),
+    grepl('time limit', exit_failure('7', 'TIMEOUT', 1L)),
+    grepl('failed', exit_failure('7', 'FAILED', 1L)),
+    is.null(exit_failure('7', 'PREEMPTED', 1L)),
+    is.null(exit_failure('7', NA_character_, 2L)),
+    grepl('3 consecutive times', exit_failure('7', 'PREEMPTED', 3L)),
+    grepl('state unknown', exit_failure('7', NA_character_, 3L))
+)
+
+# A stopped item stays stopped. Workers that exit before claiming keep the
+# item queued, so the scheduler submits replacements until the stop arrives.
+worker_submissions <- function() {
+    if (!file.exists(fake_submission_log)) return(0L)
+    sum(readLines(fake_submission_log, warn=FALSE) ==
+        '#SBATCH --job-name=cdrgam-worker')
+}
+unlink(prediction_path, recursive=TRUE)
+writeLines('', fail_workers)
+before_stop <- worker_submissions()
+cdrgam_cli_run(projects='test-project', models='decay', predictions='val')
+for (attempt in seq_len(240L)) {
+    if (worker_submissions() >= before_stop + 2L) break
+    Sys.sleep(0.25)
+}
+stopifnot(worker_submissions() >= before_stop + 2L)
+stopped_keys <- cdrgam_cli_stop(
+    projects='test-project', models='decay', predictions='val'
+)
+stopifnot(length(stopped_keys) == 1L)
+Sys.sleep(1)
+after_stop <- worker_submissions()
+Sys.sleep(6)
+stopifnot(worker_submissions() <= after_stop + 1L)
+stopped_state <- internal('.cdrgam_cli_registry_states')(configuration, stopped_keys)
+stopifnot(identical(unname(stopped_state), 'stopped'))
+
+# A stop recorded only in the registry, as after a forced stop that the
+# scheduler did not receive, also holds.
+cdrgam_cli_run(projects='test-project', models='decay', predictions='val')
+for (attempt in seq_len(240L)) {
+    if (worker_submissions() >= after_stop + 3L) break
+    Sys.sleep(0.25)
+}
+internal('.cdrgam_cli_registry_state')(
+    configuration, list(key=stopped_keys), 'stopped'
+)
+Sys.sleep(3)
+registry_stop <- worker_submissions()
+Sys.sleep(6)
+stopifnot(worker_submissions() <= registry_stop + 1L)
+unlink(fail_workers)
+for (attempt in seq_len(240L)) {
+    endpoint <- internal('.cdrgam_cli_controller_read')(configuration)
+    if (is.null(endpoint)) break
+    stopped_scheduler <- tryCatch({
+        internal('.cdrgam_cli_controller_call')(
+            endpoint, list(type='shutdown', force=TRUE), retries=1L
+        )
+        TRUE
+    }, error=function(error) FALSE)
+    if (isTRUE(stopped_scheduler)) break
+    Sys.sleep(0.25)
+}
+for (attempt in seq_len(240L)) {
+    if (!file.exists(controller_path)) break
+    Sys.sleep(0.25)
+}
+stopifnot(!file.exists(controller_path))
 } else {
     message(
         'Skipping Slurm controller test because it is unavailable on this platform'
@@ -2011,7 +2431,10 @@ moved_definitions <- getFromNamespace(
 )('test-project', check_sources=FALSE, checkout=checkout)
 packed_project_path <- getFromNamespace(
     '.cdrgam_cli_pack_store_paths', 'cdrgam.cli'
-)(list(path=file.path(moved_project, 'results', 'models', 'decay')), moved_configuration)
+)(list(
+    path=file.path(moved_project, 'results', 'models', 'decay'),
+    formula='~s(subject, bs = "re") + irf(1)'
+), moved_configuration)
 renamed_project <- file.path(moved_root, 'projects', 'renamed-project')
 stopifnot(file.rename(moved_project, renamed_project))
 unpacked_project_path <- getFromNamespace(
@@ -2019,6 +2442,9 @@ unpacked_project_path <- getFromNamespace(
 )(packed_project_path, moved_configuration)$path
 stopifnot(same_path(
     unpacked_project_path, file.path(renamed_project, 'results', 'models', 'decay')
+))
+stopifnot(identical(
+    packed_project_path$formula, '~s(subject, bs = "re") + irf(1)'
 ))
 renamed_plan <- cdrgam_cli_plan(
     projects='renamed-project', models='decay', cdrgam_root=checkout

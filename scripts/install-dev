@@ -1,14 +1,7 @@
 #!/bin/sh
 set -eu
 
-if [ "${R_BIN+x}" = x ]; then
-    r_bin=$R_BIN
-elif command -v R >/dev/null 2>&1; then
-    r_bin=$(command -v R)
-else
-    echo "R was not found; activate its environment or set R_BIN" >&2
-    exit 1
-fi
+r_bin=$("$(dirname "$0")/r-bin")
 
 script_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 source_root=$(dirname "$script_directory")
@@ -46,12 +39,12 @@ fi
 source_stage=$(mktemp -d "$temporary_root/cdrgam-dev-source.XXXXXX")
 trap 'rm -rf "$source_stage"' EXIT HUP INT TERM
 mkdir -p "$source_stage/core/src" "$source_stage/cli"
-cp -a "$core_source/DESCRIPTION" "$core_source/LICENSE" \
+cp -R "$core_source/DESCRIPTION" "$core_source/LICENSE" \
     "$core_source/NAMESPACE" "$core_source/R" "$core_source/man" \
     "$source_stage/core/"
-cp -a "$core_source/src/Makevars" "$core_source/src/init.c" \
+cp -R "$core_source/src/Makevars" "$core_source/src/init.c" \
     "$core_source/src/schur.c" "$source_stage/core/src/"
-cp -a "$source_root/DESCRIPTION" "$source_root/LICENSE" \
+cp -R "$source_root/DESCRIPTION" "$source_root/LICENSE" \
     "$source_root/NAMESPACE" "$source_root/R" "$source_root/exec" \
     "$source_root/inst" "$source_root/man" "$source_stage/cli/"
 

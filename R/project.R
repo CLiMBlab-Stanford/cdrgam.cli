@@ -21,6 +21,61 @@ find_cdrgam_project <- function(project=NULL, cdrgam_root=NULL) {
     root
 }
 
+.cdrgam_cli_remove_project <- function(
+        project, force=FALSE, cdrgam_root=NULL, confirm=NULL, pager=NULL,
+        use_pager=TRUE
+) {
+    project <- .cdrgam_cli_name(project, 'project')
+    configuration <- .cdrgam_cli_site(cdrgam_root, create_root=TRUE)
+    root <- .cdrgam_cli_project_root(
+        project, configuration$cdrgam_root, must_work=TRUE
+    )
+    if (!dir.exists(root)) {
+        .cdrgam_cli_abort(paste0('Project does not exist: ', project))
+    }
+    keys <- .cdrgam_cli_registry_project_keys(configuration, project)
+    .cdrgam_cli_registry_assert_inactive(configuration, keys)
+    dependents <- .cdrgam_cli_registry_external_dependents(
+        configuration, keys, project
+    )
+    if (length(dependents)) {
+        .cdrgam_cli_abort(paste0(
+            'Cannot remove project ', sQuote(project),
+            ': work in another project depends on ', dependents[[1L]]
+        ))
+    }
+    preview <- paste0(paste(c(
+        'Project to remove:', paste0('  ', root),
+        'Registry workloads to remove:',
+        if (length(keys)) paste0('  ', keys) else '  (none)'
+    ), collapse='\n'), '\n')
+    proceed <- .cdrgam_cli_confirm_destructive(
+        preview, prompt='Remove this entire project? [y/N] ',
+        force=force, confirm=confirm, pager=pager, use_pager=use_pager,
+        cancel_message='Project removal cancelled'
+    )
+    if (!proceed) {
+        return(invisible(root))
+    }
+    # Make a live scheduler drop its in-memory graph before deleting the
+    # project. This prevents a queued worker from recreating project-private
+    # work after the filesystem removal.
+    endpoint <- .cdrgam_cli_controller_read(configuration)
+    if (!is.null(endpoint) && length(keys)) {
+        .cdrgam_cli_controller_call(
+            endpoint, list(type='forget', work_keys=keys), retries=2L
+        )
+    }
+    .cdrgam_cli_registry_assert_inactive(configuration, keys)
+    .cdrgam_cli_registry_forget(configuration, keys)
+    unlink(root, recursive=TRUE, force=FALSE)
+    if (dir.exists(root) || file.exists(root)) {
+        .cdrgam_cli_abort(paste0('Could not remove project ', sQuote(project)))
+    }
+    message('Removed project ', project, ' and ', length(keys), ' registry workload(s)')
+    invisible(root)
+}
+
 .cdrgam_cli_project_layout <- function(root) {
     file.path(root, c(
         'definitions',

@@ -1,3 +1,19 @@
+.cdrgam_cli_attempt_active <- function(metadata) {
+    if (is.null(metadata) || !identical(metadata$status, 'running')) {
+        return(FALSE)
+    }
+    # A PID is meaningful only on the host that created it.  Require its
+    # creation time as well: Slurm nodes routinely recycle PID values after a
+    # cancelled worker exits.
+    if (!.cdrgam_cli_same_host(.cdrgam_cli_null(metadata$host, '')) ||
+            is.null(metadata$process_started)) {
+        return(FALSE)
+    }
+    !identical(.cdrgam_cli_process_alive(
+        metadata$pid, metadata$process_started
+    ), FALSE)
+}
+
 .cdrgam_cli_prune_attempt_directories <- function(paths, keep=character()) {
     keep <- .cdrgam_cli_normalize_path(keep, must_work=FALSE)
     for (path in setdiff(paths, keep)) {
@@ -5,13 +21,7 @@
         metadata <- if (file.exists(metadata_path)) tryCatch(
             .cdrgam_cli_read_yaml(metadata_path), error=function(error) NULL
         ) else NULL
-        alive <- if (!is.null(metadata$pid)) {
-            .cdrgam_cli_process_alive(metadata$pid)
-        } else {
-            FALSE
-        }
-        active <- !is.null(metadata) && identical(metadata$status, 'running') &&
-            !identical(alive, FALSE)
+        active <- .cdrgam_cli_attempt_active(metadata)
         if (active) .cdrgam_cli_abort(paste0(
             'A superseded attempt still appears active: ', path
         ))
@@ -46,13 +56,7 @@
         if (!file.exists(metadata_path)) next
         metadata <- tryCatch(.cdrgam_cli_read_yaml(metadata_path), error=function(error) NULL)
         if (is.null(metadata) || !(metadata$status %in% c('running', 'failed'))) next
-        alive <- if (!is.null(metadata$pid)) {
-            .cdrgam_cli_process_alive(metadata$pid)
-        } else {
-            FALSE
-        }
-        active <- identical(metadata$status, 'running') &&
-            !identical(alive, FALSE)
+        active <- .cdrgam_cli_attempt_active(metadata)
         if (active) .cdrgam_cli_abort(paste0('Work item appears active: ', item$key))
         if (is.null(resume)) resume <- path
     }
@@ -73,7 +77,10 @@
         same_nonconverged_fit <- !is.null(manifest) &&
             identical(manifest$kind, 'fit') &&
             identical(manifest$identity, item$identity) &&
-            identical(manifest$result$diagnostics$converged, FALSE)
+            identical(
+                .cdrgam_cli_fit_outcome(manifest$result$diagnostics),
+                'nonconverged'
+            )
         if (same_nonconverged_fit && file.exists(source) &&
                 !file.copy(source, file.path(path, basename(source)))) {
             .cdrgam_cli_abort('Could not seed the fit attempt from its checkpoint')
@@ -164,6 +171,8 @@
     metadata <- list(
         schema=1L, status='running', project=item$project, kind=item$kind,
         name=item$name, identity=item$identity, key=item$key, pid=Sys.getpid(),
+        host=.cdrgam_cli_host_name(),
+        process_started=.cdrgam_cli_process_started(),
         started_at=started, resumed=isTRUE(attempt$resumed)
     )
     job_id <- Sys.getenv('SLURM_JOB_ID', '')
@@ -186,7 +195,9 @@
     result <- tryCatch(
         .cdrgam_cli_capture_conditions(switch(
             item$kind,
-            fit=.cdrgam_cli_execute_fit(item, stage),
+            fit=.cdrgam_cli_execute_fit(item, stage, publish=function(build) {
+                .cdrgam_cli_publish_directory(build, destination, definitions, item)
+            }),
             prediction=.cdrgam_cli_execute_prediction(item, stage),
             effect=.cdrgam_cli_execute_effect(item, stage),
             visualization=.cdrgam_cli_execute_visualization(item, stage),
@@ -204,19 +215,25 @@
             stop(error)
         }
     )
-    nonconverged <- identical(item$kind, 'fit') &&
-        identical(result$diagnostics$converged, FALSE)
-    metadata$status <- if (nonconverged) 'nonconverged' else 'complete'
+    fit_outcome <- if (identical(item$kind, 'fit')) {
+        .cdrgam_cli_fit_outcome(result$diagnostics)
+    } else NULL
+    nonconverged <- identical(fit_outcome, 'nonconverged')
+    unresolved <- !nonconverged &&
+        identical(result$derivation$outcome, 'unresolved')
+    run_status <- if (nonconverged) 'nonconverged' else if (unresolved) {
+        'unresolved'
+    } else 'complete'
+    metadata$status <- run_status
+    if (!is.null(fit_outcome)) metadata$model_outcome <- fit_outcome
     metadata$completed_at <- .cdrgam_cli_timestamp()
     .cdrgam_cli_write_yaml(metadata, file.path(stage, 'attempt.yml'))
     write(paste0(
         metadata$completed_at, ' ',
-        if (nonconverged) 'NONCONVERGED' else 'COMPLETE',
-        ' ', item$kind, ' ', item$name
+        toupper(run_status), ' ', item$kind, ' ', item$name,
+        if (unresolved) paste0(': ', result$derivation$message) else ''
     ), file=log_path, append=TRUE)
-    relative_outputs <- setdiff(list.files(
-        stage, recursive=TRUE, all.files=TRUE, include.dirs=FALSE, no..=TRUE
-    ), 'manifest.yml')
+    relative_outputs <- .cdrgam_cli_publication_outputs(stage)
     manifest <- list(
         schema=1L, status='complete', project=item$project, kind=item$kind,
         definition=item$name, identity=item$identity,
@@ -244,8 +261,10 @@
     published <- TRUE
     message('Published ', item$kind, ' artifact ', destination)
     invisible(list(
-        status=if (nonconverged) 'nonconverged' else 'completed',
+        status=if (run_status == 'complete') 'completed' else run_status,
         path=destination, item=item$key,
-        message=if (nonconverged) result$diagnostics$message else NULL
+        message=if (nonconverged) {
+            result$diagnostics$message
+        } else if (unresolved) result$derivation$message else NULL
     ))
 }

@@ -1,0 +1,40 @@
+#!/bin/sh
+set -eu
+
+repository=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+temporary_root=${TMPDIR:-/tmp}
+if [ ! -d "$temporary_root" ] || [ ! -w "$temporary_root" ]; then
+    temporary_root=/tmp
+fi
+temporary=$(mktemp -d "$temporary_root/cdrgam-cli-preflight.XXXXXX")
+trap 'rm -rf "$temporary"' EXIT HUP INT TERM
+
+git -C "$temporary" init -q
+git -C "$temporary" config user.email 'preflight@example.invalid'
+git -C "$temporary" config user.name 'Preflight test'
+mkdir -p "$temporary/R"
+touch "$temporary/README"
+git -C "$temporary" add README
+git -C "$temporary" commit -qm base
+base=$(git -C "$temporary" rev-parse HEAD)
+
+touch "$temporary/R/paths.R"
+git -C "$temporary" add R/paths.R
+git -C "$temporary" commit -qm paths
+paths=$(git -C "$temporary" rev-parse HEAD)
+plan=$("$repository/scripts/preflight-plan" "$base" "$paths" auto "$temporary")
+printf '%s\n' "$plan" | grep -qx 'run_matrix=true'
+printf '%s\n' "$plan" | grep -qx 'profile=portability'
+
+touch "$temporary/R/core-adapter.R"
+git -C "$temporary" add R/core-adapter.R
+git -C "$temporary" commit -qm runtime
+runtime=$(git -C "$temporary" rev-parse HEAD)
+plan=$("$repository/scripts/preflight-plan" "$base" "$runtime" auto "$temporary")
+printf '%s\n' "$plan" | grep -qx 'profile=full'
+
+plan=$("$repository/scripts/preflight-plan" "$runtime" "$runtime" auto "$temporary")
+printf '%s\n' "$plan" | grep -qx 'run_matrix=false'
+printf '%s\n' "$plan" | grep -qx 'profile=none'
+
+echo 'preflight policy: ok'

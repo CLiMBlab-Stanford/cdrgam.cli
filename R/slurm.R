@@ -42,15 +42,11 @@
     .cdrgam_cli_short_hash(resources, length=20L)
 }
 
-.cdrgam_cli_scheduler_resources <- function(configuration) {
-    list(
-        partition=configuration$slurm_partition,
-        account=configuration$slurm_account,
-        cpus=1L,
-        memory='1G',
-        time=configuration$slurm_time,
-        qos=configuration$slurm_qos
-    )
+.cdrgam_cli_scheduler_resources <- function(configuration, overrides=list()) {
+    resource <- .cdrgam_cli_resource_configuration(configuration, overrides)
+    resource$cpus <- 1L
+    resource$memory <- '1G'
+    resource
 }
 
 .cdrgam_cli_slurm_directives <- function(
@@ -109,11 +105,33 @@
     sub(';.*$', '', submitted)
 }
 
-.cdrgam_cli_scheduler_script <- function(configuration, script_path, log_path) {
-    resources <- .cdrgam_cli_scheduler_resources(configuration)
+.cdrgam_cli_scancel <- function(job_ids) {
+    job_ids <- unique(stats::na.omit(as.character(job_ids)))
+    if (!length(job_ids)) return(invisible(character()))
+    scancel <- getOption('cdrgam.cli.scancel', Sys.which('scancel'))
+    if (!length(scancel) || !nzchar(scancel)) {
+        .cdrgam_cli_abort('scancel was not found on PATH')
+    }
+    result <- .cdrgam_cli_process_run(scancel, c('--quiet', job_ids))
+    if (is.null(result) || !identical(result$status, 0L)) {
+        detail <- if (is.null(result)) '' else paste(
+            c(result$stdout, result$stderr), collapse='; '
+        )
+        .cdrgam_cli_abort(paste0(
+            'Could not cancel Slurm job', if (length(job_ids) > 1L) 's' else '',
+            ' ', paste(job_ids, collapse=', '),
+            if (nzchar(detail)) paste0(': ', detail) else ''
+        ))
+    }
+    invisible(job_ids)
+}
+
+.cdrgam_cli_scheduler_script <- function(
+        configuration, script_path, log_path, resources
+) {
     rscript <- file.path(R.home('bin'), 'Rscript')
     invocation <- paste(
-        'exec', shQuote(rscript),
+        shQuote(rscript),
         '-e', shQuote('cdrgam.cli::cli_main(commandArgs(trailingOnly=TRUE))'),
         '--args scheduler --root', shQuote(configuration$cdrgam_root)
     )
@@ -123,24 +141,45 @@
             'cdrgam-scheduler',
             .cdrgam_cli_store_relative(configuration, log_path), resources
         ),
+        '#SBATCH --requeue',
+        '#SBATCH --signal=B:USR1@300',
         '', 'set -eu', '',
         .cdrgam_cli_slurm_exports(configuration, resources$cpus),
-        '', invocation
+        '',
+        'scheduler_pid=',
+        'requeue_scheduler() {',
+        '    trap - USR1',
+        '    if scontrol requeue "$SLURM_JOB_ID"; then exit 0; fi',
+        '    trap requeue_scheduler USR1',
+        '}',
+        'trap requeue_scheduler USR1',
+        paste(invocation, '&'),
+        'scheduler_pid=$!',
+        'while true; do',
+        '    status=0',
+        '    wait "$scheduler_pid" || status=$?',
+        '    if ! kill -0 "$scheduler_pid" 2>/dev/null; then exit "$status"; fi',
+        'done'
     ), path, useBytes=TRUE))
     Sys.chmod(script_path, mode='0755')
     invisible(script_path)
 }
 
-.cdrgam_cli_submit_scheduler <- function(configuration) {
+.cdrgam_cli_submit_scheduler <- function(configuration, overrides=list()) {
     .cdrgam_cli_require_slurm_platform()
+    resources <- .cdrgam_cli_scheduler_resources(configuration, overrides)
     private <- file.path(configuration$cdrgam_root, '.cdrgam')
     lock_path <- file.path(private, 'locks', 'scheduler.lock')
     .cdrgam_cli_with_lock(lock_path, {
-        .cdrgam_cli_submit_scheduler_unlocked(configuration, private)
+        .cdrgam_cli_submit_scheduler_unlocked(
+            configuration, private, resources, overrides
+        )
     })
 }
 
-.cdrgam_cli_submit_scheduler_unlocked <- function(configuration, private) {
+.cdrgam_cli_submit_scheduler_unlocked <- function(
+        configuration, private, resources, overrides
+) {
     scheduler_directory <- file.path(private, 'scheduler')
     if (!dir.exists(scheduler_directory)) dir.create(scheduler_directory, recursive=TRUE)
     metadata_path <- file.path(private, 'scheduler.yml')
@@ -151,16 +190,25 @@
         terminal <- existing$state %in% c('stopped', 'submission-failed')
         active <- if (terminal) FALSE else
             .cdrgam_cli_slurm_active(existing$job_id)
-        if (!identical(active, FALSE)) return(existing)
+        if (!identical(active, FALSE)) {
+            if (length(overrides) && !identical(resources, existing$resources)) {
+                .cdrgam_cli_abort(paste(
+                    'A root scheduler is already active with different resources.',
+                    'Stop it before changing --partition or --scheduler-time.'
+                ))
+            }
+            return(existing)
+        }
     }
     scheduler_id <- .cdrgam_cli_random_id('scheduler')
     script_path <- file.path(scheduler_directory, paste0(scheduler_id, '.sh'))
     log_path <- file.path(scheduler_directory, paste0(scheduler_id, '-%j.log'))
-    .cdrgam_cli_scheduler_script(configuration, script_path, log_path)
+    .cdrgam_cli_scheduler_script(configuration, script_path, log_path, resources)
     metadata <- list(
         schema=1L, state='submitting', scheduler_id=scheduler_id,
         script=.cdrgam_cli_store_relative(configuration, script_path),
         log_path=.cdrgam_cli_store_relative(configuration, log_path),
+        resources=resources,
         submitted_at=.cdrgam_cli_timestamp()
     )
     .cdrgam_cli_write_yaml(metadata, metadata_path)
@@ -268,13 +316,29 @@
     endpoint <- list(
         host=controller_host, port=as.integer(controller_port), token=controller_token
     )
+    configuration <- .cdrgam_cli_site(create_root=TRUE)
+    controller_call <- function(message, handoff_timeout=300) {
+        started <- Sys.time()
+        repeat {
+            response <- tryCatch(
+                .cdrgam_cli_controller_call(endpoint, message, retries=2L),
+                error=function(error) error
+            )
+            if (!inherits(response, 'error')) return(response)
+            replacement <- .cdrgam_cli_controller_read(configuration)
+            if (!is.null(replacement)) endpoint <<- replacement
+            elapsed <- as.numeric(difftime(Sys.time(), started, units='secs'))
+            if (elapsed >= handoff_timeout) stop(response)
+            Sys.sleep(1)
+        }
+    }
     .cdrgam_cli_worker_event(
         worker_id, 'START', paste0('resource=', resource_key)
     )
     idle_started <- NULL
     idle_timeout <- 300
     repeat {
-        assignment <- .cdrgam_cli_controller_call(endpoint, list(
+        assignment <- controller_call(list(
             type='claim', worker_id=worker_id, resource_key=resource_key
         ))
         if (identical(assignment$action, 'stop')) break
@@ -300,7 +364,6 @@
             .cdrgam_cli_abort('Scheduler returned an invalid worker action')
         }
         idle_started <- NULL
-        configuration <- .cdrgam_cli_site(create_root=TRUE)
         submitted <- .cdrgam_cli_unpack_store_paths(
             readRDS(assignment$request_file), configuration
         )
@@ -310,22 +373,6 @@
             worker_id, 'CLAIM', paste0(item$kind, ' ', item$name)
         )
         definitions <- submitted$graph$definitions[[item$project]]
-        current <- .cdrgam_cli_execution_envelope(definitions)
-        expected <- submitted$execution
-        compatible <- identical(current$R, expected$R) &&
-            identical(current$cdrgam$code_md5, expected$cdrgam$code_md5) &&
-            identical(current$cdrgam_cli$code_md5, expected$cdrgam_cli$code_md5)
-        if (!compatible) {
-            message <- 'Worker execution environment differs from the submitted request'
-            .cdrgam_cli_worker_event(
-                worker_id, 'FAIL', paste0(item$kind, ' ', item$name, ': ', message)
-            )
-            .cdrgam_cli_controller_call(endpoint, list(
-                type='failed', worker_id=worker_id,
-                work_key=assignment$work_key, error=message
-            ))
-            next
-        }
         run_result <- NULL
         run_error <- tryCatch({
             run_result <- .cdrgam_cli_run_item(
@@ -340,7 +387,7 @@
                 )
             )
             reported <- tryCatch({
-                .cdrgam_cli_controller_call(endpoint, list(
+                controller_call(list(
                     type='failed', worker_id=worker_id,
                     work_key=assignment$work_key, error=conditionMessage(run_error)
                 ))
@@ -349,23 +396,33 @@
             if (!reported) stop(run_error)
             next
         }
-        if (identical(run_result$status, 'nonconverged')) {
+        if (run_result$status %in% c('nonconverged', 'unresolved')) {
             message <- .cdrgam_cli_null(
                 run_result$message, 'Fit did not converge'
             )
             .cdrgam_cli_worker_event(
-                worker_id, 'NONCONVERGED', paste0(
+                worker_id, toupper(run_result$status), paste0(
                     item$kind, ' ', item$name, ': ', message
                 )
             )
-            .cdrgam_cli_controller_call(endpoint, list(
-                type='failed', worker_id=worker_id,
-                work_key=assignment$work_key, error=message
-            ))
+            reported <- tryCatch({
+                controller_call(list(
+                    type='failed', worker_id=worker_id,
+                    work_key=assignment$work_key, error=message
+                ))
+                TRUE
+            }, error=function(error) {
+                warning(
+                    'The fit was published, but the scheduler did not ',
+                    'acknowledge its outcome; stopping this worker', call.=FALSE
+                )
+                FALSE
+            })
+            if (!reported) break
             next
         }
         reported <- tryCatch({
-            .cdrgam_cli_controller_call(endpoint, list(
+            controller_call(list(
                 type='complete', worker_id=worker_id,
                 work_key=assignment$work_key
             ))
@@ -382,9 +439,9 @@
         )
         if (!reported) break
     }
-    try(.cdrgam_cli_controller_call(endpoint, list(
+    try(controller_call(list(
         type='stopped', worker_id=worker_id
-    )), silent=TRUE)
+    ), handoff_timeout=5), silent=TRUE)
     .cdrgam_cli_worker_event(worker_id, 'STOP')
     invisible(TRUE)
 }

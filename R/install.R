@@ -9,7 +9,7 @@
 #'   the installed `cdrgam.cli` package. This prevents packages from another R
 #'   installation's user library from shadowing its dependencies. The default
 #'   root is `tools::R_user_dir("cdrgam.cli", "data")`; change it later with
-#'   `cdrgam def edit site`.
+#'   `cdrgam def edit -P site`.
 #' @return The normalized launcher path, invisibly.
 #' @export
 install_cli <- function(

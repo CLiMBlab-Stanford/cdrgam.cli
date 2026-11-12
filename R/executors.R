@@ -166,6 +166,33 @@
     })
 }
 
+.cdrgam_cli_needs_simplification_report <- function(diagnostics) {
+    .cdrgam_cli_fit_outcome(diagnostics) %in% c('warning', 'nonconverged')
+}
+
+.cdrgam_cli_write_simplification_report <- function(
+        report, diagnostics, directory
+) {
+    candidates <- .cdrgam_cli_report_records(report)
+    yaml_path <- file.path(directory, 'simplification-report.yml')
+    text_path <- file.path(directory, 'simplification-report.txt')
+    .cdrgam_cli_write_yaml(
+        list(
+            outcome=.cdrgam_cli_fit_outcome(diagnostics),
+            converged=report$converged,
+            gradient_tolerance=report$gradient_tolerance,
+            conservatism=report$conservatism,
+            candidates=candidates
+        ),
+        yaml_path
+    )
+    writeLines(capture.output(print(report)), text_path, useBytes=TRUE)
+    list(
+        yaml=basename(yaml_path), text=basename(text_path),
+        candidates=length(candidates)
+    )
+}
+
 .cdrgam_cli_select_simplification <- function(report, policy) {
     candidates <- as.data.frame(report)
     eligible <- which(
@@ -177,23 +204,135 @@
     list(candidate=as.list(candidate), patch=report$patches[[candidate$patch_id]])
 }
 
-.cdrgam_cli_move_step_outputs <- function(step, stage) {
-    paths <- list.files(step, all.files=TRUE, no..=TRUE, full.names=TRUE)
-    paths <- paths[!(basename(paths) %in% c(
-        'input-config.yml', 'derived-config.yml', 'simplification-report.yml'
-    ))]
-    for (path in paths) {
-        .cdrgam_cli_replace_path(path, file.path(stage, basename(path)))
-    }
-    unlink(step, recursive=TRUE, force=TRUE)
-    invisible(stage)
+.cdrgam_cli_fit_history <- 'model_history'
+
+.cdrgam_cli_history_label <- function(step_index) sprintf('%03d', as.integer(step_index))
+
+.cdrgam_cli_read_manifest <- function(directory) {
+    path <- .cdrgam_cli_manifest_path(directory)
+    if (!file.exists(path)) return(NULL)
+    tryCatch(.cdrgam_cli_read_yaml(path), error=function(error) NULL)
 }
 
-.cdrgam_cli_execute_fit <- function(item, stage) {
+.cdrgam_cli_provisional_fit <- function(item, stage) {
+    manifest <- .cdrgam_cli_read_manifest(item$output)
+    if (is.null(manifest) || !identical(manifest$status, 'provisional') ||
+            !identical(manifest$identity, item$identity) ||
+            !identical(manifest$attempt, basename(stage))) return(NULL)
+    manifest
+}
+
+.cdrgam_cli_move_entries <- function(source, target, exclude=character()) {
+    entries <- list.files(source, all.files=TRUE, no..=TRUE)
+    entries <- setdiff(entries, exclude)
+    if (length(entries) && !dir.exists(target) &&
+            !dir.create(target, recursive=TRUE)) {
+        .cdrgam_cli_abort(paste0('Could not create ', sQuote(target)))
+    }
+    for (entry in entries) {
+        .cdrgam_cli_replace_path(file.path(source, entry), file.path(target, entry))
+    }
+    invisible(entries)
+}
+
+.cdrgam_cli_publication_outputs <- function(directory) {
+    paths <- setdiff(list.files(
+        directory, recursive=TRUE, all.files=TRUE, include.dirs=FALSE, no..=TRUE
+    ), 'manifest.yml')
+    paths[!startsWith(paths, paste0(.cdrgam_cli_fit_history, '/'))]
+}
+
+# Publishes one finished autosimplification step as the provisional model.
+# The previously published step of the same attempt moves to
+# model_history/<step>; steps at or after this one are discarded because a
+# resumed attempt refits them.
+.cdrgam_cli_publish_fit_step <- function(
+        item, stage, step, step_index, diagnostics, publish
+) {
+    build <- file.path(stage, '.cdrgam', 'publication')
+    unlink(build, recursive=TRUE, force=TRUE)
+    if (!dir.create(build, recursive=TRUE)) {
+        .cdrgam_cli_abort('Could not stage the provisional fit publication')
+    }
+    destination <- item$output
+    previous <- .cdrgam_cli_provisional_fit(item, stage)
+    if (!is.null(previous)) {
+        history <- file.path(destination, .cdrgam_cli_fit_history)
+        for (entry in list.files(history)) {
+            index <- suppressWarnings(as.integer(entry))
+            if (!is.na(index) && index < step_index) {
+                target <- file.path(build, .cdrgam_cli_fit_history)
+                if (!dir.exists(target)) dir.create(target)
+                .cdrgam_cli_replace_path(
+                    file.path(history, entry), file.path(target, entry)
+                )
+            }
+        }
+        previous_step <- as.integer(previous$autosimplify_step)
+        if (previous_step < step_index) {
+            .cdrgam_cli_move_entries(
+                destination,
+                file.path(
+                    build, .cdrgam_cli_fit_history,
+                    .cdrgam_cli_history_label(previous_step)
+                ),
+                exclude=c('manifest.yml', .cdrgam_cli_fit_history)
+            )
+        }
+    }
+    .cdrgam_cli_move_entries(step, build)
+    manifest <- list(
+        schema=1L, status='provisional', project=item$project, kind=item$kind,
+        definition=item$name, identity=item$identity, attempt=basename(stage),
+        autosimplify_step=as.integer(step_index),
+        published_at=.cdrgam_cli_timestamp(),
+        result=list(diagnostics=diagnostics),
+        outputs=.cdrgam_cli_output_manifest(
+            build, .cdrgam_cli_publication_outputs(build)
+        )
+    )
+    .cdrgam_cli_write_yaml(manifest, .cdrgam_cli_manifest_path(build))
+    publish(build)
+    message(
+        'Published autosimplification step ', step_index,
+        ' as the provisional model ', destination
+    )
+    invisible(destination)
+}
+
+# Moves the provisional publication of this attempt back into the stage so the
+# final publication replaces it with its history intact.
+.cdrgam_cli_collect_fit_publication <- function(item, stage) {
+    if (is.null(.cdrgam_cli_provisional_fit(item, stage))) return(invisible(FALSE))
+    .cdrgam_cli_move_entries(item$output, stage, exclude='manifest.yml')
+    invisible(TRUE)
+}
+
+.cdrgam_cli_render_step_booklet <- function(fit, step) {
+    tryCatch(
+        .cdrgam_cli_core_default_booklet(fit, file.path(step, 'booklet.pdf')),
+        error=function(error) {
+            warning(
+                'Could not generate the default plot booklet: ',
+                conditionMessage(error), call.=FALSE
+            )
+            NULL
+        }
+    )
+}
+
+.cdrgam_cli_execute_fit <- function(item, stage, publish=NULL) {
     policy <- item$model$autosimplify
     if (is.null(policy)) policy <- list(enabled=FALSE)
     if (!isTRUE(policy$enabled)) {
         result <- .cdrgam_cli_execute_fit_once(item, stage)
+        if (.cdrgam_cli_needs_simplification_report(result$diagnostics)) {
+            report <- .cdrgam_cli_core_suggest_simplifications(result$.fit)
+            result$simplification_report <-
+                .cdrgam_cli_write_simplification_report(
+                    report, result$diagnostics, stage
+                )
+        }
         result$.fit <- NULL
         return(result)
     }
@@ -214,8 +353,10 @@
         steps=list()
     )
     final <- NULL
+    stop_reason <- NULL
     for (step_index in seq_len(policy$max_steps)) {
-        step <- file.path(steps, sprintf('%03d', step_index))
+        step <- file.path(steps, .cdrgam_cli_history_label(step_index))
+        unlink(step, recursive=TRUE, force=TRUE)
         if (!dir.create(step, recursive=TRUE, showWarnings=FALSE) &&
                 !dir.exists(step)) {
             .cdrgam_cli_abort('Could not create an autosimplification step')
@@ -242,80 +383,101 @@
             diagnostics=result$diagnostics,
             preparation_patches=materialization
         )
-        if (isTRUE(result$diagnostics$converged)) {
-            record$result_contract <- .cdrgam_cli_model_contract(model)
-            chain$steps[[length(chain$steps) + 1L]] <- record
-            final <- list(result=result, fit=fit, step=step)
-            break
+        selected <- NULL
+        if (.cdrgam_cli_needs_simplification_report(result$diagnostics)) {
+            report <- .cdrgam_cli_core_suggest_simplifications(
+                fit, max_candidates=Inf, conservatism=policy$conservatism
+            )
+            record$simplification_report <-
+                .cdrgam_cli_write_simplification_report(
+                    report, result$diagnostics, step
+                )
+            selected <- .cdrgam_cli_select_simplification(report, policy)
+            if (is.null(selected)) {
+                stop_reason <- paste(
+                    'no allowed simplification addresses the remaining fit',
+                    'diagnostics'
+                )
+            } else if (step_index >= policy$max_steps) {
+                selected <- NULL
+                stop_reason <- paste0(
+                    'the step limit (max_steps: ', policy$max_steps,
+                    ') was reached'
+                )
+            }
         }
-        report <- .cdrgam_cli_core_suggest_simplifications(
-            fit, max_candidates=Inf, conservatism=policy$conservatism
-        )
-        .cdrgam_cli_write_yaml(
-            list(
-                converged=report$converged,
-                gradient_tolerance=report$gradient_tolerance,
-                conservatism=report$conservatism,
-                candidates=.cdrgam_cli_report_records(report)
-            ),
-            file.path(step, 'simplification-report.yml')
-        )
-        selected <- if (step_index < policy$max_steps) {
-            .cdrgam_cli_select_simplification(report, policy)
-        } else NULL
-        if (is.null(selected)) {
-            record$result_contract <- .cdrgam_cli_model_contract(model)
-            chain$steps[[length(chain$steps) + 1L]] <- record
-            break
+        if (!is.null(selected)) {
+            patch <- selected$patch
+            patch$source <- 'fit diagnostics'
+            model <- .cdrgam_cli_apply_formula_patch(model, patch)
+            record$selection <- selected$candidate
+            record$patch <- patch
+            .cdrgam_cli_write_yaml(
+                .cdrgam_cli_model_definition(model),
+                file.path(step, 'derived-config.yml')
+            )
         }
-        patch <- selected$patch
-        patch$source <- 'fit diagnostics'
-        model <- .cdrgam_cli_apply_formula_patch(model, patch)
-        record$selection <- selected$candidate
-        record$patch <- patch
         record$result_contract <- .cdrgam_cli_model_contract(model)
         chain$steps[[length(chain$steps) + 1L]] <- record
-        .cdrgam_cli_write_yaml(
-            .cdrgam_cli_model_definition(model), file.path(step, 'derived-config.yml')
-        )
+        last <- is.null(selected)
+        if (last) {
+            final <- list(
+                result=result,
+                booklet=.cdrgam_cli_render_step_booklet(fit, step)
+            )
+        }
+        if (is.function(publish)) {
+            .cdrgam_cli_publish_fit_step(
+                item, stage, step, step_index, result$diagnostics, publish
+            )
+        }
+        if (last) break
         message(
             'Selected ', selected$candidate$term, ' (',
             selected$candidate$action, '); refitting from a fresh optimizer state'
         )
     }
     chain$final_contract <- .cdrgam_cli_model_contract(model)
+    if (!is.null(stop_reason)) chain$stop_reason <- stop_reason
     .cdrgam_cli_write_yaml(chain, file.path(private, 'chain.yml'))
+    if (is.function(publish)) {
+        .cdrgam_cli_collect_fit_publication(item, stage)
+    } else {
+        for (index in seq_len(length(chain$steps) - 1L)) {
+            label <- .cdrgam_cli_history_label(index)
+            .cdrgam_cli_move_entries(
+                file.path(steps, label),
+                file.path(stage, .cdrgam_cli_fit_history, label)
+            )
+        }
+        .cdrgam_cli_move_entries(step, stage)
+    }
+    unlink(steps, recursive=TRUE, force=TRUE)
     .cdrgam_cli_write_yaml(
         .cdrgam_cli_model_definition(model), file.path(stage, 'derived-config.yml')
     )
-    if (is.null(final)) {
-        .cdrgam_cli_abort(paste0(
-            'Autosimplification did not produce a converged model after ',
-            length(chain$steps), ' fit attempts; archived attempts remain in ',
-            private
-        ))
-    }
-    final$result$booklet <- tryCatch(
-        .cdrgam_cli_core_default_booklet(
-            final$fit, file.path(final$step, 'booklet.pdf')
-        ),
-        error=function(error) {
-            warning(
-                'Could not generate the default plot booklet: ',
-                conditionMessage(error), call.=FALSE
-            )
-            NULL
-        }
-    )
-    final$result$derivation <- list(
+    result <- final$result
+    result$booklet <- final$booklet
+    result$derivation <- list(
         intent_contract=intent_contract,
         final_contract=chain$final_contract,
         steps=length(chain$steps),
         chain=file.path('.cdrgam', 'autosimplify', 'chain.yml'),
-        derived_config='derived-config.yml'
+        derived_config='derived-config.yml',
+        outcome=if (is.null(stop_reason)) 'resolved' else 'unresolved'
     )
-    .cdrgam_cli_move_step_outputs(final$step, stage)
-    final$result
+    if (!is.null(stop_reason)) {
+        result$derivation$message <- paste0(
+            'Autosimplification stopped after ', length(chain$steps),
+            if (length(chain$steps) == 1L) ' fit' else ' fits', ': ',
+            stop_reason, '. The last fit is published with its warnings',
+            if (length(chain$steps) > 1L) {
+                paste0('; earlier fits are in ', .cdrgam_cli_fit_history, '/')
+            } else '',
+            '.'
+        )
+    }
+    result
 }
 
 .cdrgam_cli_execute_prediction <- function(item, stage) {

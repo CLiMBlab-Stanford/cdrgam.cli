@@ -272,7 +272,7 @@
 
 .cdrgam_cli_fit_keys <- c(
     'family', 'link', 'method', 'backend', 'engine', 'history', 'chunk_size',
-    'rescale_predictors', 'sparse_control', 'rank_action', 'rank_tol',
+    'rescale_predictors', 'center_predictors', 'sparse_control', 'rank_action', 'rank_tol',
     'rank_penalty', 'drop.unused.levels'
 )
 
@@ -460,13 +460,14 @@
             !(value$fit$backend %in% c('mgcv', 'block', 'sparse'))) {
         .cdrgam_cli_abort(paste0(path, ': fit.backend must be mgcv, block, or sparse'))
     }
-    if (!is.null(value$fit$drop.unused.levels) &&
-            (length(value$fit$drop.unused.levels) != 1L ||
-                !is.logical(value$fit$drop.unused.levels) ||
-                is.na(value$fit$drop.unused.levels))) {
-        .cdrgam_cli_abort(paste0(
-            path, ': fit.drop.unused.levels must be true or false'
-        ))
+    for (field in c('drop.unused.levels', 'center_predictors')) {
+        setting <- value$fit[[field, exact=TRUE]]
+        if (!is.null(setting) && (length(setting) != 1L ||
+                !is.logical(setting) || is.na(setting))) {
+            .cdrgam_cli_abort(paste0(
+                path, ': fit.', field, ' must be true or false'
+            ))
+        }
     }
     if (!is.null(value$fit$link) && is.null(value$fit$family)) {
         .cdrgam_cli_abort(paste0(
@@ -596,7 +597,7 @@
                 )
                 layer$id <- .cdrgam_cli_name(layer$id, paste0(field, '.id'))
                 if (!is.null(layer$composition)) layer$composition <- match.arg(
-                    layer$composition, c('term', 'deviation', 'total')
+                    layer$composition, c('term', 'total')
                 )
                 if (!is.null(layer$grouping)) layer$grouping <- match.arg(
                     layer$grouping, c('population', 'deviation', 'conditional')
@@ -638,9 +639,25 @@
     value
 }
 
+.cdrgam_cli_restore_yaml_keys <- function(value, aliases, field) {
+    if (!is.list(value) || is.null(names(value))) return(value)
+    for (parsed in intersect(names(aliases), names(value))) {
+        canonical <- aliases[[parsed]]
+        if (canonical %in% names(value)) {
+            .cdrgam_cli_abort(paste0(
+                field, ' defines ', canonical,
+                ' twice; quote the key as "', canonical, '" in YAML'
+            ))
+        }
+        names(value)[names(value) == parsed] <- canonical
+    }
+    value
+}
+
 .cdrgam_cli_validate_axis_request <- function(value, field) {
     if (is.numeric(value)) return(as.numeric(value))
     if (!is.list(value)) .cdrgam_cli_abort(paste0(field, ' must be numeric or a mapping'))
+    value <- .cdrgam_cli_restore_yaml_keys(value, c('FALSE'='n'), field)
     .cdrgam_cli_check_keys(value, c('at', 'values', 'quantiles', 'grid', 'n'), field)
     modes <- intersect(c('at', 'values', 'quantiles', 'grid'), names(value))
     if (length(modes) != 1L) .cdrgam_cli_abort(paste0(
@@ -686,9 +703,13 @@
 
 .cdrgam_cli_validate_effect_query <- function(value, field) {
     if (!is.list(value)) .cdrgam_cli_abort(paste0(field, ' must be a mapping'))
+    value <- .cdrgam_cli_restore_yaml_keys(value, c('FALSE'='n'), field)
     .cdrgam_cli_check_keys(
         value,
-        c('terms', 'composition', 'grouping', 'groups', 'axes', 'uncertainty', 'n'),
+        c(
+            'terms', 'composition', 'grouping', 'groups', 'axes', 'reference',
+            'test', 'uncertainty', 'n'
+        ),
         field
     )
     if (!is.null(value$terms)) {
@@ -715,7 +736,7 @@
         } else .cdrgam_cli_abort(paste0(field, '.terms must be labels or a mapping'))
     }
     value$composition <- match.arg(
-        .cdrgam_cli_null(value$composition, 'term'), c('term', 'deviation', 'total')
+        .cdrgam_cli_null(value$composition, 'term'), c('term', 'total')
     )
     value$grouping <- match.arg(
         .cdrgam_cli_null(value$grouping, 'population'),
@@ -743,6 +764,37 @@
                 paste0(field, '.axes.predictors.', name)
             )
         }
+    }
+    if (!is.null(value$reference)) {
+        if (!is.list(value$reference) || !length(value$reference) ||
+                is.null(names(value$reference)) || any(!nzchar(names(value$reference))) ||
+                anyDuplicated(names(value$reference))) {
+            .cdrgam_cli_abort(paste0(field, '.reference must be a nonempty named mapping'))
+        }
+        for (name in names(value$reference)) {
+            if (identical(value$reference[[name]], 'default')) {
+                if (name %in% c('lag', 'time')) .cdrgam_cli_abort(paste0(
+                    field, '.reference.', name, ' has no model default; give a value'
+                ))
+                next
+            }
+            request <- .cdrgam_cli_validate_axis_request(
+                value$reference[[name]], paste0(field, '.reference.', name)
+            )
+            single <- (is.numeric(request) && length(request) == 1L) ||
+                (is.list(request) && !is.null(request$at) &&
+                 (is.list(request$at) || length(request$at) == 1L)) ||
+                (is.list(request) && length(request$values) == 1L) ||
+                (is.list(request) && length(request$quantiles) == 1L)
+            if (!single) .cdrgam_cli_abort(paste0(
+                field, '.reference.', name, ' must resolve to one value'
+            ))
+            value$reference[[name]] <- request
+        }
+    }
+    if (!is.null(value$test) && (!is.logical(value$test) ||
+            length(value$test) != 1L || is.na(value$test))) {
+        .cdrgam_cli_abort(paste0(field, '.test must be true or false'))
     }
     if (is.null(value$uncertainty)) value$uncertainty <- list()
     .cdrgam_cli_check_keys(
@@ -787,6 +839,9 @@
     if (!is.list(value$mappings) || is.null(names(value$mappings))) {
         .cdrgam_cli_abort(paste0(field, '.mappings must be a named mapping'))
     }
+    value$mappings <- .cdrgam_cli_restore_yaml_keys(
+        value$mappings, c('TRUE'='y'), paste0(field, '.mappings')
+    )
     .cdrgam_cli_check_keys(
         value$mappings, c('x', 'y', 'color', 'fill', 'linetype', 'group', 'facet'),
         paste0(field, '.mappings'), c('x')

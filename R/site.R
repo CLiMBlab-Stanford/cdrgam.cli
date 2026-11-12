@@ -33,7 +33,7 @@
         } else {
             .cdrgam_cli_abort(paste0(
                 'No configured CDR-GAM root was selected; run install_cli(), ',
-                'cdrgam def edit site, or set CDRGAM_ROOT'
+                'cdrgam def edit -P site, or set CDRGAM_ROOT'
             ))
         }
     }

@@ -14,11 +14,39 @@ Use the narrowest applicable test scope while developing:
 ./scripts/test registry
 ./scripts/test identities
 ./scripts/test integration
+./scripts/test portability
 ```
+
+Development scripts resolve R through the active Conda environment first. If
+none is active, they use the `cdrgam` Conda environment when it exists. Set
+`CDRGAM_CONDA_ENV` to choose a different environment or `R_BIN` to select an
+exact executable. Local scripts otherwise fail rather than silently choosing
+a system R; `CDRGAM_ALLOW_SYSTEM_R=1` is an explicit override. Hosted checks
+continue to use their provisioned R.
 
 `./scripts/test all` runs every scope. Each invocation installs the current
 CLI source into a temporary library. The integration scope covers the complete
 project lifecycle and is reserved for changes that cross component boundaries.
+The portability scope also checks the cross-platform preflight selection
+policy and is appropriate after changes to paths, launchers, process handling,
+or scheduler integration.
+
+Development branches are not release-gated. Before opening a release pull
+request, run the manual cross-platform preflight when changes may affect paths,
+file I/O, launchers, process handling, scheduler integration, or runtime
+configuration:
+
+```sh
+gh workflow run cross-platform-preflight.yaml --ref dev -f scope=auto
+gh run watch
+```
+
+The preflight compares the selected commit with the newest successful
+automatic or full preflight ancestor on that branch. If no such run exists, it
+uses the merge base with `main`. It runs the Windows, macOS, and Linux
+portability profile only when the cumulative un-preflighted changes match the
+policy. Use `scope=full` to force complete package checks. A narrow manual
+scope does not advance the automatic baseline.
 
 Keep calls to `cdrgam` and knowledge of fitted-object representation in
 `R/core-adapter.R`. Keep SQLite access in `R/registry.R`. The architecture test
@@ -34,7 +62,7 @@ Run the repository's correctness-focused R lint profile after installing the
 package and its dependencies:
 
 ```sh
-Rscript -e 'lintr::lint_package(".")'
+"$(./scripts/r-bin)" -e 'lintr::lint_package(".")'
 ```
 
 The profile preserves the established formatting conventions. New lint rules

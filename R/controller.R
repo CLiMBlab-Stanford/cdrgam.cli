@@ -365,6 +365,7 @@
         failed <<- unique(c(failed, key))
         .cdrgam_cli_registry_state(configuration, items[[key]], 'failed')
         .cdrgam_cli_registry_attempt_state(configuration, items[[key]], 'failed', error)
+        .cdrgam_cli_registry_record_failure(configuration, items[[key]], error)
         invisible(TRUE)
     }
 

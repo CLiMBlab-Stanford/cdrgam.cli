@@ -689,6 +689,24 @@
     invisible(state)
 }
 
+# Records a failure on the work item's most recent attempt even when that
+# attempt is no longer active, so status reports the current reason rather
+# than an earlier attempt's error.
+.cdrgam_cli_registry_record_failure <- function(configuration, item, error) {
+    connection <- .cdrgam_cli_registry_connect(configuration)
+    on.exit(DBI::dbDisconnect(connection), add=TRUE)
+    DBI::dbExecute(connection, paste(
+        'UPDATE attempts SET state=?, completed_at=?, error=?',
+        'WHERE attempt_id=(SELECT attempt_id FROM attempts WHERE work_key=?',
+        "ORDER BY COALESCE(started_at,completed_at,'') DESC, attempt_id DESC",
+        'LIMIT 1)'
+    ), params=list(
+        'failed', .cdrgam_cli_timestamp(),
+        .cdrgam_cli_null(error, NA_character_), item$key
+    ))
+    invisible(TRUE)
+}
+
 .cdrgam_cli_registry_worker <- function(configuration, worker) {
     .cdrgam_cli_registry_initialize(configuration)
     .cdrgam_cli_registry_exec(configuration, paste0(

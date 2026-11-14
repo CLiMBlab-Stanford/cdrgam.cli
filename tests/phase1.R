@@ -271,6 +271,30 @@ stopifnot(
         process_started=internal('.cdrgam_cli_process_started')()
     ))
 )
+# An attempt whose Slurm job has ended is inactive even if its recorded PID is
+# alive, as after a worker killed for exceeding its memory request. When
+# Slurm cannot answer, the process check decides.
+if (.Platform$OS.type != 'windows') local({
+    live_attempt <- list(
+        status='running', host=internal('.cdrgam_cli_host_name')(),
+        pid=Sys.getpid(), process_started=internal('.cdrgam_cli_process_started')(),
+        job_id='424242'
+    )
+    fake_squeue <- function(body) {
+        path <- tempfile('squeue-')
+        writeLines(c('#!/bin/sh', body), path)
+        Sys.chmod(path, mode='0755')
+        path
+    }
+    previous <- options(cdrgam.cli.squeue=fake_squeue('exit 0'))
+    on.exit(options(previous), add=TRUE)
+    ended <- internal('.cdrgam_cli_attempt_active')(live_attempt)
+    options(cdrgam.cli.squeue=fake_squeue('echo 424242'))
+    listed <- internal('.cdrgam_cli_attempt_active')(live_attempt)
+    options(cdrgam.cli.squeue=fake_squeue('exit 1'))
+    unknown <- internal('.cdrgam_cli_attempt_active')(live_attempt)
+    stopifnot(!ended, listed, unknown)
+})
 process_result <- internal('.cdrgam_cli_process_run')(
     file.path(R.home('bin'), 'Rscript'),
     c('--vanilla', '-e', 'cat("portable-process")')

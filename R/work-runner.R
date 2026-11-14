@@ -2,6 +2,16 @@
     if (is.null(metadata) || !identical(metadata$status, 'running')) {
         return(FALSE)
     }
+    # An attempt whose Slurm job has ended is not active, whatever happened to
+    # its process ID since. A worker killed for exceeding its memory request
+    # leaves its attempt marked running, and the node may reuse its PID.
+    job_id <- .cdrgam_cli_null(metadata$job_id, '')
+    if (nzchar(job_id)) {
+        job_active <- .cdrgam_cli_slurm_active_many(job_id)
+        if (!is.null(job_active) && identical(unname(job_active[[job_id]]), FALSE)) {
+            return(FALSE)
+        }
+    }
     # A PID is meaningful only on the host that created it.  Require its
     # creation time as well: Slurm nodes routinely recycle PID values after a
     # cancelled worker exits.

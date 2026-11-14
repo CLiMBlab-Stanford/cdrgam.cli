@@ -1,5 +1,14 @@
 # cdrgam.cli (development version)
 
+- Rerunning work after its Slurm worker ran out of memory no longer fails at
+  once. The killed worker left its attempt marked running, and when the
+  node reused its process ID for a process the scheduler could not inspect,
+  the attempt was treated as still active, so every new claim failed. An
+  attempt whose Slurm job has ended is now inactive, as is one whose process
+  belongs to another user. When the scheduler fails work without an active
+  attempt, it records the reason on the latest attempt, so status no longer
+  shows the earlier attempt's error.
+
 - Definitions without `fit.rescale_predictors` now fit with rescaled
   predictors, because the core default changed to `true`. Their model
   identities and fitted results change accordingly; set

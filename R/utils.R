@@ -188,7 +188,18 @@
         actual <- as.numeric(ps::ps_create_time(handle))
         abs(actual - expected) <= .cdrgam_cli_start_time_tolerance(started)
     }, error=function(error) {
-        if (inherits(error, 'no_such_process')) FALSE else NA
+        if (inherits(error, 'no_such_process')) return(FALSE)
+        # A process owned by another user cannot be one of this user's
+        # workers, even though its state cannot be inspected.
+        owner <- tryCatch(
+            file.info(file.path('/proc', pid))$uname,
+            error=function(e) NA_character_
+        )
+        if (is.character(owner) && length(owner) == 1L && !is.na(owner) &&
+                !identical(owner, Sys.info()[['effective_user']])) {
+            return(FALSE)
+        }
+        NA
     })
 }
 

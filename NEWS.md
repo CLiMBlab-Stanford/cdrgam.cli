@@ -7,7 +7,9 @@
   attempt whose Slurm job has ended is now inactive, as is one whose process
   belongs to another user. When the scheduler fails work without an active
   attempt, it records the reason on the latest attempt, so status no longer
-  shows the earlier attempt's error.
+  shows the earlier attempt's error. When `squeue` no longer knows the job,
+  as happens once Slurm purges a finished job, Slurm accounting decides
+  instead of the recorded process ID.
 
 - Definitions without `fit.rescale_predictors` now fit with rescaled
   predictors, because the core default changed to `true`. Their model

@@ -11,6 +11,17 @@
         if (!is.null(job_active) && identical(unname(job_active[[job_id]]), FALSE)) {
             return(FALSE)
         }
+        # squeue fails outright for a job it has already purged, so ask
+        # accounting before falling back to the process ID.
+        if (is.null(job_active)) {
+            states <- .cdrgam_cli_slurm_exit_states(job_id)
+            state <- if (is.null(states)) NA_character_ else unname(states[[job_id]])
+            if (!is.na(state) && !(state %in% c(
+                    'PENDING', 'CONFIGURING', 'RUNNING', 'COMPLETING', 'REQUEUED',
+                    'RESIZING', 'SUSPENDED'))) {
+                return(FALSE)
+            }
+        }
     }
     # A PID is meaningful only on the host that created it.  Require its
     # creation time as well: Slurm nodes routinely recycle PID values after a

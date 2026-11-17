@@ -286,14 +286,28 @@ if (.Platform$OS.type != 'windows') local({
         Sys.chmod(path, mode='0755')
         path
     }
-    previous <- options(cdrgam.cli.squeue=fake_squeue('exit 0'))
+    previous <- options(
+        cdrgam.cli.squeue=fake_squeue('exit 0'),
+        cdrgam.cli.sacct=getOption('cdrgam.cli.sacct')
+    )
     on.exit(options(previous), add=TRUE)
     ended <- internal('.cdrgam_cli_attempt_active')(live_attempt)
     options(cdrgam.cli.squeue=fake_squeue('echo 424242'))
     listed <- internal('.cdrgam_cli_attempt_active')(live_attempt)
-    options(cdrgam.cli.squeue=fake_squeue('exit 1'))
+    # squeue fails for a job it has purged; accounting then decides.
+    options(
+        cdrgam.cli.squeue=fake_squeue(c(
+            'echo "slurm_load_jobs error: Invalid job id specified" >&2',
+            'exit 1'
+        )),
+        cdrgam.cli.sacct=fake_squeue('echo "424242|OUT_OF_MEMORY"')
+    )
+    purged <- internal('.cdrgam_cli_attempt_active')(live_attempt)
+    options(cdrgam.cli.sacct=fake_squeue('echo "424242|RUNNING"'))
+    accounted_running <- internal('.cdrgam_cli_attempt_active')(live_attempt)
+    options(cdrgam.cli.sacct=fake_squeue('exit 0'))
     unknown <- internal('.cdrgam_cli_attempt_active')(live_attempt)
-    stopifnot(!ended, listed, unknown)
+    stopifnot(!ended, listed, !purged, accounted_running, unknown)
 })
 process_result <- internal('.cdrgam_cli_process_run')(
     file.path(R.home('bin'), 'Rscript'),

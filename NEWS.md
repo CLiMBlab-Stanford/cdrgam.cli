@@ -1,5 +1,11 @@
 # cdrgam.cli (development version)
 
+- Published fit diagnostics include `newton_step_max` and
+  `predicted_decrease_floor` from the core, beside `predicted_decrease` and
+  the raw gradient maxima. A gradient above the tolerance along a
+  well-curved direction can then be read against the negligible Newton step
+  it implies.
+
 - Rerunning work after its Slurm worker ran out of memory no longer fails at
   once. The killed worker left its attempt marked running, and when the
   node reused its process ID for a process the scheduler could not inspect,

@@ -196,6 +196,8 @@ boundary_fit <- structure(list(
         convergence=list(
             converged=TRUE, code=0L, message='converged',
             hessian_positive_definite=TRUE,
+            predicted_decrease=1.2e-5, predicted_decrease_floor=3.6e-3,
+            newton_step_max=7e-4,
             hessian_boundary=data.frame(
                 smoothing_parameter='s(cdr_term_2)1', log_sp=16.8,
                 side='upper', curvature=2e-5, bound_log_sp=5.6,
@@ -208,6 +210,11 @@ boundary_fit <- structure(list(
     cdrgam=list()
 ), class=c('cdrgam_sparse', 'cdrgam'))
 boundary_diagnostics <- internal('.cdrgam_cli_core_diagnostics')(boundary_fit)
+# The Newton summary is published beside the predicted decrease.
+stopifnot(
+    identical(boundary_diagnostics$predicted_decrease_floor, 3.6e-3),
+    identical(boundary_diagnostics$newton_step_max, 7e-4)
+)
 stopifnot(
     identical(boundary_diagnostics$outcome, 'success'),
     identical(

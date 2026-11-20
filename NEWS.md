@@ -1,4 +1,4 @@
-# cdrgam.cli (development version)
+# cdrgam.cli 0.3.0
 
 - Visualization definitions accept `preset: irf-lag` and
   `preset: irf-predictor`. `irf-lag` plots every ungrouped IRF with one

@@ -15,14 +15,69 @@
 .cdrgam_cli_core_diagnostics <- function(fit) {
     convergence <- cdrgam::fit_diagnostics(fit)
     keep <- c(
-        'converged', 'code', 'message', 'total_objective_evaluations',
+        'outcome', 'reasons', 'notes', 'converged', 'code', 'message',
+        'total_objective_evaluations',
         'gradient_norm', 'boundary', 'hessian_positive_definite',
-        'hessian_min_eigenvalue', 'hessian_requested', 'hessian_method',
+        'hessian_min_eigenvalue', 'hessian_full_min_eigenvalue',
+        'hessian_boundary', 'hessian_negative_directions',
+        'newton_refinement', 'predicted_decrease', 'predicted_decrease_floor',
+        'newton_step_max', 'exact_gradient_maximum',
+        'boundary_profile_level',
+        'hessian_requested', 'hessian_method',
         'hessian_selection', 'hessian_evaluations', 'hessian_rhs',
+        'condition_indicator', 'condition_indicator_full',
+        'condition_tolerance',
         'restart_count', 'best_restart', 'resumed',
         'global_optimum_certified'
     )
-    convergence[intersect(keep, names(convergence))]
+    output <- convergence[intersect(keep, names(convergence))]
+    # Publish tables as one record per row.
+    records <- function(table) lapply(seq_len(nrow(table)), function(row) {
+        as.list(table[row, , drop=FALSE])
+    })
+    for (field in c('hessian_boundary', 'hessian_negative_directions')) {
+        table <- output[[field, exact=TRUE]]
+        if (is.data.frame(table)) output[[field]] <- records(table)
+    }
+    newton <- output[['newton_refinement', exact=TRUE]]
+    if (is.list(newton) && is.data.frame(newton$steps)) {
+        output$newton_refinement$steps <- records(newton$steps)
+    }
+    output
+}
+
+.cdrgam_cli_fit_outcome <- function(diagnostics) {
+    outcome <- diagnostics[['outcome', exact=TRUE]]
+    if (is.character(outcome) && length(outcome) == 1L &&
+            outcome %in% c('success', 'warning', 'nonconverged')) {
+        return(outcome)
+    }
+    if (identical(diagnostics$converged, FALSE)) {
+        'nonconverged'
+    } else {
+        'success'
+    }
+}
+
+.cdrgam_cli_diagnostic_messages <- function(diagnostics) {
+    reasons <- diagnostics[['reasons', exact=TRUE]]
+    if (!is.list(reasons) || !length(reasons)) {
+        message <- diagnostics[['message', exact=TRUE]]
+        if (is.character(message) && length(message) == 1L) {
+            message
+        } else {
+            character()
+        }
+    } else {
+        unique(vapply(reasons, function(reason) {
+            message <- reason[['message', exact=TRUE]]
+            if (is.character(message) && length(message) == 1L) {
+                message
+            } else {
+                reason[['code', exact=TRUE]]
+            }
+        }, character(1)))
+    }
 }
 
 .cdrgam_cli_core_fit_report <- function(fit, design) {
@@ -77,10 +132,14 @@
     )
 }
 
-.cdrgam_cli_core_effect_catalog <- function(fit) {
-    cdrgam::effect_catalog(fit)
+.cdrgam_cli_core_effect_catalog <- function(fit, impulses=NULL, responses=NULL) {
+    cdrgam::effect_catalog(fit, impulses=impulses, responses=responses)
 }
 
 .cdrgam_cli_core_estimate_effect <- function(fit, ...) {
     cdrgam::estimate_effect(fit, ...)
+}
+
+.cdrgam_cli_core_test_effect <- function(fit, ...) {
+    cdrgam::test_effect(fit, ...)
 }

@@ -1,0 +1,121 @@
+name: Cross-platform preflight
+
+run-name: Preflight ${{ inputs.scope }} for ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: Automatic selection, a portability profile, runtime/full checks
+        required: true
+        default: auto
+        type: choice
+        options: [auto, portability, runtime, full]
+      core_ref:
+        description: cdrgam ref to install for this harness preflight
+        required: true
+        default: main
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  select:
+    name: Select preflight coverage
+    runs-on: ubuntu-latest
+    outputs:
+      baseline: ${{ steps.baseline.outputs.baseline }}
+      reason: ${{ steps.plan.outputs.reason }}
+      profile: ${{ steps.plan.outputs.profile }}
+      run_matrix: ${{ steps.plan.outputs.run_matrix }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - id: baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREFLIGHT_SCOPE: ${{ inputs.scope }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="$GITHUB_SHA"
+          branch="$GITHUB_REF_NAME"
+          git fetch origin main
+          baseline=''
+          if [[ "$PREFLIGHT_SCOPE" == auto || "$PREFLIGHT_SCOPE" == full ]]; then
+            while IFS=$'\t' read -r candidate title; do
+              [[ -n "$candidate" ]] || continue
+              case "$title" in
+                "Preflight auto for "*|"Preflight full for "*) ;;
+                *) continue ;;
+              esac
+              if git cat-file -e "$candidate^{commit}" 2>/dev/null && \
+                  git merge-base --is-ancestor "$candidate" "$target"; then
+                baseline="$candidate"
+                break
+              fi
+            done < <(
+              gh api --paginate \
+                "repos/$GITHUB_REPOSITORY/actions/workflows/cross-platform-preflight.yaml/runs?branch=$branch&event=workflow_dispatch&status=success&per_page=100" \
+                --jq '.workflow_runs[] | [.head_sha, .display_title] | @tsv'
+            )
+          fi
+          if [[ -z "$baseline" ]]; then
+            baseline=$(git merge-base origin/main "$target")
+          fi
+          printf 'baseline=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
+      - id: plan
+        env:
+          PREFLIGHT_SCOPE: ${{ inputs.scope }}
+          PREFLIGHT_BASELINE: ${{ steps.baseline.outputs.baseline }}
+        shell: bash
+        run: ./scripts/preflight-plan "$PREFLIGHT_BASELINE" "$GITHUB_SHA" "$PREFLIGHT_SCOPE" >> "$GITHUB_OUTPUT"
+      - name: Report selected coverage
+        run: |
+          printf 'Baseline: %s\n' '${{ steps.baseline.outputs.baseline }}'
+          printf 'Profile: %s\n' '${{ steps.plan.outputs.profile }}'
+          printf 'Reason: %s\n' '${{ steps.plan.outputs.reason }}'
+
+  preflight:
+    name: ${{ matrix.os }} (${{ needs.select.outputs.profile }})
+    needs: select
+    if: needs.select.outputs.run_matrix == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      R_KEEP_PKG_SOURCE: yes
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          repository: CLiMBlab-Stanford/cdrgam
+          ref: ${{ inputs.core_ref }}
+          path: cdrgam-core
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: release
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: any::rcmdcheck
+          needs: check
+      - name: Install the selected core package
+        run: install.packages('cdrgam-core', repos = NULL, type = 'source')
+        shell: Rscript {0}
+      - name: Run selected preflight profile
+        env:
+          PREFLIGHT_PROFILE: ${{ needs.select.outputs.profile }}
+        shell: bash
+        run: |
+          if [ "$PREFLIGHT_PROFILE" = portability ]; then
+            ./scripts/test portability
+          else
+            R CMD build .
+            R CMD check --no-manual --no-build-vignettes cdrgam.cli_*.tar.gz
+          fi

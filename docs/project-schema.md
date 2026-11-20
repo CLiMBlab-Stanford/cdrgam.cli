@@ -363,6 +363,17 @@ chain records the original definition contract and every exact formula
 replacement. If no eligible edit yields convergence within `max_steps`, the
 work item fails and no nonconverged model is published at the standard path.
 
+`fit.rescale_predictors` defaults to `true` in the core package: continuous
+predictors and lag coordinates are divided by their training standard
+deviations, and effects are still reported in native units. Set it to `false`
+to fit in native units.
+
+`fit.center_predictors` defaults to `true` in the core package: linear IRF
+predictors, including binary ones, are centered at their training means, so
+`irf(1)` is the response to an event with average linear predictors. Set it to
+`false` for uncentered predictors. Individual terms can override it in the
+formula with `irf(..., center=)`.
+
 `fit.family` accepts `gaussian`, `binomial`, `poisson`, `Gamma`, or `gaulss`
 through
 the core package's validated family registry. `fit.link` is optional and
@@ -430,14 +441,21 @@ CSV live under `models/MODEL/effects/EFFECT-IDENTITY/`; rendered files live
 under `models/MODEL/visualizations/VISUALIZATION/`.
 
 `terms` may be a list of exact fitted term labels or a selector mapping. A
-selector accepts `names`, `predictors`, `match` (`contains` or `exact`), and
-`grouped`. The predictor value `"*"` selects every nonconstant IRF. A request
-that matches no terms fails before rendering.
+selector accepts `names`, `predictors`, `match` (`contains` or `exact`),
+`grouped`, and `interacting`. The predictor value `"*"` selects every
+nonconstant IRF. `interacting: false` keeps terms with at most one predictor,
+including `irf(1)` unless `predictors` excludes it, and `interacting: true`
+keeps the rest. A request that matches no terms fails before rendering.
 
 `composition` controls the effect being evaluated. `term` returns only the
 selected term. `total` adds its fitted marginal hierarchy, using the joint
-coefficient covariance for uncertainty. `deviation` retains the selected term
-without its marginals. `grouping` separately selects the population IRF,
+coefficient covariance for uncertainty. The hierarchy contains every ungrouped
+term whose predictors are a subset of the selected term's, so the total for
+`irf(wlen, repetition_index, k_p=list(NULL, 3))` adds `irf(wlen)`,
+`irf(repetition_index, k_p=3)`, and `irf(1)`. The total is therefore the
+response to an event with the requested predictor values. To isolate one
+predictor's effect, subtract a `reference` in that predictor: terms that do
+not involve it cancel. `grouping` separately selects the population IRF,
 group-specific deviation, or their conditional sum. `groups` can restrict the
 factor levels used by `deviation` and `conditional` requests.
 
@@ -454,9 +472,96 @@ axes:
 ```
 
 Unspecified lag axes vary over their fitted domains. Other unspecified axes
-are fixed at their training median. The wildcard predictor entry supplies a
+are fixed at their training mean. The wildcard predictor entry supplies a
 fallback for every predictor axis. Axis values and effect-grid columns use
 source data units.
+
+Wherever an axis or reference takes a number, it also takes an expression in
+that axis's training `mean`, `sd`, and `median`, using numbers, `+`, `-`,
+`*`, `/`, and parentheses. A bare expression fixes the axis at one value.
+`range` gives a grid between two values, with `n` points or the query's `n`:
+
+```yaml
+axes:
+  lag: peak
+  predictors:
+    surprisal: mean + 2 * sd
+    frequency: {values: [mean - sd, mean, mean + sd]}
+    "*": {range: [mean - 2 * sd, mean + 2 * sd], n: 50}
+reference:
+  "*": mean
+```
+
+Lag values may also use `peak` or `peak-pos`, the lag at which a term's
+response is largest, and `peak-neg`, the lag at which it is smallest, over
+the fitted lag domain. The response used is the term alone with each of its
+predictors at the mean plus one SD, minus the term at the means, and with
+other axes at their training means; for `irf(1)` it is `irf(1)` itself.
+Expressions are resolved separately for each selected term, so `"*"` entries
+use each predictor's own summaries and each term's own peak. A `"*"`
+reference applies to every predictor of a term that has no reference of its
+own; a term without predictors, such as `irf(1)`, gets no reference.
+Expressions fail at evaluation when the fit stores no summary for the axis.
+
+`reference` subtracts the same effect evaluated at reference values of some
+axes. Axes not named in `reference` keep their evaluated values. Each entry
+uses the axis-request syntax and must resolve to one value, or is `default`
+for a predictor. A `default` predictor stays at the model default: every term
+that involves it drops out of the reference. For a centered linear predictor
+this equals its center; for a smooth predictor it is the training-average
+contribution implied by the term's identifiability constraint. With every
+predictor at `default` and `composition: total`, the reference is `irf(1)`,
+the response to an average event. Reference axes add an `AXIS_reference`
+column to the effect grid, which is empty for a default, and the intervals
+account for the covariance of the two evaluations. This query plots the
+effect of a one-SD increase in word length at each repetition:
+
+```yaml
+query:
+  terms: [wlen:repetition_index]
+  composition: total
+  axes:
+    lag: {grid: fitted, n: 300}
+    predictors:
+      wlen: {at: {summary: mean, offset-sd: 1}}
+      repetition_index: {values: [1, 2, 3, 4, 5]}
+  reference:
+    wlen: {at: {summary: mean}}
+  test: true
+render:
+  geometry: line
+  mappings: {x: lag, y: estimate, color: "predictor:repetition_index"}
+  interval: ribbon
+```
+
+`wlen: default` gives the same result here because word length is a centered
+linear predictor. A reference in `repetition_index` instead, such as
+`repetition_index: 1`, plots each repetition's difference from the first. With `test: true`, the effect
+work item also writes `effect-tests.csv`. It holds one joint Wald test per
+term, group, and layer of the null hypothesis that the effect is zero at every
+grid point. The test uses the same grid, so the grid should be dense enough to
+span the effect.
+
+`uncertainty.kind` is `pointwise` or `simultaneous`. Simultaneous limits
+cover every grid point of a term and group jointly at `level`. The harness
+estimates their covariance from the core's standard errors of differences
+between grid points, on up to `uncertainty.points` grid points (default 40)
+spread evenly along each varying axis, and takes the critical value of the
+largest absolute t statistic from 10,000 simulated draws with a fixed seed.
+It reports this value in a `critical_value` column. The cost is one extra
+core evaluation per covariance point and reference value, for example 81 for
+a 40-point lag curve with a predictor reference. Reference predictors must
+have values; `default` is not supported.
+
+Each term with exactly one predictor also has `predictor` and
+`predictor_value` columns in the effect grid. They hold the predictor's name
+and value, so terms with different predictors can share an axis.
+
+Line renderings draw one curve per term, group, layer, and value of every
+other varying axis. A numeric `color` or `linetype` mapping with at most 12
+values uses a discrete legend. `palette: rainbow` colors lines from red to
+violet and draws `irf(1)` in black. `scales` (`fixed`, `free`, `free_x`, or
+`free_y`) sets the facet scales.
 
 Line renderings support ribbon, boundary-line, or no interval display. Raster,
 contour, and combined raster-contour geometries support predictor-by-lag,
@@ -495,6 +600,40 @@ For this overlay, select the corresponding grouped term with
 ungrouped counterpart, and the conditional layer adds each requested
 deviation. The renderer keeps term, group, and layer series separate unless an
 explicit `group` mapping is supplied.
+
+Two presets give common CDR plots without writing a query:
+
+```yaml
+schema: 1
+model: main
+preset: irf-lag
+options:
+  irf1: true
+```
+
+```yaml
+schema: 1
+model: main
+preset: irf-predictor
+options:
+  hold: {lag: peak}
+render:
+  formats: [pdf, png]
+```
+
+Both select every ungrouped IRF with at most one predictor, excluding
+`irf(1)` unless `irf1: true` is set for `irf-lag`. They use simultaneous 95%
+intervals, the rainbow palette, and one curve per term. `irf-lag` plots each
+term over the fitted lag domain at `step` (default `mean + sd`) minus the
+term at `reference` (default `mean`), which is the term's deviation from
+`irf(1)` for a step from the mean. `irf-predictor` plots each term in its
+own facet over `values` (default the training range), minus the term at
+`reference`, at lag `hold.lag` (default 0). `hold.time` (default `mean`)
+fixes time axes. Other options are `terms`, where a list of labels replaces
+the default selection and a selector mapping overrides its fields; `n`; `level`; `interval` (`simultaneous` or
+`pointwise`); `points`; and `unconditional`. A `render` mapping overrides the
+preset's render settings field by field. A preset definition cannot also
+contain `query` or `layers`.
 
 The legacy default model booklet remains available explicitly:
 

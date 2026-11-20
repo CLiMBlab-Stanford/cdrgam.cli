@@ -199,7 +199,8 @@
 #' unpublished, be written to a verified archive, be referenced by URL, or be
 #' staged directly in the project Git repository.
 #'
-#' @param project Project name.
+#' @param project Optional project name. Omission infers the project from the
+#'   current directory.
 #' @param results One of `"none"`, `"archive"`, `"url"`, or `"git"`.
 #' @param archive Destination for a generated `.tar.gz` results archive.
 #' @param url Direct download URL for a separately hosted results archive.
@@ -213,11 +214,12 @@
 #' @return Publication metadata, invisibly.
 #' @export
 cdrgam_cli_publish <- function(
-        project, results=c('none', 'archive', 'url', 'git'), archive=NULL,
+        project=NULL, results=c('none', 'archive', 'url', 'git'), archive=NULL,
         url=NULL, sha256=NULL, models=NULL, predictions=NULL,
         visualizations=NULL, comparisons=NULL, commit=NULL, push=FALSE,
         cdrgam_root=NULL
 ) {
+    if (is.null(project)) project <- .cdrgam_cli_infer_project(cdrgam_root)
     project <- .cdrgam_cli_name(project, 'project')
     results <- match.arg(results)
     push <- .cdrgam_cli_scalar_logical(push, 'push')

@@ -394,3 +394,16 @@
     }
     transform(value)
 }
+
+.cdrgam_cli_viewer_path <- function(configuration, user=NULL) {
+    user <- .cdrgam_cli_null(user, Sys.info()[['effective_user']])
+    user <- gsub('[^A-Za-z0-9._-]', '_', .cdrgam_cli_scalar_character(user, 'user'))
+    if (!nzchar(user) || user %in% c('.', '..')) {
+        .cdrgam_cli_abort('The current user name cannot form a viewer path')
+    }
+    path <- file.path(configuration$cdrgam_root, '.cdrgam', 'viewers', user)
+    if (!.cdrgam_cli_within(path, configuration$cdrgam_root)) {
+        .cdrgam_cli_abort('Viewer path escapes cdrgam_root')
+    }
+    path
+}

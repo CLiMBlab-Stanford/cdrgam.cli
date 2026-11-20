@@ -7,24 +7,35 @@
     file.path(configuration$cdrgam_root, '.cdrgam', 'registry.sqlite3')
 }
 
-.cdrgam_cli_registry_connect <- function(configuration) {
+.cdrgam_cli_registry_connect <- function(configuration, read_only=FALSE) {
     path <- .cdrgam_cli_registry_path(configuration)
-    if (!dir.exists(dirname(path))) dir.create(dirname(path), recursive=TRUE)
-    connection <- DBI::dbConnect(RSQLite::SQLite(), path)
-    DBI::dbExecute(connection, 'PRAGMA journal_mode=DELETE')
+    if (!isTRUE(read_only) && !dir.exists(dirname(path))) {
+        dir.create(dirname(path), recursive=TRUE)
+    }
+    connection <- if (isTRUE(read_only)) {
+        DBI::dbConnect(RSQLite::SQLite(), path, flags=RSQLite::SQLITE_RO)
+    } else {
+        DBI::dbConnect(RSQLite::SQLite(), path)
+    }
+    if (!isTRUE(read_only)) {
+        DBI::dbExecute(connection, 'PRAGMA journal_mode=DELETE')
+    }
     DBI::dbExecute(connection, 'PRAGMA busy_timeout=5000')
     DBI::dbExecute(connection, 'PRAGMA foreign_keys=ON')
     connection
 }
 
-.cdrgam_cli_registry_exec <- function(configuration, sql, query=FALSE) {
-    connection <- .cdrgam_cli_registry_connect(configuration)
-    on.exit(DBI::dbDisconnect(connection), add=TRUE)
+.cdrgam_cli_registry_exec <- function(
+        configuration, sql, query=FALSE, connection=NULL
+) {
+    owns_connection <- is.null(connection)
+    if (owns_connection) connection <- .cdrgam_cli_registry_connect(configuration)
+    if (owns_connection) on.exit(DBI::dbDisconnect(connection), add=TRUE)
     if (query) DBI::dbGetQuery(connection, sql) else DBI::dbExecute(connection, sql)
 }
 
 .cdrgam_cli_registry_status_records <- function(
-        configuration, projects=character(), project_ids=character()
+        configuration, projects=character(), project_ids=character(), connection=NULL
 ) {
     if (!file.exists(.cdrgam_cli_registry_path(configuration))) {
         return(data.frame())
@@ -58,7 +69,63 @@
         "ORDER BY COALESCE(a2.started_at,a2.completed_at,'') DESC,",
         'a2.attempt_id DESC LIMIT 1)', where,
         ' ORDER BY w.project,w.kind,w.name,w.updated_at DESC,w.identity DESC'
-    ), query=TRUE)
+    ), query=TRUE, connection=connection)
+}
+
+.cdrgam_cli_registry_dependency_states <- function(configuration, connection=NULL) {
+    if (!file.exists(.cdrgam_cli_registry_path(configuration))) {
+        return(stats::setNames(character(), character()))
+    }
+    work <- .cdrgam_cli_registry_exec(
+        configuration, 'SELECT work_key,state FROM work_items', query=TRUE,
+        connection=connection
+    )
+    if (!nrow(work)) return(stats::setNames(character(), character()))
+    dependencies <- .cdrgam_cli_registry_exec(
+        configuration, 'SELECT work_key,dependency_key FROM dependencies', query=TRUE,
+        connection=connection
+    )
+    source <- stats::setNames(work$state, work$work_key)
+    resolved <- source
+    repeat {
+        next_state <- resolved
+        for (key in names(source)[source %in% c('pending', 'blocked')]) {
+            prerequisites <- dependencies$dependency_key[
+                dependencies$work_key == key
+            ]
+            prerequisite_state <- resolved[prerequisites]
+            if (any(prerequisite_state %in% c('failed', 'blocked'))) {
+                next_state[[key]] <- 'blocked'
+            } else if (all(prerequisite_state == 'complete')) {
+                next_state[[key]] <- 'queued'
+            } else {
+                next_state[[key]] <- 'waiting'
+            }
+        }
+        if (identical(next_state, resolved)) break
+        resolved <- next_state
+    }
+    resolved
+}
+
+.cdrgam_cli_registry_status_snapshot <- function(
+        configuration, projects=character(), project_ids=character()
+) {
+    if (!file.exists(.cdrgam_cli_registry_path(configuration))) {
+        return(list(records=data.frame(), states=stats::setNames(
+            character(), character()
+        )))
+    }
+    connection <- .cdrgam_cli_registry_connect(configuration, read_only=TRUE)
+    on.exit(DBI::dbDisconnect(connection), add=TRUE)
+    list(
+        records=.cdrgam_cli_registry_status_records(
+            configuration, projects, project_ids, connection=connection
+        ),
+        states=.cdrgam_cli_registry_dependency_states(
+            configuration, connection=connection
+        )
+    )
 }
 
 .cdrgam_cli_registry_worker_records <- function(configuration) {
@@ -132,6 +199,35 @@
     ]
 }
 
+.cdrgam_cli_registry_project_keys <- function(configuration, project) {
+    if (!file.exists(.cdrgam_cli_registry_path(configuration))) {
+        return(character())
+    }
+    records <- .cdrgam_cli_registry_exec(configuration, paste0(
+        'SELECT work_key FROM work_items WHERE project=',
+        .cdrgam_cli_sql_quote(project)
+    ), query=TRUE)
+    records$work_key
+}
+
+.cdrgam_cli_registry_external_dependents <- function(
+        configuration, work_keys, project
+) {
+    if (!length(work_keys) || !file.exists(.cdrgam_cli_registry_path(configuration))) {
+        return(character())
+    }
+    placeholders <- .cdrgam_cli_registry_placeholders(work_keys)
+    connection <- .cdrgam_cli_registry_connect(configuration)
+    on.exit(DBI::dbDisconnect(connection), add=TRUE)
+    records <- DBI::dbGetQuery(connection, paste0(
+        'SELECT DISTINCT dependent.work_key FROM dependencies dependency ',
+        'JOIN work_items dependent ON dependent.work_key=dependency.work_key ',
+        'WHERE dependency.dependency_key IN (', placeholders, ') ',
+        'AND dependent.project <> ?'
+    ), params=c(as.list(work_keys), list(project)))
+    records$work_key
+}
+
 .cdrgam_cli_registry_assert_inactive <- function(configuration, work_keys) {
     if (!length(work_keys)) return(invisible(TRUE))
     active <- .cdrgam_cli_registry_exec(configuration, paste0(
@@ -154,7 +250,7 @@
     placeholders <- .cdrgam_cli_registry_placeholders(work_keys)
     connection <- .cdrgam_cli_registry_connect(configuration)
     on.exit(DBI::dbDisconnect(connection), add=TRUE)
-    paths <- DBI::dbWithTransaction(connection, {
+    forgotten <- DBI::dbWithTransaction(connection, {
         paths <- DBI::dbGetQuery(connection, paste0(
             'SELECT path FROM attempts WHERE work_key IN (', placeholders, ')'
         ), params=as.list(work_keys))$path
@@ -171,13 +267,24 @@
         DBI::dbExecute(connection, paste0(
             'DELETE FROM work_items WHERE work_key IN (', placeholders, ')'
         ), params=as.list(work_keys))
-        DBI::dbExecute(connection, paste(
-            'DELETE FROM requests WHERE request_id NOT IN',
+        orphaned_requests <- DBI::dbGetQuery(connection, paste(
+            'SELECT request_id FROM requests WHERE request_id NOT IN',
             '(SELECT DISTINCT request_id FROM request_items)'
-        ))
-        paths
+        ))$request_id
+        if (length(orphaned_requests)) DBI::dbExecute(connection, paste0(
+            'DELETE FROM requests WHERE request_id IN (',
+            .cdrgam_cli_registry_placeholders(orphaned_requests), ')'
+        ), params=as.list(orphaned_requests))
+        list(paths=paths, requests=orphaned_requests)
     })
-    .cdrgam_cli_registry_remove_attempt_paths(configuration, paths)
+    .cdrgam_cli_registry_remove_attempt_paths(configuration, forgotten$paths)
+    request_directory <- file.path(
+        configuration$cdrgam_root, '.cdrgam', 'work', 'requests'
+    )
+    request_paths <- file.path(
+        request_directory, paste0(forgotten$requests, '.rds')
+    )
+    unlink(request_paths[file.exists(request_paths)], force=TRUE)
     invisible(work_keys)
 }
 
@@ -398,7 +505,8 @@
                 'INSERT INTO work_items VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
                 'ON CONFLICT(work_key) DO UPDATE SET project=excluded.project,',
                 'kind=excluded.kind, name=excluded.name, identity=excluded.identity,',
-                'state=excluded.state,',
+                "state=CASE WHEN work_items.state IN ('submitting','submitted','running')",
+                'THEN work_items.state ELSE excluded.state END,',
                 'artifact_path=excluded.artifact_path, updated_at=excluded.updated_at'
             ), params=list(
                 item$key, item$project, item$kind, item$name, item$identity, state,
@@ -420,6 +528,80 @@
     })
     .cdrgam_cli_registry_remove_attempt_paths(configuration, removed_paths)
     request_id
+}
+
+.cdrgam_cli_registry_active_attempt_keys <- function(configuration, work_keys) {
+    if (!length(work_keys)) return(character())
+    placeholders <- .cdrgam_cli_registry_placeholders(work_keys)
+    connection <- .cdrgam_cli_registry_connect(configuration)
+    on.exit(DBI::dbDisconnect(connection), add=TRUE)
+    output <- DBI::dbGetQuery(connection, paste0(
+        'SELECT work_key FROM attempts WHERE work_key IN (', placeholders,
+        ") AND state IN ('submitting','submitted','running')"
+    ), params=as.list(work_keys))
+    output$work_key
+}
+
+.cdrgam_cli_registry_reclaim_attempts <- function(
+        configuration, items, work_keys, error
+) {
+    work_keys <- intersect(work_keys, names(items))
+    if (!length(work_keys)) return(invisible(character()))
+    for (key in work_keys) {
+        item <- items[[key]]
+        .cdrgam_cli_registry_attempt_state(configuration, item, 'failed', error)
+        .cdrgam_cli_registry_state(configuration, item, 'pending')
+    }
+    invisible(work_keys)
+}
+
+.cdrgam_cli_registry_active_job_ids <- function(configuration, work_keys) {
+    if (!length(work_keys)) return(character())
+    placeholders <- .cdrgam_cli_registry_placeholders(work_keys)
+    connection <- .cdrgam_cli_registry_connect(configuration)
+    on.exit(DBI::dbDisconnect(connection), add=TRUE)
+    output <- DBI::dbGetQuery(connection, paste0(
+        'SELECT scheduler_id FROM attempts WHERE work_key IN (', placeholders,
+        ") AND state IN ('submitting','submitted','running')"
+    ), params=as.list(work_keys))
+    unique(stats::na.omit(as.character(output$scheduler_id)))
+}
+
+.cdrgam_cli_registry_active_worker_job_ids <- function(configuration) {
+    output <- .cdrgam_cli_registry_exec(configuration, paste(
+        'SELECT scheduler_id FROM workers WHERE state IN',
+        "('submitted','running','idle','stopping')"
+    ), query=TRUE)
+    unique(stats::na.omit(as.character(output$scheduler_id)))
+}
+
+.cdrgam_cli_registry_active_workers <- function(configuration) {
+    output <- .cdrgam_cli_registry_exec(configuration, paste(
+        'SELECT worker_id,scheduler_id,resource_key,state,path,current_work_key,',
+        'submitted_at,updated_at FROM workers WHERE state IN',
+        "('submitted','running','idle','stopping')"
+    ), query=TRUE)
+    if (!nrow(output)) return(list())
+    workers <- lapply(seq_len(nrow(output)), function(index) {
+        row <- output[index, , drop=FALSE]
+        list(
+            worker_id=row$worker_id[[1L]],
+            job_id=row$scheduler_id[[1L]],
+            resource_key=row$resource_key[[1L]],
+            status=row$state[[1L]],
+            path=.cdrgam_cli_store_resolve(
+                configuration, row$path[[1L]], 'worker path'
+            ),
+            current_work_key=if (is.na(row$current_work_key[[1L]])) {
+                NULL
+            } else row$current_work_key[[1L]],
+            submitted_at=if (is.na(row$submitted_at[[1L]])) {
+                NULL
+            } else row$submitted_at[[1L]],
+            updated_at=row$updated_at[[1L]]
+        )
+    })
+    stats::setNames(workers, vapply(workers, `[[`, character(1), 'worker_id'))
 }
 
 .cdrgam_cli_registry_request_keys <- function(configuration, request_id) {
@@ -499,10 +681,30 @@
         "WHERE work_key=? AND state IN ('submitting','submitted','running')"
     ), params=list(
         state,
-        if (state %in% c('complete', 'failed')) .cdrgam_cli_timestamp() else NA_character_,
+        if (state %in% c('complete', 'failed', 'stopped')) {
+            .cdrgam_cli_timestamp()
+        } else NA_character_,
         .cdrgam_cli_null(error, NA_character_), item$key
     ))
     invisible(state)
+}
+
+# Records a failure on the work item's most recent attempt even when that
+# attempt is no longer active, so status reports the current reason rather
+# than an earlier attempt's error.
+.cdrgam_cli_registry_record_failure <- function(configuration, item, error) {
+    connection <- .cdrgam_cli_registry_connect(configuration)
+    on.exit(DBI::dbDisconnect(connection), add=TRUE)
+    DBI::dbExecute(connection, paste(
+        'UPDATE attempts SET state=?, completed_at=?, error=?',
+        'WHERE attempt_id=(SELECT attempt_id FROM attempts WHERE work_key=?',
+        "ORDER BY COALESCE(started_at,completed_at,'') DESC, attempt_id DESC",
+        'LIMIT 1)'
+    ), params=list(
+        'failed', .cdrgam_cli_timestamp(),
+        .cdrgam_cli_null(error, NA_character_), item$key
+    ))
+    invisible(TRUE)
 }
 
 .cdrgam_cli_registry_worker <- function(configuration, worker) {

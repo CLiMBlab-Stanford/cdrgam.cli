@@ -2,7 +2,8 @@
     switch(
         state,
         complete='Success', running='Running', submitted='Queued',
-        submitting='Queued', pending='Waiting', blocked='Blocked',
+        submitting='Queued', queued='Queued', waiting='Waiting',
+        pending='Waiting', stopped='Stopped', blocked='Blocked',
         failed='Error', stale='Stale', state
     )
 }
@@ -24,8 +25,9 @@
 
 .cdrgam_cli_status_report <- function(output, color=FALSE) {
     styles <- list(
-        header='header', Success='success', Running='active', Queued='queued',
-        Waiting='queued', Blocked='warning', Nonconverged='error', Error='error',
+        header='header', Success='success', Warning='warning',
+        Running='active', Queued='queued', Waiting='queued',
+        Stopped='warning', Blocked='warning', Nonconverged='error', Error='error',
         Stale='warning', detail='detail', error='error'
     )
     columns <- list(
@@ -118,6 +120,27 @@
             }
         }
     }
+    warnings <- output[output$display_state == 'Warning', , drop=FALSE]
+    if (nrow(warnings)) {
+        lines <- c(lines, '', .cdrgam_cli_paint(
+            'Fits requiring review', styles[['Warning']], color
+        ))
+        for (i in seq_len(nrow(warnings))) {
+            fit <- warnings[i, , drop=FALSE]
+            lines <- c(lines, paste0(
+                '- ', fit$project, ' fit/', fit$name,
+                ' [', fit$identity, ']'
+            ))
+            if (!is.na(fit$diagnostic) && nzchar(fit$diagnostic)) {
+                lines <- c(lines, paste0('  Diagnostic: ', fit$diagnostic))
+            }
+            if (!is.na(fit$log) && nzchar(fit$log)) {
+                lines <- c(lines, paste0(
+                    '  Log: ', .cdrgam_cli_paint(fit$log, styles$detail, color)
+                ))
+            }
+        }
+    }
     paste0(paste(lines, collapse='\n'), '\n')
 }
 
@@ -173,9 +196,10 @@
         )
         definition$definition$project$id
     }, character(1)) else character()
-    output <- .cdrgam_cli_registry_status_records(
+    snapshot <- .cdrgam_cli_registry_status_snapshot(
         configuration, selected, project_ids
     )
+    output <- snapshot$records
     if (!nrow(output)) return(output)
     project_roots <- .cdrgam_cli_project_roots(configuration)
     if (length(project_ids)) {
@@ -201,6 +225,8 @@
     )
     logical_key <- paste(output$project, output$kind, output$name, sep='\034')
     output <- output[!duplicated(logical_key), , drop=FALSE]
+    dependency_states <- snapshot$states
+    output$state <- unname(dependency_states[output$work_key])
     output$display_state <- vapply(
         output$state, .cdrgam_cli_status_state, character(1)
     )
@@ -212,11 +238,27 @@
             output$artifact_path[[i]], 'manifest.yml'
         ))), error=function(error) NULL)
         diagnostics <- manifest$result$diagnostics
-        if (!is.null(diagnostics) && identical(diagnostics$converged, FALSE)) {
-            output$display_state[[i]] <- 'Nonconverged'
-            output$diagnostic[[i]] <- .cdrgam_cli_null(
-                diagnostics$message, 'Optimizer convergence was not reached'
-            )
+        if (!identical(manifest$status, 'complete') ||
+                identical(manifest$result$derivation$outcome, 'unresolved')) {
+            diagnostics <- NULL
+        }
+        if (!is.null(diagnostics)) {
+            outcome <- .cdrgam_cli_fit_outcome(diagnostics)
+            if (identical(outcome, 'nonconverged')) {
+                output$display_state[[i]] <- 'Nonconverged'
+            } else if (identical(outcome, 'warning')) {
+                output$display_state[[i]] <- 'Warning'
+            }
+            if (outcome %in% c('nonconverged', 'warning')) {
+                messages <- .cdrgam_cli_diagnostic_messages(diagnostics)
+                output$diagnostic[[i]] <- if (length(messages)) {
+                    paste(messages, collapse=' ')
+                } else if (identical(outcome, 'nonconverged')) {
+                    'Optimizer convergence was not reached'
+                } else {
+                    'Fit diagnostics require review'
+                }
+            }
         }
     }
     output$display_updated <- sub(
@@ -243,8 +285,9 @@
 #' @param cdrgam_root Configured CDR-GAM root.
 #' @param pager Optional pager executable or function.
 #' @param use_pager Whether interactive output may open the pager.
-#' @return The current registry work-item state, invisibly. `display_state`
-#' distinguishes a published fit whose optimizer did not converge.
+#' @return The current registry work-item state, invisibly. Pending work is
+#' displayed as Queued when ready, Waiting when it has unfinished
+#' prerequisites, or Blocked when an upstream work item failed.
 #' @export
 cdrgam_cli_status <- function(
         projects=NULL, cdrgam_root=NULL, pager=NULL, use_pager=TRUE
@@ -431,6 +474,7 @@ cdrgam_cli_status <- function(
 #' @param lines Optional maximum number of trailing lines from each log.
 #' @param worker Whether to show generic worker lifecycle logs instead of
 #'   work-item logs. Worker mode does not accept workload selectors.
+#' @param running Whether to show only logs for currently running work items.
 #' @param cdrgam_root Configured CDR-GAM root.
 #' @param pager Optional pager executable or function. Interactive terminals
 #'   use `less` by default; non-interactive calls print labeled sections.
@@ -438,10 +482,14 @@ cdrgam_cli_status <- function(
 #' @export
 cdrgam_cli_log <- function(
         projects=NULL, models=NULL, predictions=NULL, visualizations=NULL,
-        comparisons=NULL, lines=NULL, cdrgam_root=NULL, pager=NULL, worker=FALSE
+        comparisons=NULL, lines=NULL, cdrgam_root=NULL, pager=NULL, worker=FALSE,
+        running=FALSE
 ) {
     configuration <- .cdrgam_cli_site(cdrgam_root, create_root=TRUE)
     if (isTRUE(worker)) {
+        if (isTRUE(running)) {
+            .cdrgam_cli_abort('--running cannot be combined with --worker')
+        }
         if (any(c(
                 length(projects), length(models), length(predictions),
                 length(visualizations), length(comparisons)
@@ -472,6 +520,11 @@ cdrgam_cli_log <- function(
         candidates <- Filter(function(record) .cdrgam_cli_log_selected(
             record, definitions, models, predictions, visualizations, comparisons
         ), candidates)
+        if (isTRUE(running)) {
+            candidates <- Filter(function(record) {
+                identical(record$state, 'running')
+            }, candidates)
+        }
         records <- c(records, candidates)
     }
     if (!length(records)) .cdrgam_cli_abort('No managed logs matched the selectors')

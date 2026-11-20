@@ -11,6 +11,69 @@
     })
 }
 
+# Columns added for a term with exactly one predictor: its name and value,
+# so that terms with different predictors can share a predictor-value axis.
+.cdrgam_cli_predictor_columns <- function(value, term) {
+    predictors <- .cdrgam_cli_term_axes(term)$predictors
+    if (length(predictors) != 1L) return(value)
+    value$predictor <- predictors
+    value$predictor_value <- value[[predictors]]
+    value
+}
+
+# Evaluate one layer of a query for one term. Expressions, ranges, and
+# wildcard references are resolved for the term before the core is called.
+.cdrgam_cli_evaluate_term <- function(fit, term, query, layer, training) {
+    request <- .cdrgam_cli_term_request(
+        fit, term, query, training$impulses, training$responses
+    )
+    # References need cdrgam > 0.2.0; omit the argument otherwise so that
+    # other queries still run against older core releases.
+    reference <- if (is.null(request$reference)) list() else list(
+        reference=request$reference
+    )
+    arguments <- c(list(
+        fit,
+        terms=term$label,
+        axes=request$axes,
+        impulses=training$impulses,
+        responses=training$responses,
+        composition=layer$composition,
+        grouping=layer$grouping,
+        groups=layer$groups,
+        unconditional=query$uncertainty$unconditional,
+        n=query$n
+    ), reference)
+    value <- do.call(.cdrgam_cli_core_estimate_effect, c(
+        arguments, list(se=TRUE, level=query$uncertainty$level)
+    ))
+    if (identical(query$uncertainty$kind, 'simultaneous')) {
+        value <- .cdrgam_cli_simultaneous_band(fit, value, list(
+            term=term$label, axes_names=term$axes,
+            reference=request$reference, composition=layer$composition,
+            grouping=layer$grouping, groups=layer$groups,
+            unconditional=query$uncertainty$unconditional,
+            impulses=training$impulses, responses=training$responses
+        ), query$uncertainty$level, query$uncertainty$points)
+    }
+    test <- if (isTRUE(query$test)) {
+        as.data.frame(do.call(.cdrgam_cli_core_test_effect, arguments))
+    } else NULL
+    list(estimate=.cdrgam_cli_predictor_columns(value, term), test=test)
+}
+
+.cdrgam_cli_bind_tables <- function(tables) {
+    columns <- unique(unlist(lapply(tables, names), use.names=FALSE))
+    tables <- lapply(tables, function(value) {
+        value <- as.data.frame(value)
+        for (name in setdiff(columns, names(value))) value[[name]] <- NA
+        value[columns]
+    })
+    output <- do.call(rbind, tables)
+    rownames(output) <- NULL
+    output
+}
+
 .cdrgam_cli_execute_effect <- function(item, stage) {
     fit <- readRDS(file.path(item$fit$output, 'fit.rds'))
     catalog <- .cdrgam_cli_core_effect_catalog(fit)
@@ -23,33 +86,39 @@
     training <- if (all(summaries_complete)) {
         list(impulses=NULL, responses=NULL)
     } else .cdrgam_cli_load_dataset(item$fit$dataset)
+    if (!all(summaries_complete)) {
+        catalog <- .cdrgam_cli_core_effect_catalog(
+            fit, training$impulses, training$responses
+        )
+    }
     query <- item$query
     layers <- .cdrgam_cli_effect_layers(query, item$layers)
-    tables <- lapply(layers, function(layer) {
-        value <- .cdrgam_cli_core_estimate_effect(
-            fit,
-            terms=query$terms,
-            axes=query$axes,
-            impulses=training$impulses,
-            responses=training$responses,
-            composition=layer$composition,
-            grouping=layer$grouping,
-            groups=layer$groups,
-            se=TRUE,
-            unconditional=query$uncertainty$unconditional,
-            level=query$uncertainty$level,
-            n=query$n
+    labels <- .cdrgam_cli_select_terms(
+        fit, catalog, query$terms, training$impulses, training$responses
+    )
+    terms <- lapply(match(labels, catalog$label), function(index) {
+        .cdrgam_cli_catalog_row(catalog, index)
+    })
+    tables <- list()
+    tests <- list()
+    for (layer in layers) {
+        for (term in terms) {
+            value <- .cdrgam_cli_evaluate_term(fit, term, query, layer, training)
+            value$estimate$layer <- layer$id
+            tables[[length(tables) + 1L]] <- value$estimate
+            if (!is.null(value$test)) {
+                value$test$layer <- rep.int(layer$id, nrow(value$test))
+                tests[[length(tests) + 1L]] <- value$test
+            }
+        }
+    }
+    if (isTRUE(query$test)) {
+        utils::write.csv(
+            .cdrgam_cli_bind_tables(tests), file.path(stage, 'effect-tests.csv'),
+            row.names=FALSE
         )
-        value$layer <- layer$id
-        value
-    })
-    columns <- unique(unlist(lapply(tables, names), use.names=FALSE))
-    tables <- lapply(tables, function(value) {
-        for (name in setdiff(columns, names(value))) value[[name]] <- NA
-        value[columns]
-    })
-    output <- do.call(rbind, tables)
-    rownames(output) <- NULL
+    }
+    output <- .cdrgam_cli_bind_tables(tables)
     saveRDS(output, file.path(stage, 'effect-grid.rds'), version=3)
     utils::write.csv(output, file.path(stage, 'effect-grid.csv'), row.names=FALSE)
     .cdrgam_cli_write_yaml(
@@ -58,7 +127,7 @@
     list(
         rows=nrow(output), terms=length(unique(output$term_id)),
         layers=length(unique(output$layer)), scale='linear-predictor',
-        interval='pointwise', level=query$uncertainty$level
+        interval=query$uncertainty$kind, level=query$uncertainty$level
     )
 }
 
@@ -133,15 +202,93 @@
     plot
 }
 
+# Evaluation-axis columns, other than the x and y mappings, that take several
+# values. Line series are split on these so that, for example, curves at
+# different moderator values are not joined into one path.
+.cdrgam_cli_series_axes <- function(data, mappings) {
+    reserved <- c(
+        'term_id', 'term', 'group', 'composition', 'grouping', 'estimate',
+        'se', 'lower', 'upper', 'layer', 'predictor', 'predictor_value',
+        'critical_value'
+    )
+    mapped <- vapply(
+        mappings[intersect(c('x', 'y'), names(mappings))],
+        .cdrgam_cli_mapping_column, character(1)
+    )
+    # A mapped predictor value stands for each term's own predictor column.
+    if ('predictor_value' %in% mapped && 'predictor' %in% names(data)) {
+        mapped <- c(mapped, unique(stats::na.omit(as.character(data$predictor))))
+    }
+    candidates <- setdiff(names(data), c(reserved, mapped))
+    candidates <- candidates[!startsWith(candidates, '.') &
+        !endsWith(candidates, '_reference')]
+    # An axis of only some terms is missing elsewhere; it splits series only
+    # where it takes several values within one term.
+    candidates[vapply(candidates, function(name) {
+        values <- data[[name]]
+        is.numeric(values) && any(tapply(values, data$term, function(value) {
+            length(unique(value[!is.na(value)])) > 1L
+        }), na.rm=TRUE)
+    }, logical(1))]
+}
+
+# Numeric color and linetype mappings with few distinct values are shown as
+# discrete legends, one entry per evaluated value.
+.cdrgam_cli_discrete_mappings <- function(data, mappings) {
+    for (aesthetic in intersect(c('color', 'linetype'), names(mappings))) {
+        column <- .cdrgam_cli_mapping_column(mappings[[aesthetic]])
+        values <- data[[column]]
+        if (!is.numeric(values)) next
+        levels <- sort(unique(values))
+        if (length(levels) > 12L && identical(aesthetic, 'color')) next
+        labels <- format(signif(levels, 4L), trim=TRUE, drop0trailing=TRUE)
+        data[[column]] <- factor(match(values, levels), seq_along(levels), labels)
+    }
+    data
+}
+
+# Rainbow colors from red through violet, darkened enough to read on white.
+# irf(1), the response to an average event, is drawn in black.
+.cdrgam_cli_rainbow <- function(levels) {
+    constant <- levels == 'irf(1)'
+    colors <- rep.int('black', length(levels))
+    colors[!constant] <- grDevices::hsv(
+        seq(0, 0.8, length.out=sum(!constant)), 0.9, 0.8
+    )
+    names(colors) <- levels
+    colors
+}
+
+.cdrgam_cli_rainbow_scales <- function(plot, data, mappings) {
+    if (is.null(mappings$color)) return(plot)
+    values <- data[[.cdrgam_cli_mapping_column(mappings$color)]]
+    if (is.numeric(values)) {
+        colors <- grDevices::hsv(seq(0, 0.8, length.out=7L), 0.9, 0.8)
+        return(plot + ggplot2::scale_color_gradientn(colors=colors) +
+            ggplot2::scale_fill_gradientn(colors=colors))
+    }
+    levels <- if (is.factor(values)) levels(values) else sort(unique(as.character(values)))
+    colors <- .cdrgam_cli_rainbow(levels)
+    plot + ggplot2::scale_color_manual(values=colors, breaks=levels) +
+        ggplot2::scale_fill_manual(values=colors, breaks=levels)
+}
+
 .cdrgam_cli_visualization_plot <- function(data, definition) {
     render <- definition$render
     mappings <- render$mappings
-    data$.cdrgam_series <- interaction(
-        data$term,
-        ifelse(is.na(data$group), '<population>', as.character(data$group)),
-        data$layer,
-        drop=TRUE, lex.order=TRUE
-    )
+    series_axes <- .cdrgam_cli_series_axes(data, mappings)
+    data <- .cdrgam_cli_discrete_mappings(data, mappings)
+    data$.cdrgam_series <- do.call(interaction, c(
+        list(
+            data$term,
+            ifelse(is.na(data$group), '<population>', as.character(data$group)),
+            data$layer
+        ),
+        unname(lapply(data[series_axes], function(value) {
+            ifelse(is.na(value), '<none>', format(value, digits=15L))
+        })),
+        list(drop=TRUE, lex.order=TRUE)
+    ))
     if (is.null(mappings$group)) mappings$group <- '.cdrgam_series'
     plot <- ggplot2::ggplot()
     layers <- .cdrgam_cli_effect_layers(definition$query, definition$layers)
@@ -194,7 +341,13 @@
         if (!(facet %in% names(data))) .cdrgam_cli_abort(paste0(
             'Visualization facet references unavailable column: ', facet
         ))
-        plot <- plot + ggplot2::facet_wrap(stats::as.formula(paste('~', facet)))
+        plot <- plot + ggplot2::facet_wrap(
+            stats::as.formula(paste('~', facet)),
+            scales=.cdrgam_cli_null(render$scales, 'fixed')
+        )
+    }
+    if (identical(render$palette, 'rainbow') && identical(render$geometry, 'line')) {
+        plot <- .cdrgam_cli_rainbow_scales(plot, data, mappings)
     }
     plot <- plot + ggplot2::labs(
         title=render$title,

@@ -101,13 +101,13 @@
     choices[choices == pattern]
 }
 
-.cdrgam_cli_match_names <- function(patterns, choices, field) {
+.cdrgam_cli_match_names <- function(patterns, choices, field, strict=TRUE) {
     if (is.null(patterns) || !length(patterns)) return(choices)
     selected <- character()
     for (pattern in patterns) {
         pattern <- .cdrgam_cli_scalar_character(pattern, field)
         matches <- .cdrgam_cli_match_name_pattern(pattern, choices, field)
-        if (!length(matches)) {
+        if (!length(matches) && isTRUE(strict)) {
             .cdrgam_cli_abort(paste0(
                 field, ' selector matched nothing: ', pattern,
                 if (length(choices)) paste0('; available: ', paste(choices, collapse=', ')) else ''
@@ -326,14 +326,17 @@
 
 .cdrgam_cli_resolve_graph <- function(
         definitions, models=NULL, predictions=NULL, visualizations=NULL,
-        comparisons=NULL, all=FALSE, fingerprints=NULL
+        comparisons=NULL, all=FALSE, fingerprints=NULL,
+        strict_selectors=TRUE
 ) {
     explicit <- any(c(
         length(models), length(predictions), length(visualizations), length(comparisons)
     ) > 0L)
     if (!explicit) all <- TRUE
     model_names <- if (length(models)) {
-        .cdrgam_cli_match_names(models, names(definitions$models), 'model')
+        .cdrgam_cli_match_names(
+            models, names(definitions$models), 'model', strict_selectors
+        )
     } else names(definitions$models)
     terminals <- list()
     if (isTRUE(all) || (length(models) && !length(predictions) &&
@@ -364,14 +367,15 @@
     }
     visualization_names <- if (isTRUE(all)) names(definitions$visualizations) else
         if (length(visualizations)) .cdrgam_cli_match_names(
-            visualizations, names(definitions$visualizations), 'visualization'
+            visualizations, names(definitions$visualizations), 'visualization',
+            strict_selectors
         ) else character()
     if (length(models) && length(visualization_names)) {
         visualization_names <- visualization_names[vapply(
             definitions$visualizations[visualization_names],
             function(value) value$model %in% model_names, logical(1)
         )]
-        if (!length(visualization_names)) {
+        if (!length(visualization_names) && isTRUE(strict_selectors)) {
             .cdrgam_cli_abort('Combined model and visualization selectors matched nothing')
         }
     }
@@ -380,14 +384,15 @@
     }))
     comparison_names <- if (isTRUE(all)) names(definitions$comparisons) else
         if (length(comparisons)) .cdrgam_cli_match_names(
-            comparisons, names(definitions$comparisons), 'comparison'
+            comparisons, names(definitions$comparisons), 'comparison',
+            strict_selectors
         ) else character()
     if (length(models) && length(comparison_names)) {
         comparison_names <- comparison_names[vapply(
             definitions$comparisons[comparison_names],
             function(value) all(model_names %in% value$models), logical(1)
         )]
-        if (!length(comparison_names)) {
+        if (!length(comparison_names) && isTRUE(strict_selectors)) {
             .cdrgam_cli_abort('Combined model and comparison selectors matched nothing')
         }
     }

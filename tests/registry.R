@@ -6,9 +6,23 @@ dir.create(temporary)
 on.exit(unlink(temporary, recursive=TRUE), add=TRUE)
 
 store <- file.path(temporary, 'store')
+cdrgam_cli_configure(store)
 project <- file.path(store, 'projects', 'example')
 dir.create(file.path(project, 'definitions'), recursive=TRUE)
-configuration <- list(cdrgam_root=store)
+configuration <- internal('.cdrgam_cli_site')(store)
+request_order_directory <- file.path(store, '.cdrgam', 'work', 'request-order')
+dir.create(request_order_directory, recursive=TRUE)
+older_request <- file.path(request_order_directory, 'z-old.rds')
+newer_request <- file.path(request_order_directory, 'a-new.rds')
+saveRDS(list(), older_request)
+saveRDS(list(), newer_request)
+request_time <- Sys.time()
+Sys.setFileTime(older_request, request_time - 10)
+Sys.setFileTime(newer_request, request_time)
+stopifnot(identical(
+    internal('.cdrgam_cli_request_files')(request_order_directory),
+    c(older_request, newer_request)
+))
 project_definition <- list(project=list(
     schema=1L, id='project-registry-test', name='example'
 ))
@@ -55,27 +69,148 @@ internal('.cdrgam_cli_registry_attempt')(
     )
 )
 
+internal('.cdrgam_cli_registry_attempt')(
+    configuration,
+    item,
+    list(
+        status='running', job_id='12345', path=attempt,
+        definitions=definitions
+    )
+)
+internal('.cdrgam_cli_registry_state')(configuration, item, 'running')
+internal('.cdrgam_cli_registry_record_graph')(
+    configuration, graph, 'registry-contract-repeat'
+)
+preserved <- internal('.cdrgam_cli_registry_states')(configuration, key)[[key]]
+active <- internal('.cdrgam_cli_registry_active_attempt_keys')(configuration, key)
+jobs <- internal('.cdrgam_cli_registry_active_job_ids')(configuration, key)
 stopifnot(
+    identical(preserved, 'running'), identical(active, key), identical(jobs, '12345')
+)
+active_worker <- list(
+    worker_id='active-worker', job_id='67890', resource_key='test',
+    status='running', path=file.path(store, '.cdrgam', 'workers', 'active-worker'),
+    current_work_key=key, submitted_at=as.character(Sys.time())
+)
+internal('.cdrgam_cli_registry_worker')(configuration, active_worker)
+stopifnot(identical(
+    internal('.cdrgam_cli_registry_active_worker_job_ids')(configuration),
+    '67890'
+))
+restored_workers <- internal('.cdrgam_cli_registry_active_workers')(configuration)
+stopifnot(
+    identical(names(restored_workers), 'active-worker'),
+    identical(restored_workers[[1L]]$job_id, '67890'),
+    identical(restored_workers[[1L]]$current_work_key, key),
     identical(
-        internal('.cdrgam_cli_registry_keys_for_artifacts')(
-            configuration, output
-        ),
-        key
+        restored_workers[[1L]]$path,
+        internal('.cdrgam_cli_normalize_path')(active_worker$path, must_work=FALSE)
+    )
+)
+active_worker$status <- 'stopped'
+internal('.cdrgam_cli_registry_worker')(configuration, active_worker)
+stopifnot(!length(
+    internal('.cdrgam_cli_registry_active_worker_job_ids')(configuration)
+))
+internal('.cdrgam_cli_registry_reclaim_attempts')(
+    configuration, graph$items, key, 'test orphaned worker'
+)
+reclaimed <- internal('.cdrgam_cli_registry_states')(configuration, key)[[key]]
+reclaimed_connection <- internal('.cdrgam_cli_registry_connect')(configuration)
+reclaimed_attempt <- DBI::dbGetQuery(
+    reclaimed_connection,
+    'SELECT state,error FROM attempts WHERE work_key=? ORDER BY attempt_id DESC LIMIT 1',
+    params=list(key)
+)
+DBI::dbDisconnect(reclaimed_connection)
+stopifnot(
+    identical(reclaimed, 'pending'),
+    identical(reclaimed_attempt$state[[1L]], 'failed'),
+    identical(reclaimed_attempt$error[[1L]], 'test orphaned worker')
+)
+
+dependent_key <- 'prediction:project-registry-test:main_validation:test-identity'
+dependent <- list(
+    key=dependent_key,
+    project='example',
+    kind='prediction',
+    name='main_validation',
+    identity='test-identity',
+    output=file.path(output, 'predictions', 'validation'),
+    dependencies=key
+)
+dependency_graph <- list(
+    items=stats::setNames(list(item, dependent), c(key, dependent_key)),
+    targets=dependent_key,
+    definitions=list(example=definitions)
+)
+internal('.cdrgam_cli_registry_record_graph')(
+    configuration, dependency_graph, 'registry-dependency-status'
+)
+internal('.cdrgam_cli_registry_state')(configuration, item, 'complete')
+states <- internal('.cdrgam_cli_registry_dependency_states')(configuration)
+stopifnot(identical(states[[dependent_key]], 'queued'))
+internal('.cdrgam_cli_registry_state')(configuration, item, 'failed')
+states <- internal('.cdrgam_cli_registry_dependency_states')(configuration)
+stopifnot(identical(states[[dependent_key]], 'blocked'))
+internal('.cdrgam_cli_registry_state')(configuration, item, 'pending')
+states <- internal('.cdrgam_cli_registry_dependency_states')(configuration)
+stopifnot(identical(states[[dependent_key]], 'waiting'))
+
+snapshot <- internal('.cdrgam_cli_registry_status_snapshot')(
+    configuration, projects='example',
+    project_ids=c(example='project-registry-test')
+)
+stopifnot(
+    nrow(snapshot$records) == 2L,
+    identical(snapshot$states[[dependent_key]], 'waiting')
+)
+read_only <- internal('.cdrgam_cli_registry_connect')(
+    configuration, read_only=TRUE
+)
+write_error <- tryCatch({
+    DBI::dbExecute(read_only, 'DELETE FROM work_items')
+    NULL
+}, error=identity)
+DBI::dbDisconnect(read_only)
+stopifnot(inherits(write_error, 'error'))
+
+stopifnot(
+    key %in% internal('.cdrgam_cli_registry_keys_for_artifacts')(
+        configuration, output
     ),
-    identical(
-        internal('.cdrgam_cli_registry_keys_for_project')(
-            configuration, 'example', 'project-registry-test'
-        ),
-        key
+    key %in% internal('.cdrgam_cli_registry_keys_for_project')(
+        configuration, 'example', 'project-registry-test'
     )
 )
 
-internal('.cdrgam_cli_registry_forget')(configuration, key)
+internal('.cdrgam_cli_registry_forget')(
+    configuration, c(key, dependent_key)
+)
 remaining <- internal('.cdrgam_cli_registry_exec')(
     configuration,
     'SELECT COUNT(*) AS n FROM work_items',
     query=TRUE
 )$n[[1L]]
 stopifnot(remaining == 0L, !dir.exists(attempt))
+
+internal('.cdrgam_cli_registry_record_graph')(
+    configuration, graph, 'project-removal-test', request_id='project-removal-test'
+)
+request_path <- file.path(
+    store, '.cdrgam', 'work', 'requests', 'project-removal-test.rds'
+)
+dir.create(dirname(request_path), recursive=TRUE, showWarnings=FALSE)
+saveRDS(graph, request_path)
+project_keys <- internal('.cdrgam_cli_registry_project_keys')(
+    configuration, 'example'
+)
+stopifnot(identical(project_keys, key))
+internal('.cdrgam_cli_remove_project')('example', force=TRUE, cdrgam_root=store)
+stopifnot(!dir.exists(project), !file.exists(request_path))
+remaining <- internal('.cdrgam_cli_registry_exec')(
+    configuration, 'SELECT COUNT(*) AS n FROM work_items', query=TRUE
+)$n[[1L]]
+stopifnot(remaining == 0L)
 
 cat('registry: ok\n')

@@ -4,7 +4,12 @@
 #'   Conjunctive selectors for generated results. Dataset selectors address
 #'   dataset artifacts directly.
 #' @param work,logs Include private attempts or logs.
-#' @param yes Remove selected paths. The default previews them.
+#' @param force Remove selected paths without an interactive preview or prompt.
+#' @param confirm Whether to confirm removal after showing the selection. By
+#'   default, confirmation is offered only when standard input and output are
+#'   terminals.
+#' @param pager Optional pager executable or function for the selection.
+#' @param use_pager Whether an interactive selection may open the pager.
 #' @param cdrgam_root Configured CDR-GAM root.
 #' @return Selected generated paths, invisibly.
 #' @details Registry records and private attempt directories for selected work
@@ -13,7 +18,8 @@
 cdrgam_cli_purge <- function(
         projects=NULL, models=NULL, predictions=NULL, visualizations=NULL,
         comparisons=NULL, datasets=NULL, work=FALSE, logs=FALSE,
-        yes=FALSE, cdrgam_root=NULL
+        force=FALSE, cdrgam_root=NULL, confirm=NULL, pager=NULL,
+        use_pager=TRUE
 ) {
     workload_selected <- any(c(
         length(models), length(predictions), length(visualizations),
@@ -154,6 +160,9 @@ cdrgam_cli_purge <- function(
                 }
             ), use.names=FALSE))
         }
+        project_targets <- c(project_targets, .cdrgam_cli_purge_work_targets(
+            definitions, project_targets
+        ))
         project_registry_keys <- if (!workload_selected) {
             .cdrgam_cli_registry_keys_for_project(
                 configuration, project, definitions$project$project$id
@@ -176,16 +185,22 @@ cdrgam_cli_purge <- function(
         message('No generated artifacts or registry workloads matched the selection')
         return(invisible(targets))
     }
-    if (length(targets)) cat(
-        'Selected generated artifacts:\n',
-        paste0('  ', targets, collapse='\n'), '\n'
+    preview <- c(
+        if (length(targets)) c(
+            'Selected generated artifacts:', paste0('  ', targets)
+        ) else character(),
+        if (length(registry_keys)) c(
+            'Selected registry workloads:', paste0('  ', registry_keys)
+        ) else character()
     )
-    if (length(registry_keys)) cat(
-        'Selected registry workloads:\n',
-        paste0('  ', registry_keys, collapse='\n'), '\n'
+    preview <- paste0(paste(preview, collapse='\n'), '\n')
+    proceed <- .cdrgam_cli_confirm_destructive(
+        preview,
+        prompt='Remove these selected paths and registry workloads? [y/N] ',
+        force=force, confirm=confirm, pager=pager, use_pager=use_pager,
+        cancel_message='Purge cancelled'
     )
-    if (!isTRUE(yes)) {
-        message('Preview only; pass --yes to remove the selection')
+    if (!proceed) {
         return(invisible(targets))
     }
     .cdrgam_cli_registry_assert_inactive(configuration, registry_keys)
@@ -200,4 +215,148 @@ cdrgam_cli_purge <- function(
         length(registry_keys), ' registry workload(s)'
     )
     invisible(targets)
+}
+
+.cdrgam_cli_confirm_destructive <- function(
+        preview, prompt, force=FALSE, confirm=NULL, pager=NULL,
+        use_pager=TRUE, cancel_message='Operation cancelled',
+        reader=.cdrgam_cli_read_terminal_line
+) {
+    if (isTRUE(force)) return(TRUE)
+    .cdrgam_cli_page_text(
+        preview, use_pager=use_pager, pager=pager, header_lines=1L
+    )
+    if (is.null(confirm)) confirm <- isatty(stdin()) && isatty(stdout())
+    if (!isTRUE(confirm)) {
+        message('Preview only; rerun with --force to apply this removal')
+        return(FALSE)
+    }
+    response <- reader(prompt)
+    if (!(tolower(trimws(response)) %in% c('y', 'yes'))) {
+        message(cancel_message)
+        return(FALSE)
+    }
+    TRUE
+}
+
+.cdrgam_cli_read_terminal_line <- function(
+        prompt, input=NULL, output=stderr()
+) {
+    cat(prompt, file=output)
+    flush(output)
+    if (!is.null(input)) {
+        response <- readLines(input, n=1L, warn=FALSE)
+    } else if (.cdrgam_cli_is_windows()) {
+        response <- system2(
+            Sys.getenv('COMSPEC', 'cmd.exe'),
+            c(
+                '/d', '/v:on', '/s', '/c',
+                shQuote(
+                    'set /p "cdrgam_response=" & echo(!cdrgam_response!'
+                )
+            ),
+            stdout=TRUE
+        )
+    } else {
+        response <- system2(
+            '/bin/sh',
+            c(
+                '-c',
+                shQuote(
+                    "IFS= read -r response; printf '%s\\n' \"$response\""
+                )
+            ),
+            stdout=TRUE
+        )
+    }
+    if (length(response)) response[[1L]] else ''
+}
+
+# Private attempt directories are named `<kind>_<name>` beneath the work root.
+# Return the existing directories that belong to work items whose generated
+# artifacts are selected, so a purge cannot leave a failed attempt (and its
+# optimizer checkpoints) to be resumed by the next run.
+.cdrgam_cli_purge_work_targets <- function(definitions, targets) {
+    root <- .cdrgam_cli_path(definitions, 'work')
+    if (!length(targets) || !dir.exists(root)) return(character())
+    existing <- basename(list.dirs(root, recursive=FALSE, full.names=TRUE))
+    if (!length(existing)) return(character())
+    # The central path builder returns normalized paths, so only the targets
+    # need normalizing. Normalizing once keeps this linear in the number of
+    # candidates.
+    normalized_targets <- sub(
+        '/+$', '', .cdrgam_cli_normalize_path(targets, must_work=FALSE)
+    )
+    selected <- function(path) {
+        path <- sub('/+$', '', path)
+        any(path == normalized_targets |
+            startsWith(path, paste0(normalized_targets, '/')))
+    }
+    # Work items are named from their workload; list the expected names as
+    # strings and build artifact paths only for work directories that exist.
+    # Projects with many models and datasets otherwise build thousands of
+    # paths, each of which touches the file system.
+    models <- names(definitions$models)
+    candidates <- list()
+    add <- function(name, artifact) {
+        candidates[[length(candidates) + 1L]] <<- list(name=name, artifact=artifact)
+    }
+    for (model_name in models) {
+        add(paste0('fit_', model_name), list('model', model_name))
+        model <- definitions$models[[model_name]]
+        for (dataset_name in unique(c(
+                names(model$datasets), names(definitions$datasets)))) {
+            add(
+                paste('prediction', model_name, dataset_name, sep='_'),
+                list('prediction', model_name, dataset_name)
+            )
+        }
+    }
+    for (name in names(definitions$visualizations)) {
+        add(
+            paste0('visualization_', name),
+            list('visualization', definitions$visualizations[[name]]$model, name)
+        )
+    }
+    for (name in names(definitions$comparisons)) {
+        add(paste0('comparison_', name), list('comparison', name))
+    }
+    # Effect items are named `<model>_<request hash>`; their outputs live
+    # under the model, so they are selected exactly when the model is.
+    for (model_name in models) {
+        prefix <- paste0('effect_', model_name, '_')
+        matches <- existing[startsWith(existing, prefix) & grepl(
+            '^[0-9a-f]+$', substring(existing, nchar(prefix) + 1L)
+        )]
+        for (name in matches) add(name, list('model', model_name))
+    }
+    names_seen <- character()
+    artifact_selected <- new.env(parent=emptyenv())
+    output <- character()
+    for (candidate in candidates) {
+        if (!(candidate$name %in% existing) || candidate$name %in% names_seen) next
+        names_seen <- c(names_seen, candidate$name)
+        artifact <- candidate$artifact
+        key <- paste(unlist(artifact), collapse='\034')
+        if (!exists(key, envir=artifact_selected, inherits=FALSE)) {
+            path <- switch(
+                artifact[[1L]],
+                model=.cdrgam_cli_path(definitions, 'model', artifact[[2L]]),
+                prediction=.cdrgam_cli_path(
+                    definitions, 'prediction', artifact[[2L]], dataset=artifact[[3L]]
+                ),
+                visualization=.cdrgam_cli_path(
+                    definitions, 'visualization', artifact[[2L]], dataset=artifact[[3L]]
+                ),
+                comparison=.cdrgam_cli_path(definitions, 'comparison', artifact[[2L]])
+            )
+            assign(key, selected(path), envir=artifact_selected)
+        }
+        if (get(key, envir=artifact_selected, inherits=FALSE)) {
+            output <- c(output, .cdrgam_cli_path(
+                definitions, 'work', name=candidate$name
+            ))
+        }
+    }
+    output
 }

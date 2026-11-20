@@ -160,6 +160,19 @@ local({
         paste(selected$type, selected$name),
         c('dataset training', 'model main', 'model spare')
     ))
+    inferred_selection <- capture.output(stopifnot(identical(
+        cli_main(c('def', 'ls', '--model', 'main')), 0L
+    )))
+    stopifnot(any(grepl('main', inferred_selection, fixed=TRUE)))
+    resolve_definition_project <- getFromNamespace(
+        '.cdrgam_cli_resolve_definition_project', 'cdrgam.cli'
+    )
+    stopifnot(identical(
+        resolve_definition_project(
+            type='model', names='main', operation='val', checkout=checkout
+        ),
+        'example'
+    ))
     invisible(capture.output(stopifnot(identical(
         cli_main(c(
             'def', 'ls', 'example', '--dataset', 'train*',
@@ -176,6 +189,64 @@ local({
         any(grepl('spare', model_listing, fixed=TRUE)),
         !any(grepl('training', model_listing, fixed=TRUE))
     )
+    previous_directory <- getwd()
+    on.exit(setwd(previous_directory), add=TRUE)
+    setwd(project)
+    inferred_listing <- capture.output(stopifnot(identical(
+        cli_main(c('def', 'ls', '--model')), 0L
+    )))
+    setwd(previous_directory)
+    stopifnot(
+        any(grepl('main', inferred_listing, fixed=TRUE)),
+        any(grepl('spare', inferred_listing, fixed=TRUE))
+    )
+    referenced_rename_error <- tryCatch({
+        cli_main(c(
+            'def', 'mv', '-P', 'example', '--model', 'main', 'renamed-main'
+        ))
+        NA_character_
+    }, error=function(error) conditionMessage(error))
+    stopifnot(grepl(
+        'referenced by', referenced_rename_error, fixed=TRUE
+    ))
+    rename_arity_error <- tryCatch({
+        cli_main(c('def', 'mv', '-P', 'example', '--model', 'spare'))
+        NA_character_
+    }, error=function(error) conditionMessage(error))
+    stopifnot(grepl(
+        'exactly two model names', rename_arity_error, fixed=TRUE
+    ))
+    spare_path <- file.path(
+        project, 'definitions', 'models', 'spare.yml'
+    )
+    renamed_spare_path <- file.path(
+        project, 'definitions', 'models', 'renamed-spare.yml'
+    )
+    spare_contents <- readBin(
+        spare_path, what='raw', n=file.info(spare_path)$size
+    )
+    stopifnot(identical(
+        cli_main(c(
+            'def', 'mv', '-P', 'example', '--model', 'spare', 'renamed-spare'
+        )),
+        0L
+    ))
+    stopifnot(
+        !file.exists(spare_path), file.exists(renamed_spare_path),
+        identical(
+            readBin(
+                renamed_spare_path, what='raw',
+                n=file.info(renamed_spare_path)$size
+            ),
+            spare_contents
+        )
+    )
+    stopifnot(identical(
+        cli_main(c(
+            'def', 'mv', '-P', 'example', '--model', 'renamed-spare', 'spare'
+        )),
+        0L
+    ))
     missing_run_selector <- tryCatch({
         cli_main(c('run', '--model'))
         NA_character_
@@ -199,9 +270,6 @@ local({
     )
     writeLines(alternative_definition, alternative_path)
 
-    spare_path <- file.path(
-        project, 'definitions', 'models', 'spare.yml'
-    )
     writeLines('model: [', spare_path)
     spare_artifact <- file.path(project, 'results', 'models', 'spare')
     dir.create(spare_artifact, recursive=TRUE)

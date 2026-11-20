@@ -1,0 +1,61 @@
+#!/bin/sh
+set -eu
+
+base=${1:?expected baseline commit}
+target=${2:?expected target commit}
+scope=${3:-auto}
+repository=${4:-.}
+
+case "$scope" in
+    auto|portability|runtime|full) ;;
+    *)
+        echo "Unknown preflight scope: $scope" >&2
+        exit 2
+        ;;
+esac
+
+profile=none
+reason='no portability-sensitive files changed'
+
+if [ "$scope" = full ] || [ "$scope" = runtime ]; then
+    profile=full
+    reason="manual $scope scope"
+elif [ "$scope" = portability ]; then
+    profile=portability
+    reason='manual portability scope'
+else
+    changed=$(git -C "$repository" diff --name-only "$base...$target")
+    portability=false
+    runtime=false
+    for path in $changed; do
+        case "$path" in
+            R/core-adapter.R|R/executors.R|R/work-runner.R)
+                runtime=true
+                ;;
+            R/artifact-store.R|R/paths.R|R/site.R|R/install.R|R/utils.R|\
+            R/cli.R|R/commands.R|R/config.R|R/controller.R|R/dataset.R|\
+            R/git.R|R/init-definitions.R|R/project.R|R/publication.R|\
+            R/purge.R|R/registry.R|R/slurm.R|R/status.R|R/validate.R|\
+            scripts/*|tests/paths.R|tests/phase1.R|.github/workflows/*|\
+            DESCRIPTION|NAMESPACE)
+                portability=true
+                ;;
+        esac
+    done
+    if [ "$runtime" = true ]; then
+        profile=full
+        reason='runtime, process, or core-adapter files changed'
+    elif [ "$portability" = true ]; then
+        profile=portability
+        reason='portability-sensitive files changed'
+    fi
+fi
+
+if [ "$profile" = none ]; then
+    run_matrix=false
+else
+    run_matrix=true
+fi
+
+printf 'run_matrix=%s\nprofile=%s\nreason=%s\n' \
+    "$run_matrix" "$profile" "$reason"

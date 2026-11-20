@@ -11,13 +11,8 @@ if [ "${R_BIN+x}" = x ]; then
     r_bin=$R_BIN
 elif [ "$#" -gt 0 ]; then
     r_bin=$1
-elif command -v R >/dev/null 2>&1; then
-    r_bin=$(command -v R)
-elif [ -x "$HOME/.local/bin/R" ]; then
-    r_bin=$HOME/.local/bin/R
 else
-    echo "R was not found; activate its environment or set R_BIN" >&2
-    exit 1
+    r_bin=$("$(dirname "$0")/r-bin")
 fi
 
 script_directory=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)

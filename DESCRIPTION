@@ -1,6 +1,6 @@
 Package: cdrgam.cli
 Title: Project Harness for Continuous-Time Deconvolutional Regression
-Version: 0.2.1
+Version: 0.3.0
 Authors@R:
     person("Cory", "Shain", , "cory.shain@gmail.com", role = c("aut", "cre"),
            comment = c(ORCID = "https://orcid.org/0000-0002-2704-7197"))
@@ -17,7 +17,7 @@ Remotes:
     github::CLiMBlab-Stanford/cdrgam@main
 Imports:
     callr,
-    cdrgam (>= 0.2.0),
+    cdrgam (>= 0.3.0),
     cli,
     DBI,
     digest,
@@ -27,9 +27,15 @@ Imports:
     processx,
     ps,
     RSQLite,
+    utils,
     yaml
 Suggests:
-    lintr
+    bslib,
+    jsonlite,
+    later,
+    lintr,
+    plotly,
+    shiny
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.2

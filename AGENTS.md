@@ -45,6 +45,13 @@ example:
 ./scripts/test integration
 ```
 
+For local development, invoke R through `./scripts/r-bin` or one of the
+repository scripts. They prefer the active Conda R, then the configured
+`cdrgam` Conda environment. Do not invoke an unqualified `R` or
+`Rscript` unless a task specifically requires another installation. The
+resolver fails rather than silently using a system R; only use
+`CDRGAM_ALLOW_SYSTEM_R=1` for an intentional non-Conda exception.
+
 Do not commit package tarballs, check directories, installed libraries,
 project outputs, checkpoints, logs, plots, or fitted objects.
 

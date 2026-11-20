@@ -7,6 +7,10 @@
   : Project Harness for CDR-GAM Analyses
 - [`cdrgam_cli_configure()`](https://climblab-stanford.github.io/cdrgam.cli/reference/cdrgam_cli_configure.md)
   : Configure a CDR-GAM Root
+- [`cdrgam_cli_stop()`](https://climblab-stanford.github.io/cdrgam.cli/reference/cdrgam_cli_stop.md)
+  : Stop selected Slurm work
+- [`cdrgam_cli_viz()`](https://climblab-stanford.github.io/cdrgam.cli/reference/cdrgam_cli_viz.md)
+  : Serve the model viewer
 - [`cli_main()`](https://climblab-stanford.github.io/cdrgam.cli/reference/cli_main.md)
   : Dispatch the cdrgam Command
 - [`install_cli()`](https://climblab-stanford.github.io/cdrgam.cli/reference/install_cli.md)

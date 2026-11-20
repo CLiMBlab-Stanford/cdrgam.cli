@@ -27,7 +27,7 @@ configured root.
 After installation from a package repository, run
 [`install_cli()`](https://climblab-stanford.github.io/cdrgam.cli/reference/install_cli.md).
 It creates the default root and its site configuration. Use
-`cdrgam def edit site` to change scheduler settings. To move a root,
+`cdrgam def edit -P site` to change scheduler settings. To move a root,
 stop its workers, move the entire directory, and set `CDRGAM_ROOT` or
 reinstall the launcher with the new path.
 
@@ -70,9 +70,9 @@ portable serial or lower-memory behavior.
 
 ``` sh
 cdrgam def init brown
-cdrgam def edit brown --dataset training
-cdrgam def edit brown --model main
-cdrgam def val brown --deep
+cdrgam def edit -P brown --dataset training
+cdrgam def edit -P brown --model main
+cdrgam def val -P brown --deep
 cdrgam run -P brown -m main
 ```
 
@@ -80,6 +80,13 @@ Every command provides contextual help. Use `cdrgam --help` to list
 public commands, `cdrgam COMMAND --help` for its options, or
 `cdrgam help def edit` for a nested command. Internal scheduler and
 worker commands are omitted from public help.
+
+Project-scoped commands accept `-P/--project`. When it is omitted,
+definition commands first infer the project from the current directory,
+then look for a unique project matching the supplied definition
+selector. Ambiguous matches, new definitions requested outside a
+project, project initialization, and whole-project removal still require
+an explicit project.
 
 `cdrgam def init` creates a project, initializes a Git repository on
 `main`, and stages its initial source files. `cdrgam def edit` creates
@@ -99,13 +106,13 @@ The same option opens a copy of a subordinate definition for editing
 before publishing it under the new name:
 
 ``` sh
-cdrgam def edit brown --model main-alternative --source main
+cdrgam def edit -P brown --model main-alternative --source main
 ```
 
 Remove an unused definition explicitly with `def rm`:
 
 ``` sh
-cdrgam def rm brown --model main-alternative
+cdrgam def rm -P brown --model main-alternative
 ```
 
 Removal is refused while another definition references the target or
@@ -113,7 +120,7 @@ while generated results exist. Remove matching results first when
 requested:
 
 ``` sh
-cdrgam purge -P brown -m main-alternative --yes
+cdrgam purge -P brown -m main-alternative --force
 ```
 
 `def rm` selects targets by filename and does not validate their
@@ -125,23 +132,25 @@ Validate an entire project or diagnose one definition without changing
 it:
 
 ``` sh
-cdrgam def val brown --deep
-cdrgam def val brown --model main alternative
+cdrgam def val -P brown --deep
+cdrgam def val -P brown --model main alternative
 ```
 
 List all definitions, or combine selectors to list specific matches:
 
 ``` sh
 cdrgam def ls
-cdrgam def ls brown
-cdrgam def ls brown --model
-cdrgam def ls brown --dataset 'brown-*' --model 'main*'
-cdrgam def ls brown --model 're:^main-(linear|nonlinear)$'
+cdrgam def ls -P brown
+cdrgam def ls -P brown --model
+cdrgam def ls -P brown --dataset 'brown-*' --model 'main*'
+cdrgam def ls -P brown --model 're:^main-(linear|nonlinear)$'
 ```
 
-Bare `cdrgam def ls` lists the root’s available projects. A selector
-without values lists every definition of that type. Once any type
-selector is supplied, unselected types are omitted.
+Bare `cdrgam def ls` lists the root’s available projects. When a
+definition selector is supplied without `-P`, the current project or the
+unique project containing a match is inferred. A selector without values
+lists every definition of that type. Once any type selector is supplied,
+unselected types are omitted.
 
 Definition selectors accept multiple values. `edit` processes literal
 names in order; `ls`, `val`, and `rm` also accept `*` globs and
@@ -166,10 +175,21 @@ cdrgam run -P val -m 're:^natstor-(raw|log)-l[01]s[01]h[01]$'
 ```
 
 Project, model, visualization, and comparison selectors accept exact
-names, `*` globs, and `re:`-prefixed regular expressions. If a
-prediction selector is not a model partition, it must exactly match a
-dataset definition. Downstream visualizations and comparisons request
-their fit and prediction dependencies automatically.
+names, `*` globs, and `re:`-prefixed regular expressions. Repeated
+values within one selector are combined, while different selector
+dimensions are conjunctive. When no project is selected, matching
+workloads are combined across projects; each model pattern need not
+occur in every project. If a prediction selector is not a model
+partition, it must exactly match a dataset definition. Downstream
+visualizations and comparisons request their fit and prediction
+dependencies automatically.
+
+Fits classified as `Warning` or `Nonconverged` include
+`simplification-report.txt` and `simplification-report.yml` with ranked,
+diagnostic suggestions. Reporting does not change the fitted model. Set
+`autosimplify: true` in a model definition to permit eligible formula
+patches and fresh refits until the fit is healthy or the configured step
+limit is reached.
 
 Generated artifacts live under the project’s ignored `results/`
 directory. Prepare independently publishable sources and results with:
@@ -191,6 +211,46 @@ manifests:
 cdrgam fetch https://github.com/example/brown-cdrgam
 cdrgam fetch SOURCE --source-only
 cdrgam fetch SOURCE --results brown-results.tar.gz
+```
+
+`cdrgam viz` serves a browser viewer for every completed fit under the
+root. It draws effect lines, with several lines per plot drawn from any
+fits, and two-axis effect surfaces. For each line or surface you choose
+the term, the axes that vary, and fixed values for the remaining axes of
+tensor terms. A reference can be subtracted from each line; an empty
+reference field leaves that predictor at the model default, so terms
+involving it drop out. With the Total composition, fixing `wlen` at one
+value, leaving its reference empty, and giving `repetition_index` the
+same reference as its fixed value gives the word-length effect at that
+repetition. Axes that are not varied start at lag 0 and at their
+training means. Fixed and reference fields accept numbers or expressions
+such as `mean + 2 * sd`, and lag fields also accept `peak`, `peak-pos`,
+and `peak-neg`, as in visualization definitions. Effects are on the
+linear-predictor scale with pointwise or, under **Options**,
+simultaneous intervals. References need the development `cdrgam`. The
+viewer needs the optional R packages `shiny`, `bslib`, `plotly`,
+`jsonlite`, and `later`.
+
+On a Slurm-configured root the server runs in a Slurm job owned by the
+calling user, and later `cdrgam viz` calls reuse it. The command prints
+an `ssh` command that forwards the server’s port through a login host.
+Set `CDRGAM_VIZ_GATEWAY` to the login host you reach from your
+workstation, such as `user@login.example.edu`; otherwise the command
+names the host it ran on. The job’s server listens on all of its node’s
+interfaces without authentication, so anyone who can reach the node can
+open the viewer. On other roots, or with `--local`, the server runs in
+the foreground and listens only on loopback:
+
+In a Slurm viewer, **Refresh data** rescans for completed fits and
+reloads any fit whose results changed, and **Restart server** restarts
+the server inside the same job so that newly installed code takes
+effect, for example after `./scripts/install-dev`. Plotted lines are
+kept across a restart in the browser tab.
+
+``` sh
+cdrgam viz
+cdrgam viz --time 2-00:00:00 --memory 32G --restart
+cdrgam viz --stop
 ```
 
 See

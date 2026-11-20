@@ -14,7 +14,7 @@ contracts and checksums determine freshness.
 ## Usage
 
 ``` r
-cdrgam_cli_publish(project, results = c("none", "archive", "url", "git"),
+cdrgam_cli_publish(project = NULL, results = c("none", "archive", "url", "git"),
   archive = NULL, url = NULL, sha256 = NULL, models = NULL,
   predictions = NULL, visualizations = NULL, comparisons = NULL,
   commit = NULL, push = FALSE, cdrgam_root = NULL)
@@ -27,7 +27,8 @@ cdrgam_cli_fetch(location, project = NULL, source_only = FALSE,
 
 - project:
 
-  Project name. For fetching, an optional local project name.
+  For publication, an optional project name inferred from the current
+  directory when omitted. For fetching, an optional local project name.
 
 - results:
 

@@ -210,8 +210,12 @@ reference can be subtracted from each line; an empty reference field leaves
 that predictor at the model default, so terms involving it drop out. With the
 Total composition, fixing `wlen` at one value, leaving its reference empty,
 and giving `repetition_index` the same reference as its fixed value gives the
-word-length effect at that repetition. Effects are on the linear-predictor
-scale with pointwise intervals. References need the development `cdrgam`. The viewer needs
+word-length effect at that repetition. Axes that are not varied start at lag 0
+and at their training means. Fixed and reference fields accept numbers or
+expressions such as `mean + 2 * sd`, and lag fields also accept `peak`,
+`peak-pos`, and `peak-neg`, as in visualization definitions. Effects are on
+the linear-predictor scale with pointwise or, under **Options**, simultaneous
+intervals. References need the development `cdrgam`. The viewer needs
 the optional R packages `shiny`, `bslib`, `plotly`, `jsonlite`, and `later`.
 
 On a Slurm-configured root the server runs in a Slurm job owned by the calling

@@ -536,17 +536,113 @@
     value
 }
 
+.cdrgam_cli_visualization_presets <- c('irf-lag', 'irf-predictor')
+
+# Expand a preset visualization into the query and render it stands for.
+# Both presets show every ungrouped IRF with at most one predictor, one curve
+# per term, with simultaneous intervals by default. `irf-lag` plots each
+# term over lag at a predictor step (default mean + sd) relative to a
+# reference (default mean), optionally adding irf(1). `irf-predictor` plots
+# each term over its predictor values, relative to the reference, at a fixed
+# lag (default 0). Axes the plot does not vary are held as `hold` says,
+# by default at their training means. A partial `render` overrides the
+# preset's render settings.
+.cdrgam_cli_expand_preset <- function(value, path) {
+    field <- paste0(path, ': preset')
+    preset <- .cdrgam_cli_scalar_character(value$preset, field)
+    if (!(preset %in% .cdrgam_cli_visualization_presets)) .cdrgam_cli_abort(paste0(
+        field, ' must be one of ',
+        paste(.cdrgam_cli_visualization_presets, collapse=', ')
+    ))
+    if (!is.null(value$query) || !is.null(value$layers) || !is.null(value$kind)) {
+        .cdrgam_cli_abort(paste0(path, ': preset cannot be combined with query, layers, or kind'))
+    }
+    option_field <- paste0(path, ': options')
+    options <- .cdrgam_cli_restore_yaml_keys(
+        .cdrgam_cli_null(value$options, list()), c('FALSE'='n'), option_field
+    )
+    lag_plot <- identical(preset, 'irf-lag')
+    .cdrgam_cli_check_keys(options, c(
+        'terms', 'reference', 'hold', 'n', 'level', 'interval', 'unconditional',
+        'points', if (lag_plot) c('step', 'irf1') else 'values'
+    ), option_field)
+    hold <- .cdrgam_cli_null(options$hold, list())
+    .cdrgam_cli_check_keys(
+        hold, c('time', if (!lag_plot) 'lag'), paste0(option_field, '.hold')
+    )
+    if (!is.null(options$irf1) && (!is.logical(options$irf1) ||
+            length(options$irf1) != 1L || is.na(options$irf1))) {
+        .cdrgam_cli_abort(paste0(option_field, '.irf1 must be true or false'))
+    }
+    terms <- options$terms
+    if (is.null(terms) || is.list(terms)) {
+        defaults <- list(grouped=FALSE, interacting=FALSE)
+        if (!(lag_plot && isTRUE(options$irf1))) defaults$predictors <- '*'
+        terms <- utils::modifyList(defaults, .cdrgam_cli_null(terms, list()))
+    } else if (lag_plot && isTRUE(options$irf1)) {
+        terms <- unique(c(as.character(terms), 'irf(1)'))
+    }
+    interval <- .cdrgam_cli_null(options$interval, 'simultaneous')
+    uncertainty <- list(
+        kind=interval, level=.cdrgam_cli_null(options$level, 0.95),
+        unconditional=.cdrgam_cli_null(options$unconditional, FALSE)
+    )
+    if (!is.null(options$points)) uncertainty$points <- options$points
+    n <- .cdrgam_cli_null(options$n, 200L)
+    axes <- list(time=.cdrgam_cli_null(hold$time, 'mean'))
+    if (lag_plot) {
+        axes$lag <- list(grid='fitted', n=n)
+        axes$predictors <- list('*'=.cdrgam_cli_null(options$step, 'mean + sd'))
+        render <- list(
+            geometry='line', mappings=list(x='lag', y='estimate', color='term'),
+            interval='ribbon', palette='rainbow', xlab='Lag',
+            ylab='Effect on linear predictor'
+        )
+    } else {
+        axes$lag <- .cdrgam_cli_null(hold$lag, 0)
+        axes$predictors <- list('*'=.cdrgam_cli_null(
+            options$values, list(grid='fitted', n=n)
+        ))
+        render <- list(
+            geometry='line',
+            mappings=list(x='predictor_value', y='estimate', color='term', facet='term'),
+            interval='ribbon', palette='rainbow', scales='free_x',
+            xlab='Predictor value', ylab='Effect on linear predictor'
+        )
+    }
+    value$query <- list(
+        terms=terms, composition='term', axes=axes,
+        reference=list('*'=.cdrgam_cli_null(options$reference, 'mean')),
+        uncertainty=uncertainty, n=n
+    )
+    if (!is.null(value$render)) {
+        if (!is.list(value$render)) .cdrgam_cli_abort(paste0(path, ': render must be a mapping'))
+        if (is.list(value$render$mappings)) {
+            value$render$mappings <- .cdrgam_cli_restore_yaml_keys(
+                value$render$mappings, c('TRUE'='y'), paste0(path, ': render.mappings')
+            )
+        }
+        render <- utils::modifyList(render, value$render)
+    }
+    value$render <- render
+    value
+}
+
 .cdrgam_cli_validate_visualization <- function(value, path) {
     .cdrgam_cli_validate_schema(value, path)
     .cdrgam_cli_reject_definition_identity(value, 'visualization', path)
     .cdrgam_cli_check_keys(
         value, c(
             'schema', 'model', 'kind', 'predictions', 'pages',
-            'query', 'layers', 'render'
+            'query', 'layers', 'render', 'preset', 'options'
         ),
         path, c('schema', 'model')
     )
     value$model <- .cdrgam_cli_name(value$model, paste0(path, ': model'))
+    if (!is.null(value$options) && is.null(value$preset)) {
+        .cdrgam_cli_abort(paste0(path, ': options requires preset'))
+    }
+    if (!is.null(value$preset)) value <- .cdrgam_cli_expand_preset(value, path)
     legacy <- !is.null(value$kind)
     if (legacy) value$kind <- match.arg(
         .cdrgam_cli_scalar_character(value$kind, paste0(path, ': kind')),
@@ -654,16 +750,33 @@
     value
 }
 
-.cdrgam_cli_validate_axis_request <- function(value, field) {
+.cdrgam_cli_validate_value <- function(value, field, lag) {
+    if (is.numeric(value) && length(value) == 1L && is.finite(value)) {
+        return(as.numeric(value))
+    }
+    .cdrgam_cli_value_parse(value, field, lag=lag)
+    trimws(value)
+}
+
+.cdrgam_cli_validate_axis_request <- function(value, field, lag=FALSE) {
     if (is.numeric(value)) return(as.numeric(value))
-    if (!is.list(value)) .cdrgam_cli_abort(paste0(field, ' must be numeric or a mapping'))
-    value <- .cdrgam_cli_restore_yaml_keys(value, c('FALSE'='n'), field)
-    .cdrgam_cli_check_keys(value, c('at', 'values', 'quantiles', 'grid', 'n'), field)
-    modes <- intersect(c('at', 'values', 'quantiles', 'grid'), names(value))
-    if (length(modes) != 1L) .cdrgam_cli_abort(paste0(
-        field, ' must define exactly one of at, values, quantiles, or grid'
+    if (is.character(value) && length(value) == 1L) {
+        return(.cdrgam_cli_validate_value(value, field, lag))
+    }
+    if (!is.list(value)) .cdrgam_cli_abort(paste0(
+        field, ' must be numeric, a value expression, or a mapping'
     ))
-    if (!is.null(value$at)) {
+    value <- .cdrgam_cli_restore_yaml_keys(value, c('FALSE'='n'), field)
+    .cdrgam_cli_check_keys(
+        value, c('at', 'values', 'quantiles', 'grid', 'range', 'n'), field
+    )
+    modes <- intersect(c('at', 'values', 'quantiles', 'grid', 'range'), names(value))
+    if (length(modes) != 1L) .cdrgam_cli_abort(paste0(
+        field, ' must define exactly one of at, values, quantiles, grid, or range'
+    ))
+    if (is.character(value$at)) {
+        value$at <- .cdrgam_cli_validate_value(value$at, paste0(field, '.at'), lag)
+    } else if (!is.null(value$at)) {
         if (is.list(value$at)) {
             .cdrgam_cli_check_keys(
                 value$at, c('summary', 'offset-sd'), paste0(field, '.at'), 'summary'
@@ -682,7 +795,23 @@
             }
         }
     }
+    if (!is.null(value$values) && any(vapply(value$values, is.character, logical(1)))) {
+        entries <- as.list(unlist(value$values, use.names=FALSE))
+        if (!length(entries)) .cdrgam_cli_abort(paste0(field, '.values must not be empty'))
+        value$values <- vapply(entries, function(entry) {
+            as.character(.cdrgam_cli_validate_value(entry, paste0(field, '.values'), lag))
+        }, character(1))
+    }
+    if (!is.null(value$range)) {
+        entries <- as.list(unlist(value$range, use.names=FALSE))
+        if (length(entries) != 2L) .cdrgam_cli_abort(paste0(
+            field, '.range must give a lower and an upper value'
+        ))
+        value$range <- lapply(entries, .cdrgam_cli_validate_value,
+            field=paste0(field, '.range'), lag=lag)
+    }
     for (name in intersect(c('values', 'quantiles'), names(value))) {
+        if (is.character(value[[name]])) next
         value[[name]] <- as.numeric(unlist(value[[name]], use.names=FALSE))
         if (!length(value[[name]]) || any(!is.finite(value[[name]]))) {
             .cdrgam_cli_abort(paste0(field, '.', name, ' must contain finite numbers'))
@@ -717,7 +846,7 @@
             value$terms <- as.character(value$terms)
         } else if (is.list(value$terms)) {
             .cdrgam_cli_check_keys(
-                value$terms, c('names', 'predictors', 'match', 'grouped'),
+                value$terms, c('names', 'predictors', 'match', 'grouped', 'interacting'),
                 paste0(field, '.terms')
             )
             for (name in intersect(c('names', 'predictors'), names(value$terms))) {
@@ -728,10 +857,11 @@
             if (!is.null(value$terms$match)) value$terms$match <- match.arg(
                 value$terms$match, c('contains', 'exact')
             )
-            if (!is.null(value$terms$grouped) &&
-                    (!is.logical(value$terms$grouped) ||
-                     length(value$terms$grouped) != 1L || is.na(value$terms$grouped))) {
-                .cdrgam_cli_abort(paste0(field, '.terms.grouped must be true or false'))
+            for (name in intersect(c('grouped', 'interacting'), names(value$terms))) {
+                flag <- value$terms[[name]]
+                if (!is.logical(flag) || length(flag) != 1L || is.na(flag)) {
+                    .cdrgam_cli_abort(paste0(field, '.terms.', name, ' must be true or false'))
+                }
             }
         } else .cdrgam_cli_abort(paste0(field, '.terms must be labels or a mapping'))
     }
@@ -750,7 +880,7 @@
     .cdrgam_cli_check_keys(value$axes, c('lag', 'time', 'predictors'), paste0(field, '.axes'))
     for (name in intersect(c('lag', 'time'), names(value$axes))) {
         value$axes[[name]] <- .cdrgam_cli_validate_axis_request(
-            value$axes[[name]], paste0(field, '.axes.', name)
+            value$axes[[name]], paste0(field, '.axes.', name), lag=identical(name, 'lag')
         )
     }
     if (!is.null(value$axes$predictors)) {
@@ -779,9 +909,11 @@
                 next
             }
             request <- .cdrgam_cli_validate_axis_request(
-                value$reference[[name]], paste0(field, '.reference.', name)
+                value$reference[[name]], paste0(field, '.reference.', name),
+                lag=identical(name, 'lag')
             )
             single <- (is.numeric(request) && length(request) == 1L) ||
+                (is.character(request) && length(request) == 1L) ||
                 (is.list(request) && !is.null(request$at) &&
                  (is.list(request$at) || length(request$at) == 1L)) ||
                 (is.list(request) && length(request$values) == 1L) ||
@@ -798,7 +930,7 @@
     }
     if (is.null(value$uncertainty)) value$uncertainty <- list()
     .cdrgam_cli_check_keys(
-        value$uncertainty, c('level', 'kind', 'unconditional'),
+        value$uncertainty, c('level', 'kind', 'unconditional', 'points'),
         paste0(field, '.uncertainty')
     )
     value$uncertainty$level <- .cdrgam_cli_null(value$uncertainty$level, 0.95)
@@ -807,9 +939,26 @@
             value$uncertainty$level >= 1) {
         .cdrgam_cli_abort(paste0(field, '.uncertainty.level must lie between zero and one'))
     }
-    value$uncertainty$kind <- match.arg(
-        .cdrgam_cli_null(value$uncertainty$kind, 'pointwise'), 'pointwise'
-    )
+    value$uncertainty$kind <- .cdrgam_cli_null(value$uncertainty$kind, 'pointwise')
+    if (!(identical(value$uncertainty$kind, 'pointwise') ||
+            identical(value$uncertainty$kind, 'simultaneous'))) {
+        .cdrgam_cli_abort(paste0(
+            field, '.uncertainty.kind must be pointwise or simultaneous'
+        ))
+    }
+    if (identical(value$uncertainty$kind, 'simultaneous')) {
+        value$uncertainty$points <- .cdrgam_cli_positive_integer(
+            .cdrgam_cli_null(value$uncertainty$points, 40L),
+            paste0(field, '.uncertainty.points')
+        )
+        if (value$uncertainty$points < 2L) .cdrgam_cli_abort(paste0(
+            field, '.uncertainty.points must be at least two'
+        ))
+    } else if (!is.null(value$uncertainty$points)) {
+        .cdrgam_cli_abort(paste0(
+            field, '.uncertainty.points requires kind simultaneous'
+        ))
+    }
     value$uncertainty$unconditional <- .cdrgam_cli_null(
         value$uncertainty$unconditional, FALSE
     )
@@ -829,7 +978,7 @@
         value,
         c(
             'geometry', 'mappings', 'interval', 'theme', 'formats', 'width',
-            'height', 'dpi', 'title', 'xlab', 'ylab'
+            'height', 'dpi', 'title', 'xlab', 'ylab', 'palette', 'scales'
         ),
         field, c('geometry', 'mappings')
     )
@@ -869,6 +1018,14 @@
     }
     value$theme <- match.arg(
         .cdrgam_cli_null(value$theme, 'paper'), c('paper', 'minimal', 'slides')
+    )
+    if (!is.null(value$palette)) value$palette <- match.arg(
+        .cdrgam_cli_scalar_character(value$palette, paste0(field, '.palette')),
+        c('default', 'rainbow')
+    )
+    if (!is.null(value$scales)) value$scales <- match.arg(
+        .cdrgam_cli_scalar_character(value$scales, paste0(field, '.scales')),
+        c('fixed', 'free', 'free_x', 'free_y')
     )
     value$formats <- .cdrgam_cli_null(value$formats, 'pdf')
     value$formats <- unique(as.character(unlist(value$formats, use.names=FALSE)))

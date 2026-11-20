@@ -106,21 +106,46 @@
         } else character()
         list(
             label=label, type=catalog$type[[index]], grouped=grouped,
-            group=catalog$group[[index]], axes=axes, groups=groups
+            group=catalog$group[[index]], axes=axes, groups=groups,
+            catalog=.cdrgam_cli_catalog_row(catalog, index)
         )
     })
 }
 
+# The value an axis is held at when the viewer is not told otherwise: lag 0
+# and the training mean of every other axis.
+.cdrgam_cli_viz_default <- function(name) if (identical(name, 'lag')) 0 else 'mean'
+
+# Resolve a fixed or reference value: a number, or an expression such as
+# "mean + 2 * sd" or, for lag, "peak". NA stays NA.
+.cdrgam_cli_viz_resolve <- function(term, name, value, peak=NULL) {
+    if (is.null(value) || (length(value) == 1L && is.na(value))) return(NA_real_)
+    axis <- term$axes[[name]]
+    .cdrgam_cli_axis_value(
+        value, name, list(mean=axis$mean, sd=axis$sd, median=axis$median),
+        peak=peak, field=name
+    )
+}
+
+.cdrgam_cli_viz_peak <- function(fit, term) {
+    if (is.null(fit) || is.null(term$catalog)) return(NULL)
+    .cdrgam_cli_peak_function(fit, term$catalog)
+}
+
 # Build an estimate_effect() axis request. Varying axes span the fitted domain
 # unless `ranges` gives explicit limits; every other axis is fixed at the value
-# in `fixed`, or at its median when no value is given.
-.cdrgam_cli_viz_axes <- function(term, varying, fixed=list(), n=200L, ranges=list()) {
+# in `fixed`, which may be an expression, or at lag 0 and the training mean of
+# other axes when no value is given. `fit` is needed only to resolve peaks.
+.cdrgam_cli_viz_axes <- function(
+        term, varying, fixed=list(), n=200L, ranges=list(), fit=NULL
+) {
     unknown <- setdiff(varying, names(term$axes))
     if (length(unknown)) {
         .cdrgam_cli_abort(paste0(
             'Term ', term$label, ' has no axis ', paste(unknown, collapse=', ')
         ))
     }
+    peak <- .cdrgam_cli_viz_peak(fit, term)
     output <- lapply(term$axes, function(axis) {
         name <- axis$name
         if (name %in% varying) {
@@ -131,8 +156,12 @@
             }
             return(list(grid='fitted', n=as.integer(n)))
         }
-        value <- .cdrgam_cli_viz_number(fixed[[name]])
-        if (!is.finite(value)) value <- axis$median
+        value <- fixed[[name]]
+        if (is.null(value) || (length(value) == 1L && is.na(value))) {
+            value <- .cdrgam_cli_viz_default(name)
+            if (identical(value, 'mean') && !is.finite(axis$mean)) value <- 'median'
+        }
+        value <- .cdrgam_cli_viz_resolve(term, name, value, peak)
         if (!is.finite(value)) {
             .cdrgam_cli_abort(paste0('Set a value for axis ', name))
         }
@@ -144,33 +173,48 @@
 
 # Evaluate one line or surface specification. `spec` holds term, varying,
 # fixed, composition, grouping, group, and optional reference values, where NA
-# leaves a predictor at the model default;
-# `options` holds n, level, and unconditional.
+# leaves a predictor at the model default; fixed and reference values may be
+# expressions. `options` holds n, level, unconditional, and interval
+# (pointwise or simultaneous).
 .cdrgam_cli_viz_estimate <- function(fit, term, spec, options=list()) {
     n <- as.integer(.cdrgam_cli_null(options$n, 200L))
+    level <- .cdrgam_cli_null(options$level, 0.95)
     grouping <- .cdrgam_cli_null(spec$grouping, 'population')
     groups <- if (identical(grouping, 'population')) NULL else spec[['group']]
     if (!identical(grouping, 'population') && !isTRUE(term$grouped)) {
         grouping <- 'population'
         groups <- NULL
     }
+    peak <- .cdrgam_cli_viz_peak(fit, term)
     # Pass reference only when set, so that older cores without the argument
     # still evaluate ordinary lines.
-    reference <- if (length(spec$reference)) list(reference=lapply(
-        spec$reference, as.numeric
-    )) else list()
-    do.call(.cdrgam_cli_core_estimate_effect, c(list(
+    resolved <- if (length(spec$reference)) stats::setNames(lapply(
+        names(spec$reference), function(name) {
+            .cdrgam_cli_viz_resolve(term, name, spec$reference[[name]], peak)
+        }
+    ), names(spec$reference)) else NULL
+    reference <- if (length(resolved)) list(reference=resolved) else list()
+    composition <- .cdrgam_cli_null(spec$composition, 'term')
+    unconditional <- isTRUE(options$unconditional)
+    value <- do.call(.cdrgam_cli_core_estimate_effect, c(list(
         fit,
         terms=term$label,
         axes=.cdrgam_cli_viz_axes(
             term, spec$varying, .cdrgam_cli_null(spec$fixed, list()), n,
-            .cdrgam_cli_null(spec$ranges, list())
+            .cdrgam_cli_null(spec$ranges, list()), fit
         ),
-        composition=.cdrgam_cli_null(spec$composition, 'term'),
+        composition=composition,
         grouping=grouping, groups=groups, se=TRUE,
-        unconditional=isTRUE(options$unconditional),
-        level=.cdrgam_cli_null(options$level, 0.95), n=n
+        unconditional=unconditional, level=level, n=n
     ), reference))
+    if (identical(options$interval, 'simultaneous')) {
+        value <- .cdrgam_cli_simultaneous_band(fit, value, list(
+            term=term$label, axes_names=names(term$axes), reference=resolved,
+            composition=composition, grouping=grouping, groups=groups,
+            unconditional=unconditional
+        ), level)
+    }
+    value
 }
 
 .cdrgam_cli_viz_preferred_port <- function(user=Sys.info()[['effective_user']]) {

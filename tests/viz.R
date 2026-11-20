@@ -86,9 +86,27 @@ axes <- internal('.cdrgam_cli_viz_axes')(
 )
 stopifnot(
     identical(axes$z, list(at=1)),
-    identical(axes$lag, list(at=tensor$axes$lag$median)),
+    identical(axes$lag, list(at=0)),
     identical(axes$x$values, seq(-1, 1, length.out=7L))
 )
+# Unset axes default to lag 0 and training means; values may be expressions
+# in the axis's training summaries, and lag may name the term's peak.
+axes <- internal('.cdrgam_cli_viz_axes')(tensor, 'lag', list(x='mean + 2 * sd'))
+stopifnot(
+    isTRUE(all.equal(axes$x$at, tensor$axes$x$mean + 2 * tensor$axes$x$sd)),
+    isTRUE(all.equal(axes$z$at, tensor$axes$z$mean))
+)
+peak <- internal('.cdrgam_cli_viz_axes')(tensor, 'x', list(lag='peak'), fit=fit)$lag$at
+stopifnot(
+    peak >= tensor$axes$lag$min, peak <= tensor$axes$lag$max,
+    identical(internal('.cdrgam_cli_viz_input_value')(' 2.5 ', 'x'), 2.5),
+    identical(internal('.cdrgam_cli_viz_input_value')('', 'x'), NA_real_),
+    identical(internal('.cdrgam_cli_viz_input_value')('peak-neg', 'lag'), 'peak-neg')
+)
+bad_input <- tryCatch(
+    internal('.cdrgam_cli_viz_input_value')('peak', 'x'), error=conditionMessage
+)
+stopifnot(grepl('only lag values', bad_input, fixed=TRUE))
 unknown_axis <- tryCatch(
     internal('.cdrgam_cli_viz_axes')(tensor, 'w'), error=conditionMessage
 )
@@ -101,6 +119,17 @@ stopifnot(
     identical(nrow(line), 9L),
     all(line$lag == 0.2), all(line$z == 1),
     all(line$lower <= line$estimate & line$estimate <= line$upper)
+)
+joint <- internal('.cdrgam_cli_viz_estimate')(
+    fit, tensor,
+    list(varying='lag', fixed=list(x='mean + sd', z='mean'), reference=list(x='mean')),
+    list(n=9L, interval='simultaneous')
+)
+stopifnot(
+    identical(nrow(joint), 9L),
+    all(joint$critical_value >= stats::qnorm(0.975)),
+    isTRUE(all.equal(joint$upper - joint$estimate, joint$critical_value * joint$se)),
+    isTRUE(all.equal(joint$x_reference, rep(tensor$axes$x$mean, 9L)))
 )
 reference_line <- internal('.cdrgam_cli_viz_estimate')(
     fit, tensor, list(varying='x', fixed=list(lag=0.2, z=0)), list(n=9L)
@@ -156,7 +185,10 @@ kept_lines <- list(
         grouping='conditional', group='g1', label='second'),
     list(id='c', model_id='viz-test/tensor', fit=models$fit, term='x:z', varying='x',
         fixed=list(lag=0.2, z=1), composition='total', grouping='population',
-        reference=list(x=NA_real_, z=0), label='third')
+        reference=list(x=NA_real_, z=0), label='third'),
+    list(id='d', model_id='viz-test/tensor', fit=models$fit, term='x:z', varying='lag',
+        fixed=list(x='mean + sd', z='mean'), composition='term', grouping='population',
+        reference=list(x='mean', z=NA_real_), label='fourth')
 )
 round_trip <- internal('.cdrgam_cli_viz_lines_parse')(
     internal('.cdrgam_cli_viz_lines_json')(kept_lines)
@@ -168,7 +200,9 @@ stopifnot(
     identical(round_trip[[2L]][['group']], 'g1'),
     is.null(round_trip[[1L]][['group']]),
     is.null(round_trip[[1L]]$reference),
-    identical(round_trip[[3L]]$reference, list(x=NA_real_, z=0))
+    identical(round_trip[[3L]]$reference, list(x=NA_real_, z=0)),
+    identical(round_trip[[4L]]$fixed, list(x='mean + sd', z='mean')),
+    identical(round_trip[[4L]]$reference, list(x='mean', z=NA_real_))
 )
 
 script_path <- file.path(temporary_parent, 'viz.sh')
@@ -233,7 +267,7 @@ if (all(vapply(c('shiny', 'plotly', 'bslib'), requireNamespace, logical(1), quie
     shiny::testServer(internal('.cdrgam_cli_viz_server')(root), {
         session$setInputs(restore_lines=internal('.cdrgam_cli_viz_lines_json')(kept_lines))
         stopifnot(
-            identical(length(lines()), 3L),
+            identical(length(lines()), 4L),
             identical(lines()[[2L]]$varying, c('lag', 'z')),
             identical(lines()[[3L]]$reference, list(x=NA_real_, z=0))
         )

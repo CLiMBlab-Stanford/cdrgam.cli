@@ -1726,6 +1726,42 @@ stopifnot(
     ))
 )
 
+# Presets expand to ordinary effect queries. The lag preset plots each
+# univariate IRF at the mean plus one SD relative to the mean, with
+# simultaneous intervals; the predictor preset holds lag at the term's peak.
+yaml::write_yaml(list(
+    schema=1L, model='decay', preset='irf-lag', options=list(n=21L),
+    render=list(formats='pdf')
+), file.path(project, 'definitions', 'visualizations', 'irf-lag.yml'))
+yaml::write_yaml(list(
+    schema=1L, model='decay', preset='irf-predictor',
+    options=list(n=11L, hold=list(lag='peak'), values=list(range=c('mean - sd', 'mean + sd')))
+), file.path(project, 'definitions', 'visualizations', 'irf-predictor.yml'))
+preset_plan <- cdrgam_cli_plan(
+    projects='test-project', visualizations=c('irf-lag', 'irf-predictor')
+)
+cdrgam_cli_run(projects='test-project', visualizations=c('irf-lag', 'irf-predictor'))
+preset_effects <- preset_plan$path[preset_plan$kind == 'effect']
+lag_grid <- readRDS(file.path(preset_effects[[1L]], 'effect-grid.rds'))
+predictor_grid <- readRDS(file.path(preset_effects[[2L]], 'effect-grid.rds'))
+stopifnot(
+    nrow(lag_grid) == 21L, identical(unique(lag_grid$term), 'x'),
+    all(lag_grid$critical_value >= stats::qnorm(0.975)),
+    isTRUE(all.equal(lag_grid$upper - lag_grid$estimate,
+        lag_grid$critical_value * lag_grid$se)),
+    length(unique(lag_grid$x)) == 1L, all(lag_grid$x > lag_grid$x_reference),
+    nrow(predictor_grid) == 11L, length(unique(predictor_grid$lag)) == 1L,
+    identical(predictor_grid$predictor_value, predictor_grid$x),
+    file.exists(file.path(
+        project, 'results', 'models', 'decay', 'visualizations', 'irf-lag',
+        'visualization.pdf'
+    )),
+    file.exists(file.path(
+        project, 'results', 'models', 'decay', 'visualizations', 'irf-predictor',
+        'visualization.pdf'
+    ))
+)
+
 comparison_plan <- cdrgam_cli_plan(
     projects='test-project', comparisons='alternatives'
 )

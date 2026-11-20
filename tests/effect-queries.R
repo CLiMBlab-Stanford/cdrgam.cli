@@ -81,4 +81,163 @@ plot <- plot_effect(grid, definition)
 built <- ggplot2::ggplot_build(plot)
 stopifnot(length(unique(built$data[[length(built$data)]]$group)) == 5L)
 
+# Axis values may be arithmetic over training summaries; lag values may also
+# name a peak.
+value <- getFromNamespace('.cdrgam_cli_axis_value', 'cdrgam.cli')
+statistics <- list(mean=2, sd=0.5, median=1.5)
+stopifnot(
+    identical(value('mean + 2 * sd', 'x', statistics), 3),
+    identical(value('-(median - mean) / sd', 'x', statistics), 1),
+    identical(value(4, 'x', statistics), 4),
+    identical(value('peak', 'lag', list(), peak=function(direction) {
+        if (identical(direction, 'pos')) 0.3 else 0.9
+    }), 0.3),
+    identical(value('peak-neg + 0.1', 'lag', list(), peak=function(direction) {
+        if (identical(direction, 'pos')) 0.3 else 0.9
+    }), 1)
+)
+expect_error(value('mean + q', 'x', statistics), 'unknown name q')
+expect_error(value('peak', 'x', statistics), 'only lag values')
+expect_error(value('sd', 'x', list(mean=1, sd=NA)), 'no stored training sd')
+expect_error(value('max(sd)', 'x', statistics), 'not a valid value expression')
+expect_error(value('mean +', 'x', statistics), 'not a valid value expression')
+
+expressions <- base
+expressions$axes <- list(
+    lag='peak-neg',
+    time='mean',
+    predictors=list(
+        wlen='mean + sd',
+        repetition_index=list(values=list(1, 'mean', 'mean + 2 * sd')),
+        '*'=list(range=list('mean - sd', 'mean + sd'), n=7L)
+    )
+)
+expressions$reference <- list('*'='mean', lag='peak')
+expressions$uncertainty <- list(kind='simultaneous')
+expressions$terms <- list(predictors='*', interacting=FALSE)
+expressions <- validate(expressions, 'query')
+stopifnot(
+    identical(expressions$axes$lag, 'peak-neg'),
+    identical(expressions$axes$predictors$repetition_index$values,
+        c('1', 'mean', 'mean + 2 * sd')),
+    identical(expressions$axes$predictors[['*']]$range, list('mean - sd', 'mean + sd')),
+    identical(expressions$reference[['*']], 'mean'),
+    identical(expressions$uncertainty$points, 40L),
+    isFALSE(expressions$terms$interacting)
+)
+bad <- base
+bad$axes$predictors$wlen <- 'peak'
+expect_error(validate(bad, 'query'), 'only lag values')
+bad <- base
+bad$reference <- list(wlen=list(range=list('mean', 'mean + sd')))
+expect_error(validate(bad, 'query'), 'must resolve to one value')
+bad <- base
+bad$uncertainty <- list(points=10L)
+expect_error(validate(bad, 'query'), 'requires kind simultaneous')
+bad$uncertainty <- list(kind='joint')
+expect_error(validate(bad, 'query'), 'pointwise or simultaneous')
+
+# Presets expand into an ordinary query and render.
+visualization <- getFromNamespace('.cdrgam_cli_validate_visualization', 'cdrgam.cli')
+lag_preset <- visualization(list(
+    schema=1L, model='main', preset='irf-lag',
+    options=list(irf1=TRUE, step='mean + 2 * sd', level=0.9),
+    render=list(formats=c('png'), mappings=list(color='term'))
+), 'lag.yml')
+stopifnot(
+    identical(lag_preset$query$terms, list(grouped=FALSE, interacting=FALSE)),
+    identical(lag_preset$query$axes$predictors[['*']], 'mean + 2 * sd'),
+    identical(lag_preset$query$reference[['*']], 'mean'),
+    identical(lag_preset$query$uncertainty$kind, 'simultaneous'),
+    identical(lag_preset$query$uncertainty$level, 0.9),
+    identical(lag_preset$render$palette, 'rainbow'),
+    identical(lag_preset$render$mappings$x, 'lag'),
+    identical(lag_preset$render$formats, 'png')
+)
+predictor_preset <- visualization(list(
+    schema=1L, model='main', preset='irf-predictor',
+    options=list(hold=list(lag='peak'), interval='pointwise')
+), 'predictor.yml')
+stopifnot(
+    identical(predictor_preset$query$terms$predictors, '*'),
+    identical(predictor_preset$query$axes$lag, 'peak'),
+    identical(predictor_preset$query$axes$time, 'mean'),
+    identical(predictor_preset$query$axes$predictors[['*']]$grid, 'fitted'),
+    identical(predictor_preset$query$uncertainty$kind, 'pointwise'),
+    identical(predictor_preset$render$mappings$x, 'predictor_value'),
+    identical(predictor_preset$render$scales, 'free_x')
+)
+expect_error(visualization(list(
+    schema=1L, model='main', preset='irf-lag', options=list(hold=list(lag=0))
+), 'bad.yml'), 'unknown field')
+expect_error(visualization(list(
+    schema=1L, model='main', preset='irf-lag', query=base
+), 'bad.yml'), 'cannot be combined')
+expect_error(visualization(list(
+    schema=1L, model='main', preset='irf-surface'
+), 'bad.yml'), 'must be one of')
+
+# The simultaneous critical value lies between the pointwise and Bonferroni
+# multipliers, reduces to the pointwise one for perfectly correlated points,
+# and leaves the caller's random stream unchanged.
+multiplier <- getFromNamespace('.cdrgam_cli_simultaneous_multiplier', 'cdrgam.cli')
+set.seed(5)
+before <- .Random.seed
+independent <- multiplier(diag(20), 0.95)
+stopifnot(identical(.Random.seed, before))
+stopifnot(
+    independent > stats::qnorm(0.975),
+    independent < stats::qnorm(1 - 0.025 / 20),
+    abs(independent - stats::qnorm((1 + 0.95^(1 / 20)) / 2)) < 0.05,
+    abs(multiplier(matrix(4, 10, 10), 0.95) - stats::qnorm(0.975)) < 1e-6,
+    identical(independent, multiplier(diag(20), 0.95))
+)
+
+# The rainbow palette draws irf(1) in black, and a predictor-value axis does
+# not split each term's curve on its own predictor column.
+rainbow <- getFromNamespace('.cdrgam_cli_rainbow', 'cdrgam.cli')
+colors <- rainbow(c('irf(1)', 'x', 'y'))
+stopifnot(identical(unname(colors[['irf(1)']]), 'black'), !anyDuplicated(colors))
+curves <- rbind(
+    data.frame(lag=0, x=seq(-1, 1, length.out=5), y=NA_real_, term='x',
+        predictor='x', predictor_value=seq(-1, 1, length.out=5)),
+    data.frame(lag=0, x=NA_real_, y=seq(0, 4, length.out=5), term='y',
+        predictor='y', predictor_value=seq(0, 4, length.out=5))
+)
+curves <- transform(
+    curves, term_id=paste0('irf-', term), group=NA_character_, composition='term',
+    grouping='population', estimate=predictor_value, se=0.1,
+    lower=predictor_value - 0.2, upper=predictor_value + 0.2, layer='estimate',
+    critical_value=2
+)
+stopifnot(identical(series_axes(curves, predictor_preset$render$mappings), character()))
+plot <- plot_effect(curves, predictor_preset)
+built <- ggplot2::ggplot_build(plot)
+lines <- built$data[[length(built$data)]]
+stopifnot(
+    length(unique(lines$group)) == 2L,
+    identical(sort(unique(lines$colour)), sort(unname(rainbow(c('x', 'y')))))
+)
+
+# A predictor column that exists only for some terms does not split their
+# lag curves.
+lag_curves <- rbind(
+    data.frame(lag=seq(0, 1, length.out=4), x=1, y=NA_real_, term='x'),
+    data.frame(lag=seq(0, 1, length.out=4), x=NA_real_, y=2, term='y'),
+    data.frame(lag=seq(0, 1, length.out=4), x=NA_real_, y=NA_real_, term='irf(1)')
+)
+lag_curves <- transform(
+    lag_curves, term_id=paste0('irf-', term), group=NA_character_,
+    composition='term', grouping='population', estimate=lag, se=0.1,
+    lower=lag - 0.2, upper=lag + 0.2, layer='estimate'
+)
+stopifnot(identical(series_axes(lag_curves, lag_preset$render$mappings), character()))
+built <- ggplot2::ggplot_build(plot_effect(lag_curves, lag_preset))
+lines <- built$data[[length(built$data)]]
+stopifnot(
+    length(unique(lines$group)) == 3L,
+    all(table(lines$group) == 4L),
+    'black' %in% lines$colour
+)
+
 cat('Effect query tests passed\n')

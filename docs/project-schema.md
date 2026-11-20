@@ -441,9 +441,11 @@ CSV live under `models/MODEL/effects/EFFECT-IDENTITY/`; rendered files live
 under `models/MODEL/visualizations/VISUALIZATION/`.
 
 `terms` may be a list of exact fitted term labels or a selector mapping. A
-selector accepts `names`, `predictors`, `match` (`contains` or `exact`), and
-`grouped`. The predictor value `"*"` selects every nonconstant IRF. A request
-that matches no terms fails before rendering.
+selector accepts `names`, `predictors`, `match` (`contains` or `exact`),
+`grouped`, and `interacting`. The predictor value `"*"` selects every
+nonconstant IRF. `interacting: false` keeps terms with at most one predictor,
+including `irf(1)` unless `predictors` excludes it, and `interacting: true`
+keeps the rest. A request that matches no terms fails before rendering.
 
 `composition` controls the effect being evaluated. `term` returns only the
 selected term. `total` adds its fitted marginal hierarchy, using the joint
@@ -470,9 +472,36 @@ axes:
 ```
 
 Unspecified lag axes vary over their fitted domains. Other unspecified axes
-are fixed at their training median. The wildcard predictor entry supplies a
+are fixed at their training mean. The wildcard predictor entry supplies a
 fallback for every predictor axis. Axis values and effect-grid columns use
 source data units.
+
+Wherever an axis or reference takes a number, it also takes an expression in
+that axis's training `mean`, `sd`, and `median`, using numbers, `+`, `-`,
+`*`, `/`, and parentheses. A bare expression fixes the axis at one value.
+`range` gives a grid between two values, with `n` points or the query's `n`:
+
+```yaml
+axes:
+  lag: peak
+  predictors:
+    surprisal: mean + 2 * sd
+    frequency: {values: [mean - sd, mean, mean + sd]}
+    "*": {range: [mean - 2 * sd, mean + 2 * sd], n: 50}
+reference:
+  "*": mean
+```
+
+Lag values may also use `peak` or `peak-pos`, the lag at which a term's
+response is largest, and `peak-neg`, the lag at which it is smallest, over
+the fitted lag domain. The response used is the term alone with each of its
+predictors at the mean plus one SD, minus the term at the means, and with
+other axes at their training means; for `irf(1)` it is `irf(1)` itself.
+Expressions are resolved separately for each selected term, so `"*"` entries
+use each predictor's own summaries and each term's own peak. A `"*"`
+reference applies to every predictor of a term that has no reference of its
+own; a term without predictors, such as `irf(1)`, gets no reference.
+Expressions fail at evaluation when the fit stores no summary for the axis.
 
 `reference` subtracts the same effect evaluated at reference values of some
 axes. Axes not named in `reference` keep their evaluated values. Each entry
@@ -513,9 +542,26 @@ term, group, and layer of the null hypothesis that the effect is zero at every
 grid point. The test uses the same grid, so the grid should be dense enough to
 span the effect.
 
+`uncertainty.kind` is `pointwise` or `simultaneous`. Simultaneous limits
+cover every grid point of a term and group jointly at `level`. The harness
+estimates their covariance from the core's standard errors of differences
+between grid points, on up to `uncertainty.points` grid points (default 40)
+spread evenly along each varying axis, and takes the critical value of the
+largest absolute t statistic from 10,000 simulated draws with a fixed seed.
+It reports this value in a `critical_value` column. The cost is one extra
+core evaluation per covariance point and reference value, for example 81 for
+a 40-point lag curve with a predictor reference. Reference predictors must
+have values; `default` is not supported.
+
+Each term with exactly one predictor also has `predictor` and
+`predictor_value` columns in the effect grid. They hold the predictor's name
+and value, so terms with different predictors can share an axis.
+
 Line renderings draw one curve per term, group, layer, and value of every
 other varying axis. A numeric `color` or `linetype` mapping with at most 12
-values uses a discrete legend.
+values uses a discrete legend. `palette: rainbow` colors lines from red to
+violet and draws `irf(1)` in black. `scales` (`fixed`, `free`, `free_x`, or
+`free_y`) sets the facet scales.
 
 Line renderings support ribbon, boundary-line, or no interval display. Raster,
 contour, and combined raster-contour geometries support predictor-by-lag,
@@ -554,6 +600,40 @@ For this overlay, select the corresponding grouped term with
 ungrouped counterpart, and the conditional layer adds each requested
 deviation. The renderer keeps term, group, and layer series separate unless an
 explicit `group` mapping is supplied.
+
+Two presets give common CDR plots without writing a query:
+
+```yaml
+schema: 1
+model: main
+preset: irf-lag
+options:
+  irf1: true
+```
+
+```yaml
+schema: 1
+model: main
+preset: irf-predictor
+options:
+  hold: {lag: peak}
+render:
+  formats: [pdf, png]
+```
+
+Both select every ungrouped IRF with at most one predictor, excluding
+`irf(1)` unless `irf1: true` is set for `irf-lag`. They use simultaneous 95%
+intervals, the rainbow palette, and one curve per term. `irf-lag` plots each
+term over the fitted lag domain at `step` (default `mean + sd`) minus the
+term at `reference` (default `mean`), which is the term's deviation from
+`irf(1)` for a step from the mean. `irf-predictor` plots each term in its
+own facet over `values` (default the training range), minus the term at
+`reference`, at lag `hold.lag` (default 0). `hold.time` (default `mean`)
+fixes time axes. Other options are `terms`, where a list of labels replaces
+the default selection and a selector mapping overrides its fields; `n`; `level`; `interval` (`simultaneous` or
+`pointwise`); `points`; and `unconditional`. A `render` mapping overrides the
+preset's render settings field by field. A preset definition cannot also
+contain `query` or `layers`.
 
 The legacy default model booklet remains available explicitly:
 

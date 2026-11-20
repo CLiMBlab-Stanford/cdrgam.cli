@@ -24,6 +24,7 @@
 }
 
 .cdrgam_cli_viz_format <- function(value) {
+    if (is.character(value)) return(value)
     if (!is.finite(value)) return('NA')
     format(signif(value, 4L), trim=TRUE, scientific=abs(value) >= 1e5 ||
         (abs(value) < 1e-3 && value != 0))
@@ -31,7 +32,9 @@
 
 .cdrgam_cli_viz_label <- function(spec, term) {
     fixed <- spec$fixed[setdiff(names(spec$fixed), spec$varying)]
-    fixed <- fixed[vapply(fixed, function(value) is.finite(value), logical(1))]
+    fixed <- fixed[vapply(fixed, function(value) {
+        is.character(value) || is.finite(value)
+    }, logical(1))]
     parts <- c(
         paste0(spec$model_id, ': ', spec$term),
         if (length(fixed)) paste0('[', paste(
@@ -46,7 +49,8 @@
             'minus [', paste(
                 names(spec$reference),
                 vapply(spec$reference, function(value) {
-                    if (is.na(value)) 'default' else .cdrgam_cli_viz_format(value)
+                    if (!is.character(value) && is.na(value)) 'default' else
+                        .cdrgam_cli_viz_format(value)
                 }, character(1)),
                 sep='=', collapse=', '
             ), ']'
@@ -153,13 +157,13 @@
     values <- jsonlite::fromJSON(text, simplifyVector=FALSE)
     lapply(values, function(line) {
         line$varying <- as.character(unlist(line$varying))
-        fixed <- lapply(line$fixed, function(value) {
-            if (is.null(value)) NA_real_ else as.numeric(value)
-        })
+        value <- function(value) {
+            if (is.null(value)) NA_real_ else if (is.character(value)) value else
+                as.numeric(value)
+        }
+        fixed <- lapply(line$fixed, value)
         line$fixed <- if (length(fixed)) fixed else list()
-        reference <- lapply(line$reference, function(value) {
-            if (is.null(value)) NA_real_ else as.numeric(value)
-        })
+        reference <- lapply(line$reference, value)
         line$reference <- if (length(reference)) reference else NULL
         line
     })
@@ -192,6 +196,19 @@ $(function() {
   });
 });
 "))
+
+# Read a fixed or reference text field: empty is NA, a plain number is
+# numeric, and anything else must be a value expression for that axis.
+.cdrgam_cli_viz_input_value <- function(text, name) {
+    if (is.null(text) || (length(text) == 1L && is.na(text))) return(NA_real_)
+    if (is.numeric(text)) return(as.numeric(text))
+    text <- trimws(as.character(text))
+    if (!nzchar(text)) return(NA_real_)
+    number <- suppressWarnings(as.numeric(text))
+    if (is.finite(number)) return(number)
+    .cdrgam_cli_value_parse(text, name, lag=identical(name, 'lag'))
+    text
+}
 
 .cdrgam_cli_viz_ui <- function(restartable=FALSE) {
     bslib::page_sidebar(
@@ -260,6 +277,11 @@ $(function() {
                     shiny::numericInput('n', 'Grid points per axis', 200, min=2, max=2000),
                     shiny::numericInput('level', 'Interval level', 0.95, min=0.5, max=0.999, step=0.01),
                     shiny::checkboxInput('show_interval', 'Show intervals', TRUE),
+                    shiny::radioButtons(
+                        'interval', 'Intervals',
+                        c('Pointwise'='pointwise', 'Simultaneous'='simultaneous'),
+                        inline=TRUE
+                    ),
                     shiny::checkboxInput(
                         'unconditional', 'Include smoothing-parameter uncertainty', FALSE
                     )
@@ -448,25 +470,36 @@ $(function() {
             pending <- shiny::isolate(session$userData$pending_fixed)
             controls <- lapply(fixed_axes, function(name) {
                 axis <- info$axes[[name]]
-                value <- .cdrgam_cli_null(pending[[name]], axis$median)
+                value <- pending[[name]]
+                if (is.null(value) || (!is.character(value) && is.na(value))) {
+                    value <- .cdrgam_cli_viz_default(name)
+                }
                 hint <- paste0(
-                    'median ', .cdrgam_cli_viz_format(axis$median), '; range ',
+                    'mean ', .cdrgam_cli_viz_format(axis$mean),
+                    ', sd ', .cdrgam_cli_viz_format(axis$sd), '; range ',
                     .cdrgam_cli_viz_format(axis$min), ' to ',
                     .cdrgam_cli_viz_format(axis$max)
                 )
-                step <- if (is.finite(axis$max - axis$min) && axis$max > axis$min) {
-                    signif((axis$max - axis$min) / 100, 2L)
-                } else NA
                 shiny::div(
-                    shiny::numericInput(
+                    shiny::textInput(
                         .cdrgam_cli_viz_input_id(name), name,
-                        value=if (is.finite(value)) signif(value, 6L) else NA,
-                        step=step
+                        value=.cdrgam_cli_viz_format(value)
                     ),
                     shiny::div(class='form-text mt-n2 mb-2', hint)
                 )
             })
-            shiny::tagList(shiny::tags$h6('Fixed values', class='mt-2'), controls)
+            shiny::tagList(
+                shiny::tags$h6('Fixed values', class='mt-2'), controls,
+                shiny::div(
+                    class='form-text mt-n2 mb-2',
+                    paste(
+                        'Enter a number or an expression in mean, sd, and median,',
+                        'such as mean + 2 * sd. Lag also accepts peak (or',
+                        'peak-pos) and peak-neg: the lag at which the term\'s',
+                        'response to a one-SD increase is largest or smallest.'
+                    )
+                )
+            )
         })
 
         output$reference_controls <- shiny::renderUI({
@@ -476,9 +509,11 @@ $(function() {
             pending <- shiny::isolate(session$userData$pending_reference)
             fields <- lapply(axes, function(name) {
                 value <- pending[[name]]
-                value <- if (is.null(value) || is.na(value)) NA else signif(value, 6L)
+                value <- if (is.null(value) || (!is.character(value) && is.na(value))) {
+                    ''
+                } else .cdrgam_cli_viz_format(value)
                 htmltools::tagAppendAttributes(
-                    shiny::numericInput(
+                    shiny::textInput(
                         .cdrgam_cli_viz_reference_id(name), name, value=value
                     ),
                     placeholder='model default', .cssSelector='input'
@@ -509,8 +544,7 @@ $(function() {
             info <- term()
             axes <- varying()
             fixed <- lapply(setdiff(names(info$axes), axes), function(name) {
-                value <- input[[.cdrgam_cli_viz_input_id(name)]]
-                .cdrgam_cli_viz_number(value)
+                .cdrgam_cli_viz_input_value(input[[.cdrgam_cli_viz_input_id(name)]], name)
             })
             names(fixed) <- setdiff(names(info$axes), axes)
             grouping <- if (isTRUE(info$grouped)) {
@@ -525,7 +559,9 @@ $(function() {
             if (isTRUE(input$use_reference)) {
                 names <- .cdrgam_cli_viz_reference_axes(info)
                 value$reference <- stats::setNames(lapply(names, function(name) {
-                    .cdrgam_cli_viz_number(input[[.cdrgam_cli_viz_reference_id(name)]])
+                    .cdrgam_cli_viz_input_value(
+                        input[[.cdrgam_cli_viz_reference_id(name)]], name
+                    )
                 }), names)
             }
             value$label <- if (nzchar(trimws(.cdrgam_cli_null(input$label, '')))) {
@@ -537,7 +573,8 @@ $(function() {
         options <- shiny::reactive(list(
             n=max(2L, as.integer(.cdrgam_cli_null(input$n, 200L))),
             level=.cdrgam_cli_null(input$level, 0.95),
-            unconditional=isTRUE(input$unconditional)
+            unconditional=isTRUE(input$unconditional),
+            interval=.cdrgam_cli_null(input$interval, 'pointwise')
         ))
 
         evaluate <- function(value, options) {
@@ -726,7 +763,8 @@ $(function() {
             if (is.null(value) || !length(value$entries)) return(status_message())
             level <- options()$level
             paste0(
-                'Linear-predictor scale; pointwise ', round(100 * level), '% intervals',
+                'Linear-predictor scale; ', options()$interval, ' ',
+                round(100 * level), '% intervals',
                 if (isTRUE(options()$unconditional)) ', smoothing-parameter adjusted' else ''
             )
         })

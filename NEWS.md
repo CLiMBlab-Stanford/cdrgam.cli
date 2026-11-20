@@ -1,5 +1,36 @@
 # cdrgam.cli (development version)
 
+- Visualization definitions accept `preset: irf-lag` and
+  `preset: irf-predictor`. `irf-lag` plots every ungrouped IRF with one
+  predictor over lag, at the predictor's mean plus one SD relative to its
+  mean, and can add `irf(1)`. `irf-predictor` plots the same terms over their
+  predictor values at a fixed lag, 0 by default. Both use simultaneous 95%
+  intervals and a rainbow palette by default, and hold time axes at their
+  training means.
+
+- Effect-query axis values and references accept arithmetic over an axis's
+  training `mean`, `sd`, and `median`, such as `mean + 2 * sd`, and a
+  `range: [low, high]` grid. Lag values also accept `peak` (or `peak-pos`)
+  and `peak-neg`, the lag at which a term's response is largest or smallest.
+  A wildcard reference `"*"` applies to every predictor of each term, and
+  the term selector field `interacting` keeps or drops terms with more than
+  one predictor.
+
+- `uncertainty: {kind: simultaneous}` replaces pointwise limits with
+  simultaneous ones over each term's grid, computed in the harness from
+  `estimate_effect()` alone. The viewer offers the same intervals, accepts
+  value expressions in its fixed and reference fields, and now starts
+  unvaried axes at lag 0 and training means rather than medians.
+
+- Effect queries now hold unspecified time and predictor axes at their
+  training means rather than medians. Grids from existing definitions that
+  relied on the median change.
+
+- Effects are now evaluated one term at a time. Effect grids gain
+  `predictor` and `predictor_value` columns for terms with one predictor,
+  and `critical_value` for simultaneous intervals. Line renderings accept
+  `palette: rainbow` and facet `scales`.
+
 - Published fit diagnostics include `newton_step_max` and
   `predicted_decrease_floor` from the core, beside `predicted_decrease` and
   the raw gradient maxima. A gradient above the tolerance along a

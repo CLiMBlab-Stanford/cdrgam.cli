@@ -132,8 +132,8 @@
     )
 }
 
-.cdrgam_cli_core_effect_catalog <- function(fit) {
-    cdrgam::effect_catalog(fit)
+.cdrgam_cli_core_effect_catalog <- function(fit, impulses=NULL, responses=NULL) {
+    cdrgam::effect_catalog(fit, impulses=impulses, responses=responses)
 }
 
 .cdrgam_cli_core_estimate_effect <- function(fit, ...) {

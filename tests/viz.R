@@ -279,32 +279,35 @@ if (all(vapply(c('shiny', 'plotly', 'bslib'), requireNamespace, logical(1), quie
     stopifnot(grepl('Restart server', ui_text(TRUE), fixed=TRUE))
 }
 
-fake_tool <- function(name, body) {
-    path <- file.path(temporary_parent, name)
-    writeLines(c('#!/bin/sh', body), path)
-    Sys.chmod(path, mode='0755')
-    path
+# The fake Slurm tools are shell scripts, and Slurm runs only on Unix.
+if (.Platform$OS.type == 'unix') {
+    fake_tool <- function(name, body) {
+        path <- file.path(temporary_parent, name)
+        writeLines(c('#!/bin/sh', body), path)
+        Sys.chmod(path, mode='0755')
+        path
+    }
+    expired_squeue <- fake_tool('squeue', c(
+        'echo "slurm_load_jobs error: Invalid job id specified" >&2', 'exit 1'
+    ))
+    job_alive <- internal('.cdrgam_cli_viz_job_alive')
+    local({
+        old <- options(
+            cdrgam.cli.squeue=expired_squeue,
+            cdrgam.cli.sacct=fake_tool('sacct', 'echo "42|TIMEOUT"')
+        )
+        on.exit(options(old))
+        stopifnot(!job_alive('42'))
+        options(cdrgam.cli.sacct=fake_tool('sacct-running', 'echo "42|RUNNING"'))
+        stopifnot(job_alive('42'))
+        options(cdrgam.cli.sacct=fake_tool('sacct-empty', 'exit 0'))
+        stopifnot(job_alive('42'))
+        options(cdrgam.cli.squeue=fake_tool('squeue-listed', 'echo 42'))
+        stopifnot(job_alive('42'))
+        options(cdrgam.cli.squeue=fake_tool('squeue-unlisted', 'exit 0'))
+        stopifnot(!job_alive('42'))
+    })
 }
-expired_squeue <- fake_tool('squeue', c(
-    'echo "slurm_load_jobs error: Invalid job id specified" >&2', 'exit 1'
-))
-job_alive <- internal('.cdrgam_cli_viz_job_alive')
-local({
-    old <- options(
-        cdrgam.cli.squeue=expired_squeue,
-        cdrgam.cli.sacct=fake_tool('sacct', 'echo "42|TIMEOUT"')
-    )
-    on.exit(options(old))
-    stopifnot(!job_alive('42'))
-    options(cdrgam.cli.sacct=fake_tool('sacct-running', 'echo "42|RUNNING"'))
-    stopifnot(job_alive('42'))
-    options(cdrgam.cli.sacct=fake_tool('sacct-empty', 'exit 0'))
-    stopifnot(job_alive('42'))
-    options(cdrgam.cli.squeue=fake_tool('squeue-listed', 'echo 42'))
-    stopifnot(job_alive('42'))
-    options(cdrgam.cli.squeue=fake_tool('squeue-unlisted', 'exit 0'))
-    stopifnot(!job_alive('42'))
-})
 
 instructions <- internal('.cdrgam_cli_viz_instructions')(
     list(host='node7.example.edu', port=41741L, job_id='42'), gateway='me@login.example.edu'

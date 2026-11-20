@@ -37,6 +37,9 @@ jobs:
       - name: Install the core package
         run: install.packages('cdrgam-core', repos = NULL, type = 'source')
         shell: Rscript {0}
+      - name: Install the package
+        run: install.packages('.', repos = NULL, type = 'source')
+        shell: Rscript {0}
       - name: Build site
         run: pkgdown::build_site(new_process = FALSE, install = FALSE)
         shell: Rscript {0}

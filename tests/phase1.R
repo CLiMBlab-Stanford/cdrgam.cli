@@ -2046,8 +2046,13 @@ stopifnot(
         work_root, 'prediction_decay_validation'
     ))),
     grepl('Selected generated artifacts:', purge_preview_text, fixed=TRUE),
-    grepl(file.path(project, 'results', 'models', 'decay'), purge_preview_text,
-        fixed=TRUE)
+    # The preview prints resolved paths, which can differ in form from the
+    # constructed ones, so compare them as paths.
+    any(vapply(
+        trimws(unlist(strsplit(purge_preview_text, '\n', fixed=TRUE))),
+        same_path, logical(1),
+        right=file.path(project, 'results', 'models', 'decay')
+    ))
 )
 prediction_preview <- cdrgam_cli_purge(
     projects='test-project', models='decay', predictions='val', force=FALSE

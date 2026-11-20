@@ -272,8 +272,11 @@ if (all(vapply(c('shiny', 'plotly', 'bslib'), requireNamespace, logical(1), quie
             identical(lines()[[3L]]$reference, list(x=NA_real_, z=0))
         )
     })
-    stopifnot(!grepl('Restart server', paste(format(internal('.cdrgam_cli_viz_ui')()), collapse=''), fixed=TRUE))
-    stopifnot(grepl('Restart server', paste(format(internal('.cdrgam_cli_viz_ui')(TRUE)), collapse=''), fixed=TRUE))
+    ui_text <- function(...) {
+        paste(format(internal('.cdrgam_cli_viz_ui')(...)), collapse='')
+    }
+    stopifnot(!grepl('Restart server', ui_text(), fixed=TRUE))
+    stopifnot(grepl('Restart server', ui_text(TRUE), fixed=TRUE))
 }
 
 fake_tool <- function(name, body) {
@@ -282,7 +285,9 @@ fake_tool <- function(name, body) {
     Sys.chmod(path, mode='0755')
     path
 }
-expired_squeue <- fake_tool('squeue', c('echo "slurm_load_jobs error: Invalid job id specified" >&2', 'exit 1'))
+expired_squeue <- fake_tool('squeue', c(
+    'echo "slurm_load_jobs error: Invalid job id specified" >&2', 'exit 1'
+))
 job_alive <- internal('.cdrgam_cli_viz_job_alive')
 local({
     old <- options(

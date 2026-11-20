@@ -333,7 +333,6 @@
         for (request_file in setdiff(request_files, known_request_files)) ingest(request_file)
     }
     scan_requests()
-    last_activity <- Sys.time()
     last_reconcile <- Sys.time()
     last_scan <- Sys.time()
 
@@ -388,7 +387,6 @@
             } else if (identical(message$type, 'submit')) {
                 response <- ingest(message$request_file)
                 response$ok <- isTRUE(response$ok)
-                last_activity <- Sys.time()
             } else if (identical(message$type, 'claim')) {
                 worker <- workers[[message$worker_id]]
                 if (is.null(worker) || !identical(worker$resource_key, message$resource_key)) {
@@ -445,7 +443,6 @@
                         workers[[message$worker_id]] <- worker
                         .cdrgam_cli_registry_worker(configuration, worker)
                     }
-                    last_activity <- Sys.time()
                 }
             } else if (identical(message$type, 'stop')) {
                 keys <- intersect(as.character(message$work_keys), names(items))
@@ -468,7 +465,6 @@
                     }
                 }
                 response$stopped <- keys
-                last_activity <- Sys.time()
             } else if (identical(message$type, 'forget')) {
                 keys <- intersect(as.character(message$work_keys), names(items))
                 active <- keys[vapply(keys, function(key) any(vapply(
@@ -488,7 +484,6 @@
                     exit_counts <- exit_counts[intersect(names(exit_counts), retained)]
                     response$forgot <- keys
                 }
-                last_activity <- Sys.time()
             } else if (identical(message$type, 'shutdown')) {
                 if (length(workers) && !isTRUE(message$force)) {
                     response <- list(ok=FALSE, error=paste(
@@ -527,7 +522,6 @@
                     worker$updated_at <- .cdrgam_cli_timestamp()
                     workers[[message$worker_id]] <- worker
                     .cdrgam_cli_registry_worker(configuration, worker)
-                    last_activity <- Sys.time()
                 }
             } else if (identical(message$type, 'stopped')) {
                 worker <- workers[[message$worker_id]]
@@ -538,7 +532,6 @@
                     .cdrgam_cli_registry_worker(configuration, worker)
                     workers[[message$worker_id]] <- NULL
                 }
-                last_activity <- Sys.time()
             } else {
                 response <- list(ok=FALSE, error='Unknown scheduler message')
             }
@@ -620,7 +613,6 @@
                 worker$updated_at <- .cdrgam_cli_timestamp()
                 .cdrgam_cli_registry_worker(configuration, worker)
                 workers[[worker_id]] <- NULL
-                last_activity <- Sys.time()
             }
         }
         if (as.numeric(difftime(Sys.time(), last_reconcile, units='secs')) >= 2) {
@@ -671,7 +663,6 @@
                         workers[[worker$worker_id]] <- worker
                         .cdrgam_cli_registry_worker(configuration, worker)
                     }
-                    last_activity <- Sys.time()
                 }
             }
         }

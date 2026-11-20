@@ -275,7 +275,10 @@ $(function() {
                 bslib::accordion_panel(
                     'Options',
                     shiny::numericInput('n', 'Grid points per axis', 200, min=2, max=2000),
-                    shiny::numericInput('level', 'Interval level', 0.95, min=0.5, max=0.999, step=0.01),
+                    shiny::numericInput(
+                        'level', 'Interval level', 0.95,
+                        min=0.5, max=0.999, step=0.01
+                    ),
                     shiny::checkboxInput('show_interval', 'Show intervals', TRUE),
                     shiny::radioButtons(
                         'interval', 'Intervals',
@@ -415,7 +418,9 @@ $(function() {
                     class='text-danger small mb-3',
                     'This term has one axis; a surface needs two.'
                 ))
-                x <- if (length(pending) >= 1L && pending[[1L]] %in% axes) pending[[1L]] else axes[[1L]]
+                x <- if (length(pending) >= 1L && pending[[1L]] %in% axes) {
+                    pending[[1L]]
+                } else axes[[1L]]
                 y <- if (length(pending) >= 2L && pending[[2L]] %in% axes) pending[[2L]] else
                     setdiff(axes, x)[[1L]]
                 shiny::tagList(
@@ -669,7 +674,8 @@ $(function() {
                 class='text-muted small p-2',
                 'Choose a term and fixed values, then press Add line.'
             ))
-            shiny::tags$ul(class='list-group list-group-flush', lapply(seq_along(values), function(index) {
+            shiny::tags$ul(class='list-group list-group-flush', lapply(
+                seq_along(values), function(index) {
                 line <- values[[index]]
                 color <- .cdrgam_cli_viz_colors[
                     (index - 1L) %% length(.cdrgam_cli_viz_colors) + 1L
@@ -687,7 +693,10 @@ $(function() {
                         if (identical(editing(), line$id)) 'active' else ''
                     ),
                     shiny::span(style=sprintf(
-                        'display:inline-block;width:1.5em;height:3px;background:%s;margin-right:0.6em;',
+                        paste0(
+                            'display:inline-block;width:1.5em;height:3px;',
+                            'background:%s;margin-right:0.6em;'
+                        ),
                         color
                     )),
                     shiny::span(class='flex-grow-1', line$label),
@@ -731,7 +740,9 @@ $(function() {
                 entries <- shiny::withProgress(message='Evaluating lines', value=0, {
                     lapply(seq_along(values), function(index) {
                         shiny::incProgress(1 / length(values))
-                        data <- tryCatch(evaluate(values[[index]], settings), error=function(error) {
+                        data <- tryCatch(
+                            evaluate(values[[index]], settings),
+                            error=function(error) {
                             shiny::showNotification(paste0(
                                 values[[index]]$label, ': ', conditionMessage(error)
                             ), type='error', duration=10)
@@ -770,7 +781,9 @@ $(function() {
         })
 
         output$download <- shiny::downloadHandler(
-            filename=function() paste0('cdrgam-effect-', format(Sys.time(), '%Y%m%d-%H%M%S'), '.csv'),
+            filename=function() paste0(
+                'cdrgam-effect-', format(Sys.time(), '%Y%m%d-%H%M%S'), '.csv'
+            ),
             content=function(file) {
                 value <- plotted()
                 tables <- lapply(value$entries, function(entry) {

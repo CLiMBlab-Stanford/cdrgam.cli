@@ -20,22 +20,23 @@ cdrgam_cli_list(projects = NULL, cdrgam_root = NULL)
 
 cdrgam_cli_log(projects = NULL, models = NULL, predictions = NULL,
   visualizations = NULL, comparisons = NULL, lines = NULL,
-  cdrgam_root = NULL, pager = NULL, worker = FALSE)
+  cdrgam_root = NULL, pager = NULL, worker = FALSE, running = FALSE)
 
 cdrgam_cli_plan(projects = NULL, models = NULL, predictions = NULL,
   visualizations = NULL, comparisons = NULL, cdrgam_root = NULL)
 
 cdrgam_cli_run(projects = NULL, models = NULL, predictions = NULL,
   visualizations = NULL, comparisons = NULL, dry_run = FALSE,
-  cpus = NULL, memory = NULL, time = NULL, qos = NULL,
-  cdrgam_root = NULL)
+  cpus = NULL, partition = NULL, memory = NULL, time = NULL,
+  scheduler_time = NULL, qos = NULL, cdrgam_root = NULL)
 
 cdrgam_cli_status(projects = NULL, cdrgam_root = NULL, pager = NULL,
   use_pager = TRUE)
 
 cdrgam_cli_purge(projects = NULL, models = NULL, predictions = NULL,
   visualizations = NULL, comparisons = NULL, datasets = NULL,
-  work = FALSE, logs = FALSE, force = FALSE, cdrgam_root = NULL)
+  work = FALSE, logs = FALSE, force = FALSE, cdrgam_root = NULL,
+  confirm = NULL, pager = NULL, use_pager = TRUE)
 
 find_cdrgam_project(project = NULL, cdrgam_root = NULL)
 }
@@ -77,15 +78,24 @@ find_cdrgam_project(project = NULL, cdrgam_root = NULL)
   \item{lines}{Optional maximum number of trailing lines from each log.}
   \item{worker}{Whether to show generic worker lifecycle logs instead of
   work-item process logs. Worker mode does not accept workload selectors.}
+  \item{running}{Whether to show only logs for currently running work items.}
   \item{pager}{Optional pager executable or command-specific callback.
   Interactive terminals use \command{less} by default.}
-  \item{use_pager}{Whether interactive status output may open the pager.}
+  \item{use_pager}{Whether interactive status output or a purge selection
+  may open the pager.}
   \item{dry_run}{Whether to print the dependency-closed plan without running it.}
-  \item{cpus, memory, time, qos}{Optional Slurm resource overrides.}
+  \item{cpus, partition, memory, time, qos}{Optional Slurm worker resource
+  overrides. \code{partition} also applies to a newly submitted root
+  scheduler.}
+  \item{scheduler_time}{Optional root scheduler time-limit override. Worker
+  time remains controlled by \code{time}.}
   \item{work}{Whether to select private work attempts for cleanup.}
   \item{logs}{Whether to select project-private work-item logs for cleanup.}
   \item{force}{Whether to remove selected generated paths without showing the
   preview or prompting for confirmation.}
+  \item{confirm}{Whether \code{cdrgam_cli_purge()} confirms removal after
+  showing the selection. By default, confirmation is offered only when
+  standard input and output are terminals.}
 }
 \description{
 These functions define, resolve, validate, plan, execute, inspect, and

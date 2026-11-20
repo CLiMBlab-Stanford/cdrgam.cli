@@ -517,7 +517,7 @@ $(function() {
                 value <- if (is.null(value) || (!is.character(value) && is.na(value))) {
                     ''
                 } else .cdrgam_cli_viz_format(value)
-                htmltools::tagAppendAttributes(
+                shiny::tagAppendAttributes(
                     shiny::textInput(
                         .cdrgam_cli_viz_reference_id(name), name, value=value
                     ),

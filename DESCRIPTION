@@ -27,6 +27,7 @@ Imports:
     processx,
     ps,
     RSQLite,
+    utils,
     yaml
 Suggests:
     bslib,

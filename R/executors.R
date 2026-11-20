@@ -186,7 +186,7 @@
         ),
         yaml_path
     )
-    writeLines(capture.output(print(report)), text_path, useBytes=TRUE)
+    writeLines(utils::capture.output(print(report)), text_path, useBytes=TRUE)
     list(
         yaml=basename(yaml_path), text=basename(text_path),
         candidates=length(candidates)

@@ -1,3 +1,13 @@
+# cdrgam.cli (development version)
+
+- `cdrgam viz` on a root without Slurm, or with `--local`, prints the
+  viewer's address and opens the browser; `--no-browser` suppresses that.
+  A local viewer makes no Slurm calls, so it can run where Slurm does not,
+  such as Windows. `--stop` and `--restart` now
+  explain that a local viewer is stopped by interrupting it.
+
+- Linux hosted checks run on Ubuntu 24.04.
+
 # cdrgam.cli 0.3.0
 
 - Visualization definitions accept `preset: irf-lag` and

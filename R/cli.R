@@ -465,11 +465,12 @@
     viz=.cdrgam_cli_command(
         'viz', 'Serve the browser viewer for completed fits.',
         description=paste(
-            'Start or reuse your viewer server and print the ssh command that',
-            'forwards it to your workstation. On a Slurm-configured root the',
-            'server runs in a long-lived Slurm job; otherwise it serves from',
-            'this process until interrupted. The viewer draws effect lines and',
-            'surfaces for any completed fit under the root.'
+            'Start or reuse your viewer server. On a Slurm-configured root the',
+            'server runs in a long-lived Slurm job, and the command prints the',
+            'ssh command that forwards it to your workstation. Otherwise, or',
+            'with --local, it serves from this process on this machine, opens',
+            'your browser, and runs until interrupted. The viewer draws effect',
+            'lines and surfaces for any completed fit under the root.'
         ),
         options=list(
             .cdrgam_cli_option('stop', 'Cancel your viewer job.', arity='flag'),
@@ -478,6 +479,10 @@
             ),
             .cdrgam_cli_option(
                 'local', 'Serve from this process even on a Slurm-configured root.',
+                arity='flag'
+            ),
+            .cdrgam_cli_option(
+                'no-browser', 'Do not open a browser for a local viewer.',
                 arity='flag'
             ),
             .cdrgam_cli_option(
@@ -912,6 +917,7 @@ cli_main <- function(args=commandArgs(trailingOnly=TRUE)) {
         arguments <- list(
             stop=isTRUE(flags$stop), restart=isTRUE(flags$restart),
             local=isTRUE(flags$local), port=.cdrgam_cli_one(flags$port, '--port'),
+            browse=if (isTRUE(flags[['no-browser']])) FALSE,
             cpus=.cdrgam_cli_one(flags$cpus, '--cpus'),
             memory=.cdrgam_cli_one(flags$memory, '--memory'),
             time=.cdrgam_cli_one(flags$time, '--time'),

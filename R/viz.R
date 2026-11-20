@@ -260,7 +260,8 @@
 # exits with the restart status, so the job script relaunches the server with
 # freshly loaded code on the same port.
 .cdrgam_cli_viz_serve <- function(
-        configuration, state, port=NULL, host='127.0.0.1', record=TRUE
+        configuration, state, port=NULL, host='127.0.0.1', record=TRUE,
+        browse=FALSE
 ) {
     .cdrgam_cli_viz_require()
     restart_path <- file.path(state, 'restart.yml')
@@ -290,10 +291,17 @@
             }
         }, add=TRUE)
     }
-    message('cdrgam viz listening on ', Sys.info()[['nodename']], ':', port)
+    if (record) {
+        message('cdrgam viz listening on ', Sys.info()[['nodename']], ':', port)
+    } else {
+        message(
+            'cdrgam viz serving at ', .cdrgam_cli_viz_url(host, port),
+            '; press Ctrl+C to stop'
+        )
+    }
     shiny::runApp(
         .cdrgam_cli_viz_app(configuration$cdrgam_root, control),
-        host=host, port=port, launch.browser=FALSE
+        host=host, port=port, launch.browser=isTRUE(browse)
     )
     if (isTRUE(control$restart)) {
         .cdrgam_cli_write_yaml(list(job_id=job_id, port=port), restart_path)
@@ -362,6 +370,17 @@
     )
 }
 
+# The address a browser on this machine uses to open a viewer.
+.cdrgam_cli_viz_url <- function(host, port) {
+    if (host %in% c('0.0.0.0', '::')) host <- '127.0.0.1'
+    paste0('http://', host, ':', as.integer(port), '/')
+}
+
+# Whether the viewer serves from this process rather than a Slurm job.
+.cdrgam_cli_viz_local <- function(configuration, local=FALSE) {
+    isTRUE(local) || !identical(configuration$scheduler, 'slurm')
+}
+
 .cdrgam_cli_viz_stop <- function(configuration, state) {
     jobs <- unique(Filter(nzchar, vapply(c('active.yml', 'job.yml'), function(name) {
         as.character(.cdrgam_cli_null(
@@ -396,7 +415,9 @@
 #' fits under the configured root. On a root whose scheduler is Slurm, the
 #' viewer runs in a long-lived Slurm job and later calls reuse the running
 #' job. Otherwise, or with `local=TRUE`, it serves from this process until
-#' interrupted. A Slurm viewer listens on all interfaces of its node, without
+#' interrupted, on any platform, and prints its address. A local viewer has no
+#' job, so `stop` and `restart` are errors; interrupt it and start it again
+#' instead. A Slurm viewer listens on all interfaces of its node, without
 #' authentication, so other users who can reach the node can also open it. The
 #' printed `ssh` command forwards the port through the login host named by the
 #' `CDRGAM_VIZ_GATEWAY` environment variable, or through the invoking host when
@@ -412,26 +433,40 @@
 #'   viewer job. The defaults are one CPU, 16G, and 12 hours, with the
 #'   partition, account, and QOS taken from the root configuration.
 #' @param wait Seconds to wait for a submitted job to start serving.
+#' @param browse Whether a local viewer opens the default browser. The default
+#'   opens it when the session is interactive or standard output is a
+#'   terminal. A Slurm viewer never opens one.
 #' @return The active server record, invisibly, or `NULL` when the job has not
 #'   started within `wait` seconds.
 #' @export
 cdrgam_cli_viz <- function(
         cdrgam_root=NULL, stop=FALSE, restart=FALSE, local=FALSE, port=NULL,
-        cpus=NULL, memory=NULL, time=NULL, partition=NULL, qos=NULL, wait=120
+        cpus=NULL, memory=NULL, time=NULL, partition=NULL, qos=NULL, wait=120,
+        browse=NULL
 ) {
     configuration <- .cdrgam_cli_site(cdrgam_root, create_root=TRUE)
     state <- .cdrgam_cli_viz_state(configuration)
+    serve_local <- .cdrgam_cli_viz_local(configuration, local)
+    if (serve_local && (isTRUE(stop) || isTRUE(restart))) {
+        .cdrgam_cli_abort(paste(
+            'A local viewer runs in the foreground and has no job to stop or',
+            'restart; press Ctrl+C where it is serving and run cdrgam viz again'
+        ))
+    }
     if (isTRUE(stop)) return(invisible(.cdrgam_cli_viz_stop(configuration, state)))
     .cdrgam_cli_viz_require()
     overrides <- list(
         cpus=cpus, memory=memory, time=time, partition=partition, qos=qos
     )
     overrides <- overrides[!vapply(overrides, is.null, logical(1))]
-    if (isTRUE(local) || !identical(configuration$scheduler, 'slurm')) {
+    if (serve_local) {
         if (length(overrides)) {
             .cdrgam_cli_abort('Slurm resource options require a Slurm viewer job')
         }
-        .cdrgam_cli_viz_serve(configuration, state, port=port, record=FALSE)
+        if (is.null(browse)) browse <- interactive() || isatty(stdout())
+        .cdrgam_cli_viz_serve(
+            configuration, state, port=port, record=FALSE, browse=browse
+        )
         return(invisible(NULL))
     }
     .cdrgam_cli_require_slurm_platform()

@@ -4,7 +4,7 @@
 \usage{
 cdrgam_cli_viz(cdrgam_root = NULL, stop = FALSE, restart = FALSE,
   local = FALSE, port = NULL, cpus = NULL, memory = NULL, time = NULL,
-  partition = NULL, qos = NULL, wait = 120)
+  partition = NULL, qos = NULL, wait = 120, browse = NULL)
 }
 \arguments{
   \item{cdrgam_root}{Configured CDR-GAM root.}
@@ -17,6 +17,9 @@ cdrgam_cli_viz(cdrgam_root = NULL, stop = FALSE, restart = FALSE,
   viewer job. The defaults are one CPU, 16G, and 12 hours, with the partition,
   account, and QOS taken from the root configuration.}
   \item{wait}{Seconds to wait for a submitted job to start serving.}
+  \item{browse}{Whether a local viewer opens the default browser. The default
+  opens it when the session is interactive or standard output is a terminal.
+  A Slurm viewer never opens one.}
 }
 \value{
 The active server record, invisibly, or \code{NULL} when the job has not
@@ -33,7 +36,9 @@ field leaves that predictor at the model default. Estimates and pointwise interv
 \details{
 On a root whose scheduler is Slurm, the viewer runs in a Slurm job, and later
 calls by the same user reuse that job. Otherwise, or with \code{local = TRUE},
-it serves from this process until interrupted. A Slurm viewer listens on all
+it serves from this process until interrupted, on any platform, and prints
+its address. A local viewer has no job, so \code{stop} and \code{restart}
+are errors; interrupt it and start it again instead. A Slurm viewer listens on all
 interfaces of its node, without authentication, so other users who can reach
 the node can also open it. The printed \code{ssh} command forwards the port
 through the login host named by the \env{CDRGAM_VIZ_GATEWAY} environment

@@ -17,6 +17,7 @@ root_help <- paste(capture.output(cli_main('--help')), collapse='\n')
 stopifnot(
     grepl('Usage: cdrgam viz', help, fixed=TRUE),
     grepl('--stop', help, fixed=TRUE),
+    grepl('--no-browser', help, fixed=TRUE),
     grepl('viz', root_help, fixed=TRUE),
     !grepl('viz-server', root_help, fixed=TRUE)
 )
@@ -278,6 +279,36 @@ if (all(vapply(c('shiny', 'plotly', 'bslib'), requireNamespace, logical(1), quie
     stopifnot(!grepl('Restart server', ui_text(), fixed=TRUE))
     stopifnot(grepl('Restart server', ui_text(TRUE), fixed=TRUE))
 }
+
+# A root without Slurm serves the viewer locally on every platform, where it
+# has no job to stop or restart, and prints a loopback address.
+local({
+    configuration <- list(scheduler='local')
+    viz_local <- internal('.cdrgam_cli_viz_local')
+    stopifnot(
+        viz_local(configuration),
+        viz_local(list(scheduler='slurm'), local=TRUE),
+        !viz_local(list(scheduler='slurm')),
+        identical(
+            internal('.cdrgam_cli_viz_url')('127.0.0.1', 41741L),
+            'http://127.0.0.1:41741/'
+        ),
+        identical(
+            internal('.cdrgam_cli_viz_url')('0.0.0.0', 8080),
+            'http://127.0.0.1:8080/'
+        )
+    )
+    if (!identical(internal('.cdrgam_cli_site')(root)$scheduler, 'slurm')) {
+        for (arguments in list(list(stop=TRUE), list(restart=TRUE))) {
+            failure <- tryCatch(
+                do.call(cdrgam_cli_viz, c(list(cdrgam_root=root), arguments)),
+                error=conditionMessage
+            )
+            stopifnot(grepl('local viewer runs in the foreground', failure,
+                fixed=TRUE))
+        }
+    }
+})
 
 # The fake Slurm tools are shell scripts, and Slurm runs only on Unix.
 if (.Platform$OS.type == 'unix') {

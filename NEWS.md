@@ -1,4 +1,19 @@
-# cdrgam.cli (development version)
+# cdrgam.cli 0.4.0
+
+- Lag values accept `peak(<term>)` and `peak-neg(<term>)`, which hold every
+  term at the lag where the named term's response is largest or smallest.
+  `<term>` is a term label from the effect catalog, such as
+  `peak(irf(1))`.
+
+- Effects that use a peak write `effect-peaks.csv` with each peak lag and a
+  `level` interval from posterior draws of that lag, and the draws in
+  `effect-peak-draws.csv`. `uncertainty.peak_draws` sets the number of draws
+  (default 1000; `0` skips them). The draws need `cdrgam` 0.4.0.
+
+- Line plots that use a peak can show a timeline of peak lags, intervals,
+  and draws below the main panel. `render.peaks` is `auto` (when terms were
+  held at different peak lags), `always`, or `never`. The viewer draws the
+  same timeline.
 
 - `cdrgam viz` on a root without Slurm, or with `--local`, prints the
   viewer's address and opens the browser; `--no-browser` suppresses that.

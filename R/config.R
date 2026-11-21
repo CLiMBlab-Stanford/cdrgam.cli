@@ -930,9 +930,21 @@
     }
     if (is.null(value$uncertainty)) value$uncertainty <- list()
     .cdrgam_cli_check_keys(
-        value$uncertainty, c('level', 'kind', 'unconditional', 'points'),
+        value$uncertainty, c('level', 'kind', 'unconditional', 'points', 'peak_draws'),
         paste0(field, '.uncertainty')
     )
+    # Left unset unless given, so that existing queries keep their identity;
+    # execution then uses .cdrgam_cli_peak_draws.
+    draws <- value$uncertainty$peak_draws
+    if (!is.null(draws)) {
+        if (!is.numeric(draws) || length(draws) != 1L || !is.finite(draws) ||
+                draws < 0 || draws %% 1 != 0 || draws > .Machine$integer.max) {
+            .cdrgam_cli_abort(paste0(
+                field, '.uncertainty.peak_draws must be zero or a positive integer'
+            ))
+        }
+        value$uncertainty$peak_draws <- as.integer(draws)
+    }
     value$uncertainty$level <- .cdrgam_cli_null(value$uncertainty$level, 0.95)
     if (!is.numeric(value$uncertainty$level) || length(value$uncertainty$level) != 1L ||
             !is.finite(value$uncertainty$level) || value$uncertainty$level <= 0 ||
@@ -978,7 +990,7 @@
         value,
         c(
             'geometry', 'mappings', 'interval', 'theme', 'formats', 'width',
-            'height', 'dpi', 'title', 'xlab', 'ylab', 'palette', 'scales'
+            'height', 'dpi', 'title', 'xlab', 'ylab', 'palette', 'scales', 'peaks'
         ),
         field, c('geometry', 'mappings')
     )
@@ -1022,6 +1034,10 @@
     if (!is.null(value$palette)) value$palette <- match.arg(
         .cdrgam_cli_scalar_character(value$palette, paste0(field, '.palette')),
         c('default', 'rainbow')
+    )
+    if (!is.null(value$peaks)) value$peaks <- match.arg(
+        .cdrgam_cli_scalar_character(value$peaks, paste0(field, '.peaks')),
+        c('auto', 'always', 'never')
     )
     if (!is.null(value$scales)) value$scales <- match.arg(
         .cdrgam_cli_scalar_character(value$scales, paste0(field, '.scales')),

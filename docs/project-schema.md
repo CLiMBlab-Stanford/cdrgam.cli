@@ -498,7 +498,11 @@ the fitted lag domain. The response used is the term alone with each of its
 predictors at the mean plus one SD, minus the term at the means, and with
 other axes at their training means; for `irf(1)` it is `irf(1)` itself.
 Expressions are resolved separately for each selected term, so `"*"` entries
-use each predictor's own summaries and each term's own peak. A `"*"`
+use each predictor's own summaries and each term's own peak. To hold every
+term at the same lag, name the term whose peak to use: `peak(irf(1))`,
+`peak-neg(s(lag, wlen))`, or `peak("irf(1)") + 0.1`. Quotes around the label
+are optional. The label is checked against the fit at evaluation, and the
+named term must have a lag axis. A `"*"`
 reference applies to every predictor of a term that has no reference of its
 own; a term without predictors, such as `irf(1)`, gets no reference.
 Expressions fail at evaluation when the fit stores no summary for the axis.
@@ -553,6 +557,17 @@ core evaluation per covariance point and reference value, for example 81 for
 a 40-point lag curve with a predictor reference. Reference predictors must
 have values; `default` is not supported.
 
+When any value uses a peak, the effect artifact also has `effect-peaks.csv`
+(and `.rds`). It has one row per term, peak term, and direction, with the
+peak lag in `lag`. `lower` and `upper` give the central `level` interval of
+posterior draws of that peak lag. Each draw samples the coefficients from
+their approximate posterior and takes the peak of the resulting curve on the
+same lag grid, so draws are no finer than the grid spacing. The draws are in
+`effect-peak-draws.csv`. `uncertainty.peak_draws` sets their number (default
+1000, with a fixed seed); `0` skips them. The interval is empty when the
+installed `cdrgam` predates `simulate_effect()`. A flat or bimodal response
+can give draws in separate clusters, which the interval alone does not show.
+
 Each term with exactly one predictor also has `predictor` and
 `predictor_value` columns in the effect grid. They hold the predictor's name
 and value, so terms with different predictors can share an axis.
@@ -562,6 +577,15 @@ other varying axis. A numeric `color` or `linetype` mapping with at most 12
 values uses a discrete legend. `palette: rainbow` colors lines from red to
 violet and draws `irf(1)` in black. `scales` (`fixed`, `free`, `free_x`, or
 `free_y`) sets the facet scales.
+
+`peaks` controls a timeline of peak lags drawn below a line plot: `auto`
+(default) draws it when the terms were held at different peak lags, `always`
+whenever a peak was used, and `never` not at all. Each row shows one term's
+peak lag as a long tick, its posterior interval as a bar, and the draws as
+faint ticks, in the term's line color when `color` maps to `term`. The
+timeline shares the plot's x-axis when that axis is `lag` and the plot has
+no facets; otherwise it has its own lag axis. The viewer draws the same
+timeline under its line plots.
 
 Line renderings support ribbon, boundary-line, or no interval display. Raster,
 contour, and combined raster-contour geometries support predictor-by-lag,

@@ -24,6 +24,8 @@ Imports:
     filelock,
     fs,
     ggplot2,
+    grid,
+    gtable,
     processx,
     ps,
     RSQLite,

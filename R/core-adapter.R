@@ -143,3 +143,13 @@
 .cdrgam_cli_core_test_effect <- function(fit, ...) {
     cdrgam::test_effect(fit, ...)
 }
+
+# simulate_effect() is new after cdrgam 0.3.0. Callers check availability
+# and fall back to point estimates when an older core is installed.
+.cdrgam_cli_core_has_simulate_effect <- function() {
+    'simulate_effect' %in% getNamespaceExports('cdrgam')
+}
+
+.cdrgam_cli_core_simulate_effect <- function(fit, ...) {
+    getExportedValue('cdrgam', 'simulate_effect')(fit, ...)
+}

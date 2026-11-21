@@ -1762,6 +1762,27 @@ stopifnot(
     ))
 )
 
+# An effect whose values use a peak records it, with posterior draws when the
+# core can simulate effects; one peak gives no strip under render.peaks auto.
+predictor_peaks <- readRDS(file.path(preset_effects[[2L]], 'effect-peaks.rds'))
+simulating <- 'simulate_effect' %in% getNamespaceExports('cdrgam')
+stopifnot(
+    identical(predictor_peaks$term, 'x'), identical(predictor_peaks$source, 'x'),
+    identical(predictor_peaks$direction, 'pos'),
+    isTRUE(all.equal(predictor_peaks$lag, unique(predictor_grid$lag))),
+    !file.exists(file.path(preset_effects[[1L]], 'effect-peaks.rds')),
+    !simulating || (
+        predictor_peaks$lower <= predictor_peaks$lag &&
+            predictor_peaks$lag <= predictor_peaks$upper &&
+            nrow(attr(predictor_peaks, 'draws')) == 1000L &&
+            file.exists(file.path(preset_effects[[2L]], 'effect-peak-draws.csv'))
+    ),
+    !file.exists(file.path(
+        project, 'results', 'models', 'decay', 'visualizations', 'irf-predictor',
+        'plot-peaks.rds'
+    ))
+)
+
 comparison_plan <- cdrgam_cli_plan(
     projects='test-project', comparisons='alternatives'
 )

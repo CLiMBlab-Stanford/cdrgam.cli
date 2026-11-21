@@ -23,9 +23,11 @@
 
 # Evaluate one layer of a query for one term. Expressions, ranges, and
 # wildcard references are resolved for the term before the core is called.
-.cdrgam_cli_evaluate_term <- function(fit, term, query, layer, training) {
+.cdrgam_cli_evaluate_term <- function(
+        fit, term, query, layer, training, peaks=new.env()
+) {
     request <- .cdrgam_cli_term_request(
-        fit, term, query, training$impulses, training$responses
+        fit, term, query, training$impulses, training$responses, peaks
     )
     # References need cdrgam > 0.2.0; omit the argument otherwise so that
     # other queries still run against older core releases.
@@ -101,9 +103,11 @@
     })
     tables <- list()
     tests <- list()
+    peaks <- new.env()
+    peaks$.catalog <- catalog
     for (layer in layers) {
         for (term in terms) {
-            value <- .cdrgam_cli_evaluate_term(fit, term, query, layer, training)
+            value <- .cdrgam_cli_evaluate_term(fit, term, query, layer, training, peaks)
             value$estimate$layer <- layer$id
             tables[[length(tables) + 1L]] <- value$estimate
             if (!is.null(value$test)) {
@@ -119,6 +123,21 @@
         )
     }
     output <- .cdrgam_cli_bind_tables(tables)
+    peaks <- .cdrgam_cli_peak_summary(
+        fit, peaks, training$impulses, training$responses, query$n,
+        .cdrgam_cli_null(query$uncertainty$peak_draws, .cdrgam_cli_peak_draws),
+        query$uncertainty$level, query$uncertainty$unconditional
+    )
+    if (!is.null(peaks)) {
+        saveRDS(peaks, file.path(stage, 'effect-peaks.rds'), version=3)
+        utils::write.csv(
+            peaks, file.path(stage, 'effect-peaks.csv'), row.names=FALSE
+        )
+        if (!is.null(attr(peaks, 'draws'))) utils::write.csv(
+            attr(peaks, 'draws'), file.path(stage, 'effect-peak-draws.csv'),
+            row.names=FALSE
+        )
+    }
     saveRDS(output, file.path(stage, 'effect-grid.rds'), version=3)
     utils::write.csv(output, file.path(stage, 'effect-grid.csv'), row.names=FALSE)
     .cdrgam_cli_write_yaml(
@@ -362,6 +381,146 @@
     )
 }
 
+# Whether to draw the peak strip. `auto` draws it when the plotted terms
+# were held at peaks that differ, since the curves then sit at different
+# lags; `always` draws it whenever a peak was used.
+.cdrgam_cli_show_peaks <- function(peaks, setting=NULL) {
+    setting <- .cdrgam_cli_null(setting, 'auto')
+    if (is.null(peaks) || !nrow(peaks) || identical(setting, 'never')) return(FALSE)
+    identical(setting, 'always') || length(unique(signif(peaks$lag, 10L))) > 1L
+}
+
+# One label per strip row. A term held at its own positive peak is labeled
+# by the term alone; other rows also name the peak, as in
+# "x · peak-neg(irf(1))".
+.cdrgam_cli_peak_lanes <- function(peaks) {
+    own <- peaks$source == peaks$term
+    expression <- paste0(
+        ifelse(peaks$direction == 'neg', 'peak-neg', 'peak'),
+        ifelse(own, '', paste0('(', peaks$source, ')'))
+    )
+    plain <- own & peaks$direction == 'pos' &
+        !(peaks$term %in% peaks$term[duplicated(peaks$term)])
+    ifelse(plain, peaks$term, paste0(peaks$term, ' · ', expression))
+}
+
+# A timeline of the peak lags used by each term: a long tick at the point
+# estimate, the central interval of the posterior draws as a bar, and the
+# draws as faint ticks, so that a peak whose draws split between separate
+# lags shows both clusters. Rows are colored like the main plot's lines
+# when color maps to term. `xlim` aligns the timeline with a lag x-axis.
+.cdrgam_cli_peak_strip <- function(peaks, data, render, xlim=NULL) {
+    peaks$.lane <- .cdrgam_cli_peak_lanes(peaks)
+    peaks$.lane <- factor(peaks$.lane, levels=rev(unique(peaks$.lane)))
+    by_term <- identical(
+        .cdrgam_cli_mapping_column(.cdrgam_cli_null(render$mappings$color, '')), 'term'
+    )
+    aesthetics <- function(...) {
+        columns <- c(list(...), if (by_term) list(colour='term'))
+        do.call(ggplot2::aes, lapply(columns, as.name))
+    }
+    fixed <- if (by_term) list() else list(colour='black')
+    plot <- ggplot2::ggplot()
+    draws <- attr(peaks, 'draws')
+    if (!is.null(draws) && nrow(draws)) {
+        draws <- merge(
+            draws, peaks[c('term', 'source', 'direction', '.lane')],
+            by=c('source', 'direction')
+        )
+        count <- max(table(paste(draws$.lane)))
+        plot <- plot + do.call(ggplot2::geom_point, c(list(
+            data=draws,
+            mapping=aesthetics(x='lag', y='.lane'), shape='|', size=3, alpha=min(1, 25 / count)
+        ), fixed))
+    }
+    bounded <- peaks[is.finite(peaks$lower) & is.finite(peaks$upper), , drop=FALSE]
+    if (nrow(bounded)) plot <- plot + do.call(ggplot2::geom_linerange, c(list(
+        data=bounded, mapping=aesthetics(xmin='lower', xmax='upper', y='.lane'),
+        linewidth=0.6
+    ), fixed))
+    plot <- plot + do.call(ggplot2::geom_point, c(list(
+        data=peaks,
+        mapping=aesthetics(x='lag', y='.lane'), shape='|', size=7
+    ), fixed))
+    if (by_term) {
+        levels <- sort(unique(as.character(data$term)))
+        plot <- plot + if (identical(render$palette, 'rainbow')) {
+            ggplot2::scale_colour_manual(
+                values=.cdrgam_cli_rainbow(levels), limits=levels, guide='none'
+            )
+        } else ggplot2::scale_colour_discrete(limits=levels, guide='none')
+    }
+    if (!is.null(xlim)) plot <- plot + ggplot2::coord_cartesian(xlim=xlim)
+    plot + ggplot2::labs(x=if (is.null(xlim)) 'Peak lag' else NULL, y=NULL) +
+        switch(
+            .cdrgam_cli_null(render$theme, 'paper'),
+            paper=ggplot2::theme_bw(base_size=10),
+            minimal=ggplot2::theme_minimal(base_size=10),
+            slides=ggplot2::theme_minimal(base_size=16)
+        )
+}
+
+# Stack ggplots into one gtable whose panels share left and right edges.
+# Each plot is padded on the left and right to the widest plot's axis and
+# legend widths. `heights` are relative. Grobs are built on a null device,
+# so no default device file is opened.
+.cdrgam_cli_stack_plots <- function(plots, heights) {
+    current <- grDevices::dev.cur()
+    grDevices::pdf(NULL)
+    device <- grDevices::dev.cur()
+    on.exit({
+        grDevices::dev.off(device)
+        if (current > 1L) grDevices::dev.set(current)
+    }, add=TRUE)
+    grobs <- lapply(plots, ggplot2::ggplotGrob)
+    edges <- lapply(grobs, function(grob) {
+        panels <- grob$layout[grepl('^panel', grob$layout$name), , drop=FALSE]
+        left <- min(panels$l)
+        right <- max(panels$r)
+        list(
+            left=sum(grid::convertWidth(grob$widths[seq_len(left - 1L)], 'cm', TRUE)),
+            right=sum(grid::convertWidth(
+                grob$widths[seq.int(right + 1L, length.out=length(grob$widths) - right)],
+                'cm', TRUE
+            ))
+        )
+    })
+    left <- max(vapply(edges, `[[`, numeric(1), 'left'))
+    right <- max(vapply(edges, `[[`, numeric(1), 'right'))
+    output <- gtable::gtable(
+        widths=grid::unit(1, 'null'), heights=grid::unit(heights, 'null')
+    )
+    for (index in seq_along(grobs)) {
+        grob <- gtable::gtable_add_cols(
+            grobs[[index]], grid::unit(left - edges[[index]]$left, 'cm'), pos=0L
+        )
+        grob <- gtable::gtable_add_cols(
+            grob, grid::unit(right - edges[[index]]$right, 'cm'), pos=-1L
+        )
+        output <- gtable::gtable_add_grob(output, grob, t=index, l=1L, name=paste0('plot-', index))
+    }
+    output
+}
+
+# The rendered figure: the main plot alone, or with the peak strip below.
+.cdrgam_cli_peak_figure <- function(plot, data, peaks, definition) {
+    render <- definition$render
+    if (!identical(render$geometry, 'line') ||
+            !.cdrgam_cli_show_peaks(peaks, render$peaks)) return(NULL)
+    shared <- identical(.cdrgam_cli_mapping_column(render$mappings$x), 'lag') &&
+        is.null(render$mappings$facet) && 'lag' %in% names(data)
+    xlim <- if (shared) range(c(data$lag, peaks$lag), na.rm=TRUE) else NULL
+    strip <- .cdrgam_cli_peak_strip(peaks, data, render, xlim)
+    if (shared) plot <- plot + ggplot2::coord_cartesian(xlim=xlim)
+    rows <- length(unique(.cdrgam_cli_peak_lanes(peaks)))
+    list(
+        strip=strip,
+        figure=.cdrgam_cli_stack_plots(
+            list(plot, strip), c(1, min(0.6, 0.1 + 0.05 * rows))
+        )
+    )
+}
+
 .cdrgam_cli_save_ggplot <- function(plot, stage, render, stem='visualization') {
     width <- .cdrgam_cli_null(render$width, 8)
     height <- .cdrgam_cli_null(render$height, 5)
@@ -388,7 +547,15 @@
     data <- readRDS(file.path(item$effect$output, 'effect-grid.rds'))
     plot <- .cdrgam_cli_visualization_plot(data, item$definition)
     saveRDS(plot, file.path(stage, 'plot.rds'), version=3)
-    paths <- .cdrgam_cli_save_ggplot(plot, stage, item$definition$render)
+    peaks_path <- file.path(item$effect$output, 'effect-peaks.rds')
+    peaks <- if (file.exists(peaks_path)) readRDS(peaks_path) else NULL
+    figure <- .cdrgam_cli_peak_figure(plot, data, peaks, item$definition)
+    if (!is.null(figure)) {
+        saveRDS(figure$strip, file.path(stage, 'plot-peaks.rds'), version=3)
+    }
+    paths <- .cdrgam_cli_save_ggplot(
+        if (is.null(figure)) plot else figure$figure, stage, item$definition$render
+    )
     uncertainty_paths <- character()
     if (identical(item$definition$render$interval, 'companion')) {
         uncertainty <- item$definition

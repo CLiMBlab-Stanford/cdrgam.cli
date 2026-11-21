@@ -127,17 +127,19 @@
     )
 }
 
-.cdrgam_cli_viz_peak <- function(fit, term) {
+.cdrgam_cli_viz_peak <- function(fit, term, cache=new.env(), n=200L) {
     if (is.null(fit) || is.null(term$catalog)) return(NULL)
-    .cdrgam_cli_peak_function(fit, term$catalog)
+    .cdrgam_cli_peak_function(fit, term$catalog, n=n, cache=cache)
 }
 
 # Build an estimate_effect() axis request. Varying axes span the fitted domain
 # unless `ranges` gives explicit limits; every other axis is fixed at the value
 # in `fixed`, which may be an expression, or at lag 0 and the training mean of
-# other axes when no value is given. `fit` is needed only to resolve peaks.
+# other axes when no value is given. `fit` is needed only to resolve peaks;
+# `peak` may instead supply a lookup from .cdrgam_cli_viz_peak().
 .cdrgam_cli_viz_axes <- function(
-        term, varying, fixed=list(), n=200L, ranges=list(), fit=NULL
+        term, varying, fixed=list(), n=200L, ranges=list(), fit=NULL,
+        peak=.cdrgam_cli_viz_peak(fit, term)
 ) {
     unknown <- setdiff(varying, names(term$axes))
     if (length(unknown)) {
@@ -145,7 +147,6 @@
             'Term ', term$label, ' has no axis ', paste(unknown, collapse=', ')
         ))
     }
-    peak <- .cdrgam_cli_viz_peak(fit, term)
     output <- lapply(term$axes, function(axis) {
         name <- axis$name
         if (name %in% varying) {
@@ -175,7 +176,8 @@
 # fixed, composition, grouping, group, and optional reference values, where NA
 # leaves a predictor at the model default; fixed and reference values may be
 # expressions. `options` holds n, level, unconditional, and interval
-# (pointwise or simultaneous).
+# (pointwise or simultaneous). Attribute `peaks` holds the peaks the line
+# used, from .cdrgam_cli_peak_summary(), or NULL.
 .cdrgam_cli_viz_estimate <- function(fit, term, spec, options=list()) {
     n <- as.integer(.cdrgam_cli_null(options$n, 200L))
     level <- .cdrgam_cli_null(options$level, 0.95)
@@ -185,7 +187,8 @@
         grouping <- 'population'
         groups <- NULL
     }
-    peak <- .cdrgam_cli_viz_peak(fit, term)
+    peaks <- new.env()
+    peak <- .cdrgam_cli_viz_peak(fit, term, peaks, n)
     # Pass reference only when set, so that older cores without the argument
     # still evaluate ordinary lines.
     resolved <- if (length(spec$reference)) stats::setNames(lapply(
@@ -201,7 +204,7 @@
         terms=term$label,
         axes=.cdrgam_cli_viz_axes(
             term, spec$varying, .cdrgam_cli_null(spec$fixed, list()), n,
-            .cdrgam_cli_null(spec$ranges, list()), fit
+            .cdrgam_cli_null(spec$ranges, list()), fit, peak
         ),
         composition=composition,
         grouping=grouping, groups=groups, se=TRUE,
@@ -214,6 +217,10 @@
             unconditional=unconditional
         ), level)
     }
+    attr(value, 'peaks') <- if (!is.null(peak)) .cdrgam_cli_peak_summary(
+        fit, peaks, n=n, draws=.cdrgam_cli_peak_draws, level=level,
+        unconditional=unconditional
+    ) else NULL
     value
 }
 

@@ -100,13 +100,95 @@
             hoverinfo='text'
         )
     }
-    plotly::layout(
+    plot <- plotly::layout(
         plot,
         xaxis=list(title=paste(unique(axes), collapse=' / '), zeroline=FALSE),
         yaxis=list(title='Effect (linear predictor)', zeroline=TRUE),
         legend=list(orientation='h', y=-0.2),
         hovermode='closest'
     )
+    strip <- .cdrgam_cli_viz_peak_strip(entries)
+    if (is.null(strip)) return(plot)
+    shared <- all(unique(axes) == 'lag')
+    rows <- length(strip$rows)
+    plotly::subplot(
+        plot, strip$plot, nrows=2L, shareX=shared, titleX=TRUE, titleY=TRUE,
+        heights=c(1, min(0.4, 0.08 + 0.04 * rows)) / (1 + min(0.4, 0.08 + 0.04 * rows))
+    )
+}
+
+# The viewer's peak timeline, drawn below the lines when they were held at
+# peaks that differ (see .cdrgam_cli_show_peaks()). Each row is one line's
+# peak in that line's color: the point estimate, the central interval of the
+# posterior draws, and the draws themselves. NULL when no strip is needed.
+.cdrgam_cli_viz_peak_strip <- function(entries) {
+    rows <- list()
+    for (index in seq_along(entries)) {
+        peaks <- attr(entries[[index]]$data, 'peaks')
+        if (is.null(peaks) || !nrow(peaks)) next
+        draws <- attr(peaks, 'draws')
+        labels <- .cdrgam_cli_peak_lanes(peaks)
+        for (row in seq_len(nrow(peaks))) {
+            label <- entries[[index]]$spec$label
+            if (nrow(peaks) > 1L || peaks$source[[row]] != peaks$term[[row]] ||
+                    peaks$direction[[row]] == 'neg') {
+                label <- paste0(label, ' \u00b7 ', sub('^.* \u00b7 ', '', labels[[row]]))
+            }
+            rows[[length(rows) + 1L]] <- list(
+                label=label, index=index, peak=peaks[row, , drop=FALSE],
+                draws=if (is.null(draws)) numeric() else draws$lag[
+                    draws$source == peaks$source[[row]] &
+                        draws$direction == peaks$direction[[row]]
+                ]
+            )
+        }
+    }
+    if (!length(rows)) return(NULL)
+    table <- do.call(rbind, lapply(rows, `[[`, 'peak'))
+    if (!.cdrgam_cli_show_peaks(table)) return(NULL)
+    labels <- vapply(rows, `[[`, character(1), 'label')
+    plot <- plotly::plot_ly()
+    for (row in rows) {
+        color <- .cdrgam_cli_viz_colors[
+            (row$index - 1L) %% length(.cdrgam_cli_viz_colors) + 1L
+        ]
+        peak <- row$peak
+        if (length(row$draws)) plot <- plotly::add_markers(
+            plot, x=row$draws, y=rep.int(row$label, length(row$draws)),
+            marker=list(
+                symbol='line-ns-open', size=10, color=color,
+                opacity=min(1, 25 / length(row$draws))
+            ),
+            hoverinfo='skip', showlegend=FALSE
+        )
+        if (is.finite(peak$lower) && is.finite(peak$upper)) {
+            plot <- plotly::add_segments(
+                plot, x=peak$lower, xend=peak$upper, y=row$label, yend=row$label,
+                line=list(color=color, width=2), hoverinfo='skip', showlegend=FALSE
+            )
+        }
+        plot <- plotly::add_markers(
+            plot, x=peak$lag, y=row$label,
+            marker=list(
+                symbol='line-ns-open', size=22, color=color, line=list(width=3)
+            ),
+            text=sprintf(
+                '%s<br>peak lag %s%s', row$label, signif(peak$lag, 4L),
+                if (is.finite(peak$lower)) sprintf(
+                    '<br>draws [%s, %s]', signif(peak$lower, 4L), signif(peak$upper, 4L)
+                ) else ''
+            ),
+            hoverinfo='text', showlegend=FALSE
+        )
+    }
+    list(rows=labels, plot=plotly::layout(
+        plot,
+        xaxis=list(title='Peak lag', zeroline=FALSE),
+        yaxis=list(
+            title='', type='category', categoryorder='array',
+            categoryarray=rev(unique(labels))
+        )
+    ))
 }
 
 .cdrgam_cli_viz_surface_plot <- function(data, spec, display='surface', show_interval=FALSE) {
@@ -501,7 +583,9 @@ $(function() {
                         'Enter a number or an expression in mean, sd, and median,',
                         'such as mean + 2 * sd. Lag also accepts peak (or',
                         'peak-pos) and peak-neg: the lag at which the term\'s',
-                        'response to a one-SD increase is largest or smallest.'
+                        'response to a one-SD increase is largest or smallest.',
+                        'Add a term label, as in peak(irf(1)), to use that',
+                        'term\'s peak instead.'
                     )
                 )
             )

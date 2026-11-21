@@ -14,7 +14,7 @@ linear-predictor scale.
 ``` r
 cdrgam_cli_viz(cdrgam_root = NULL, stop = FALSE, restart = FALSE,
   local = FALSE, port = NULL, cpus = NULL, memory = NULL, time = NULL,
-  partition = NULL, qos = NULL, wait = 120)
+  partition = NULL, qos = NULL, wait = 120, browse = NULL)
 ```
 
 ## Arguments
@@ -50,6 +50,12 @@ cdrgam_cli_viz(cdrgam_root = NULL, stop = FALSE, restart = FALSE,
 
   Seconds to wait for a submitted job to start serving.
 
+- browse:
+
+  Whether a local viewer opens the default browser. The default opens it
+  when the session is interactive or standard output is a terminal. A
+  Slurm viewer never opens one.
+
 ## Value
 
 The active server record, invisibly, or `NULL` when the job has not
@@ -59,14 +65,16 @@ started within `wait` seconds or the server ran in the foreground.
 
 On a root whose scheduler is Slurm, the viewer runs in a Slurm job, and
 later calls by the same user reuse that job. Otherwise, or with
-`local = TRUE`, it serves from this process until interrupted. A Slurm
-viewer listens on all interfaces of its node, without authentication, so
-other users who can reach the node can also open it. The printed `ssh`
-command forwards the port through the login host named by the
-`CDRGAM_VIZ_GATEWAY` environment variable, or through the invoking host
-when it is unset. A local viewer listens only on the loopback interface.
-Viewer state, including the job record and server log, is kept under
-`.cdrgam/viewers/` in the root.
+`local = TRUE`, it serves from this process until interrupted, on any
+platform, and prints its address. A local viewer has no job, so `stop`
+and `restart` are errors; interrupt it and start it again instead. A
+Slurm viewer listens on all interfaces of its node, without
+authentication, so other users who can reach the node can also open it.
+The printed `ssh` command forwards the port through the login host named
+by the `CDRGAM_VIZ_GATEWAY` environment variable, or through the
+invoking host when it is unset. A local viewer listens only on the
+loopback interface. Viewer state, including the job record and server
+log, is kept under `.cdrgam/viewers/` in the root.
 
 In a Slurm viewer, the Refresh data button rescans for completed fits
 and reloads fits whose results changed, and the Restart server button

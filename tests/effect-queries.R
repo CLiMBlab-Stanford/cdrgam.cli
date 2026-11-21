@@ -97,6 +97,30 @@ stopifnot(
     }), 1)
 )
 expect_error(value('mean + q', 'x', statistics), 'unknown name q')
+
+# peak(LABEL) borrows the peak of another term; labels may contain balanced
+# parentheses and may be quoted.
+borrowed <- function(direction, label=NULL) {
+    lags <- c(pos=0.3, neg=0.9)
+    if (is.null(label)) return(lags[[direction]])
+    if (identical(label, 's(lag, wlen)')) return(lags[[direction]] + 1)
+    if (identical(label, 'irf(1)')) return(5)
+    stop('unexpected label ', label)
+}
+stopifnot(
+    identical(value('peak(s(lag, wlen))', 'lag', list(), peak=borrowed), 1.3),
+    identical(value('peak-neg(s(lag, wlen))', 'lag', list(), peak=borrowed), 1.9),
+    identical(value('peak-pos( "irf(1)" ) - peak', 'lag', list(), peak=borrowed), 4.7),
+    identical(value("peak('irf(1)') / 5", 'lag', list(), peak=borrowed), 1)
+)
+expect_error(value('peak(irf(1))', 'x', statistics), 'only lag values')
+expect_error(value('peak(irf(1)', 'lag', list(), peak=borrowed), 'unclosed parenthesis')
+expect_error(value('peak()', 'lag', list(), peak=borrowed), 'empty term label')
+parse_value <- getFromNamespace('.cdrgam_cli_value_parse', 'cdrgam.cli')
+stopifnot(identical(
+    deparse(parse_value('peak(s(lag, wlen)) + 1', 'lag', lag=TRUE)),
+    'peak_pos("s(lag, wlen)") + 1'
+))
 expect_error(value('peak', 'x', statistics), 'only lag values')
 expect_error(value('sd', 'x', list(mean=1, sd=NA)), 'no stored training sd')
 expect_error(value('max(sd)', 'x', statistics), 'not a valid value expression')

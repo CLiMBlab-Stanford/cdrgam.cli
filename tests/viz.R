@@ -17,6 +17,7 @@ root_help <- paste(capture.output(cli_main('--help')), collapse='\n')
 stopifnot(
     grepl('Usage: cdrgam viz', help, fixed=TRUE),
     grepl('--stop', help, fixed=TRUE),
+    grepl('--no-browser', help, fixed=TRUE),
     grepl('viz', root_help, fixed=TRUE),
     !grepl('viz-server', root_help, fixed=TRUE)
 )
@@ -103,6 +104,68 @@ stopifnot(
     identical(internal('.cdrgam_cli_viz_input_value')('', 'x'), NA_real_),
     identical(internal('.cdrgam_cli_viz_input_value')('peak-neg', 'lag'), 'peak-neg')
 )
+# peak(LABEL) borrows another term's peak; naming the term itself matches
+# its own peak, and an unknown label lists the lagged terms.
+lagged <- Filter(function(term) 'lag' %in% names(term$axes), terms)
+other <- lagged[[which(vapply(lagged, `[[`, character(1), 'label') != 'x:z')[[1L]]]]
+own <- internal('.cdrgam_cli_viz_axes')(tensor, 'x', list(lag='peak(x:z)'), fit=fit)$lag$at
+borrowed <- internal('.cdrgam_cli_viz_axes')(
+    tensor, 'x', list(lag=paste0('peak(', other$label, ')')), fit=fit
+)$lag$at
+expected <- internal('.cdrgam_cli_effect_peak')(fit, other$catalog, 'pos')
+unknown_peak <- tryCatch(
+    internal('.cdrgam_cli_viz_axes')(tensor, 'x', list(lag='peak(nope)'), fit=fit),
+    error=conditionMessage
+)
+stopifnot(
+    identical(own, peak), identical(borrowed, expected),
+    grepl('the fit has no term nope; terms with a lag axis:', unknown_peak, fixed=TRUE)
+)
+# A line held at a peak carries that peak, with posterior draws whose
+# central interval contains it. The static strip stacks under the main plot
+# when peaks differ, and saves to every format.
+peak_line <- internal('.cdrgam_cli_viz_estimate')(fit, tensor, list(
+    term='x:z', varying='x', fixed=list(lag='peak', z='mean')
+), list(n=21L))
+line_peaks <- attr(peak_line, 'peaks')
+stopifnot(
+    identical(line_peaks$term, 'x:z'), identical(line_peaks$source, 'x:z'),
+    isTRUE(all.equal(line_peaks$lag, unique(peak_line$lag)))
+)
+if ('simulate_effect' %in% getNamespaceExports('cdrgam')) stopifnot(
+    line_peaks$lower <= line_peaks$lag, line_peaks$lag <= line_peaks$upper,
+    nrow(attr(line_peaks, 'draws')) == 1000L,
+    all(attr(line_peaks, 'draws')$lag >= tensor$axes$lag$min)
+)
+show <- internal('.cdrgam_cli_show_peaks')
+two <- rbind(line_peaks, transform(line_peaks, term='irf(1)', source='irf(1)', lag=lag + 0.5))
+attr(two, 'draws') <- attr(line_peaks, 'draws')
+stopifnot(
+    !show(NULL), !show(line_peaks), show(line_peaks, 'always'),
+    show(two), !show(two, 'never'),
+    identical(internal('.cdrgam_cli_peak_lanes')(transform(
+        two, source=c('x:z', 'x:z'), direction=c('pos', 'neg')
+    )), c('x:z', 'irf(1) \u00b7 peak-neg(x:z)'))
+)
+grid_data <- rbind(
+    transform(as.data.frame(peak_line)[c('x', 'lag', 'estimate', 'lower', 'upper')],
+        term='x:z'),
+    transform(as.data.frame(peak_line)[c('x', 'lag', 'estimate', 'lower', 'upper')],
+        term='irf(1)', estimate=estimate / 2)
+)
+render <- list(
+    geometry='line', mappings=list(x='x', y='estimate', color='term'),
+    palette='rainbow', theme='paper'
+)
+main <- ggplot2::ggplot(grid_data, ggplot2::aes(x, estimate, colour=term)) +
+    ggplot2::geom_line()
+figure <- internal('.cdrgam_cli_peak_figure')(main, grid_data, two, list(render=render))
+stopifnot(inherits(figure$figure, 'gtable'), inherits(figure$strip, 'ggplot'))
+figure_path <- tempfile(fileext='.pdf')
+ggplot2::ggsave(figure_path, figure$figure, width=6, height=5)
+stopifnot(file.size(figure_path) > 0)
+render$peaks <- 'never'
+stopifnot(is.null(internal('.cdrgam_cli_peak_figure')(main, grid_data, two, list(render=render))))
 bad_input <- tryCatch(
     internal('.cdrgam_cli_viz_input_value')('peak', 'x'), error=conditionMessage
 )
@@ -219,6 +282,17 @@ stopifnot(
 )
 
 if (all(vapply(c('shiny', 'plotly', 'bslib'), requireNamespace, logical(1), quietly=TRUE))) {
+    shifted <- peak_line
+    attr(shifted, 'peaks') <- transform(line_peaks, lag=lag + 0.5)
+    strip_entries <- list(
+        list(spec=list(id='a', label='a', varying='x'), data=peak_line),
+        list(spec=list(id='b', label='b', varying='x'), data=shifted)
+    )
+    stopifnot(
+        identical(internal('.cdrgam_cli_viz_peak_strip')(strip_entries)$rows, c('a', 'b')),
+        is.null(internal('.cdrgam_cli_viz_peak_strip')(strip_entries[1L]))
+    )
+    invisible(plotly::plotly_build(internal('.cdrgam_cli_viz_line_plot')(strip_entries)))
     invisible(plotly::plotly_build(internal('.cdrgam_cli_viz_line_plot')(list(
         list(spec=list(id='a', label='a', varying='x'), data=line)
     ))))
@@ -278,6 +352,36 @@ if (all(vapply(c('shiny', 'plotly', 'bslib'), requireNamespace, logical(1), quie
     stopifnot(!grepl('Restart server', ui_text(), fixed=TRUE))
     stopifnot(grepl('Restart server', ui_text(TRUE), fixed=TRUE))
 }
+
+# A root without Slurm serves the viewer locally on every platform, where it
+# has no job to stop or restart, and prints a loopback address.
+local({
+    configuration <- list(scheduler='local')
+    viz_local <- internal('.cdrgam_cli_viz_local')
+    stopifnot(
+        viz_local(configuration),
+        viz_local(list(scheduler='slurm'), local=TRUE),
+        !viz_local(list(scheduler='slurm')),
+        identical(
+            internal('.cdrgam_cli_viz_url')('127.0.0.1', 41741L),
+            'http://127.0.0.1:41741/'
+        ),
+        identical(
+            internal('.cdrgam_cli_viz_url')('0.0.0.0', 8080),
+            'http://127.0.0.1:8080/'
+        )
+    )
+    if (!identical(internal('.cdrgam_cli_site')(root)$scheduler, 'slurm')) {
+        for (arguments in list(list(stop=TRUE), list(restart=TRUE))) {
+            failure <- tryCatch(
+                do.call(cdrgam_cli_viz, c(list(cdrgam_root=root), arguments)),
+                error=conditionMessage
+            )
+            stopifnot(grepl('local viewer runs in the foreground', failure,
+                fixed=TRUE))
+        }
+    }
+})
 
 # The fake Slurm tools are shell scripts, and Slurm runs only on Unix.
 if (.Platform$OS.type == 'unix') {

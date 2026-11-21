@@ -215,7 +215,7 @@ and at their training means. Fixed and reference fields accept numbers or
 expressions such as `mean + 2 * sd`, and lag fields also accept `peak`,
 `peak-pos`, and `peak-neg`, as in visualization definitions. Effects are on
 the linear-predictor scale with pointwise or, under **Options**, simultaneous
-intervals. References need the development `cdrgam`. The viewer needs
+intervals. The viewer needs
 the optional R packages `shiny`, `bslib`, `plotly`, `jsonlite`, and `later`.
 
 On a Slurm-configured root the server runs in a Slurm job owned by the calling
@@ -225,7 +225,11 @@ command that forwards the server's port through a login host. Set
 `user@login.example.edu`; otherwise the command names the host it ran on. The
 job's server listens on all of its node's interfaces without authentication,
 so anyone who can reach the node can open the viewer. On other roots, or with
-`--local`, the server runs in the foreground and listens only on loopback:
+`--local`, the server runs in the foreground, listens only on loopback, prints
+its address, and opens your browser unless you pass `--no-browser`. A local
+viewer makes no Slurm calls, so it can run where Slurm does not, such as
+Windows. Stop it with Ctrl+C; `--stop` and `--restart` apply only to a Slurm
+viewer.
 
 In a Slurm viewer, **Refresh data** rescans for completed fits and reloads any
 fit whose results changed, and **Restart server** restarts the server inside
@@ -237,6 +241,7 @@ browser tab.
 cdrgam viz
 cdrgam viz --time 2-00:00:00 --memory 32G --restart
 cdrgam viz --stop
+cdrgam viz --local --no-browser
 ```
 
 See [docs/project-schema.md](docs/project-schema.md) for the definition schema

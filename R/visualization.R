@@ -401,7 +401,7 @@
     )
     plain <- own & peaks$direction == 'pos' &
         !(peaks$term %in% peaks$term[duplicated(peaks$term)])
-    ifelse(plain, peaks$term, paste0(peaks$term, ' · ', expression))
+    ifelse(plain, peaks$term, paste0(peaks$term, ' \u00b7 ', expression))
 }
 
 # A timeline of the peak lags used by each term: a long tick at the point

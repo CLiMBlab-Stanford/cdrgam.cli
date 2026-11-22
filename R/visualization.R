@@ -150,9 +150,7 @@
     )
 }
 
-.cdrgam_cli_mapping_column <- function(value) {
-    sub('^predictor:', '', value)
-}
+# The ggplot2 renderer of plot specifications from R/plot-spec.R.
 
 .cdrgam_cli_ggplot_mapping <- function(mappings, data, include_y=TRUE) {
     mappings <- lapply(mappings, .cdrgam_cli_mapping_column)
@@ -168,296 +166,226 @@
     do.call(ggplot2::aes, arguments)
 }
 
-.cdrgam_cli_layer_style <- function(layer) {
-    style <- .cdrgam_cli_null(layer$style, list())
-    style$alpha <- .cdrgam_cli_null(style$alpha, 1)
-    style$linewidth <- .cdrgam_cli_null(style$linewidth, 0.8)
-    style
+# An aes() call from aesthetic = column pairs; NULL columns are left out.
+.cdrgam_cli_ggplot_aes <- function(...) {
+    columns <- Filter(Negate(is.null), list(...))
+    do.call(ggplot2::aes, lapply(columns, as.name))
 }
 
-.cdrgam_cli_add_curve_layer <- function(plot, data, mappings, interval, style) {
-    line_mappings <- mappings
-    if (!is.null(style$color)) line_mappings$color <- NULL
-    line_mapping <- .cdrgam_cli_ggplot_mapping(line_mappings, data)
-    if (identical(interval, 'ribbon') && any(is.finite(data$lower))) {
-        ribbon_mappings <- mappings
-        ribbon_mappings$y <- NULL
-        if (!is.null(ribbon_mappings$color) && is.null(ribbon_mappings$fill)) {
-            ribbon_mappings$fill <- ribbon_mappings$color
-        }
-        ribbon_mappings$color <- NULL
-        ribbon_mapping <- .cdrgam_cli_ggplot_mapping(
-            ribbon_mappings, data, include_y=FALSE
-        )
-        ribbon_mapping$ymin <- as.name('lower')
-        ribbon_mapping$ymax <- as.name('upper')
-        arguments <- list(
-            data=data, mapping=ribbon_mapping, alpha=0.18,
-            inherit.aes=FALSE, linewidth=0
-        )
-        if (!is.null(style$fill)) arguments$fill <- style$fill
-        plot <- plot + do.call(ggplot2::geom_ribbon, arguments)
+.cdrgam_cli_ggplot_theme <- function(theme) switch(
+    .cdrgam_cli_null(theme, 'paper'),
+    paper=ggplot2::theme_bw(base_size=10),
+    minimal=ggplot2::theme_minimal(base_size=10),
+    slides=ggplot2::theme_minimal(base_size=16)
+)
+
+# A geom call with fixed aesthetics that are given.
+.cdrgam_cli_ggplot_geom <- function(geom, arguments, fixed=list()) {
+    do.call(geom, c(arguments, Filter(Negate(is.null), fixed)))
+}
+
+# The ggplot2 layers of one effect layer drawn as lines, with the
+# aesthetics each maps: a ribbon or dashed bound lines for the interval and
+# one line per series.
+.cdrgam_cli_ggplot_curves <- function(rows, spec, layer) {
+    columns <- spec$columns
+    style <- layer$style
+    colour <- if (is.null(style$color)) columns$color
+    bounded <- any(is.finite(rows$lower))
+    layers <- list()
+    used <- list()
+    if (identical(layer$interval, 'ribbon') && bounded) {
+        fill <- .cdrgam_cli_null(columns$fill, columns$color)
+        layers <- c(layers, list(.cdrgam_cli_ggplot_geom(ggplot2::geom_ribbon, list(
+            data=rows, mapping=.cdrgam_cli_ggplot_aes(
+                x='.cdrgam_x', ymin='lower', ymax='upper', fill=fill,
+                linetype=columns$linetype, group=spec$group
+            ),
+            alpha=0.18, inherit.aes=FALSE, linewidth=0
+        ), list(fill=style$fill))))
+        if (is.null(style$fill)) used$fill <- fill
     }
-    arguments <- list(
-        data=data, mapping=line_mapping, alpha=style$alpha,
-        linewidth=style$linewidth, inherit.aes=FALSE
-    )
-    if (!is.null(style$color)) arguments$color <- style$color
-    plot <- plot + do.call(ggplot2::geom_line, arguments)
-    if (identical(interval, 'lines') && any(is.finite(data$lower))) {
+    layers <- c(layers, list(.cdrgam_cli_ggplot_geom(ggplot2::geom_line, list(
+        data=rows, mapping=.cdrgam_cli_ggplot_aes(
+            x='.cdrgam_x', y=columns$y, colour=colour,
+            linetype=columns$linetype, group=spec$group
+        ),
+        alpha=style$alpha, linewidth=style$linewidth, inherit.aes=FALSE
+    ), list(colour=style$color))))
+    used$colour <- colour
+    if (identical(layer$interval, 'lines') && bounded) {
         for (bound in c('lower', 'upper')) {
-            bound_mappings <- mappings
-            bound_mappings$y <- bound
-            bound_mapping <- .cdrgam_cli_ggplot_mapping(bound_mappings, data)
-            arguments <- list(
-                data=data, mapping=bound_mapping, alpha=style$alpha * 0.65,
-                linewidth=style$linewidth * 0.7, linetype=2,
-                inherit.aes=FALSE
-            )
-            if (!is.null(style$color)) arguments$color <- style$color
-            plot <- plot + do.call(ggplot2::geom_line, arguments)
+            layers <- c(layers, list(.cdrgam_cli_ggplot_geom(ggplot2::geom_line, list(
+                data=rows, mapping=.cdrgam_cli_ggplot_aes(
+                    x='.cdrgam_x', y=bound, colour=colour,
+                    linetype=columns$linetype, group=spec$group
+                ),
+                alpha=style$alpha * 0.65, linewidth=style$linewidth * 0.7,
+                linetype=2, inherit.aes=FALSE
+            ), list(colour=style$color))))
         }
     }
-    plot
+    list(layers=layers, used=used)
 }
 
-# Evaluation-axis columns, other than the x and y mappings, that take several
-# values. Line series are split on these so that, for example, curves at
-# different moderator values are not joined into one path.
-.cdrgam_cli_series_axes <- function(data, mappings) {
-    reserved <- c(
-        'term_id', 'term', 'group', 'composition', 'grouping', 'estimate',
-        'se', 'lower', 'upper', 'layer', 'predictor', 'predictor_value',
-        'critical_value'
-    )
-    mapped <- vapply(
-        mappings[intersect(c('x', 'y'), names(mappings))],
-        .cdrgam_cli_mapping_column, character(1)
-    )
-    # A mapped predictor value stands for each term's own predictor column.
-    if ('predictor_value' %in% mapped && 'predictor' %in% names(data)) {
-        mapped <- c(mapped, unique(stats::na.omit(as.character(data$predictor))))
+# The ggplot2 layers of one effect layer drawn as points or bars, at the
+# dodged positions the specification gives.
+.cdrgam_cli_ggplot_points <- function(rows, spec, layer) {
+    columns <- spec$columns
+    style <- layer$style
+    bar <- identical(spec$geometry, 'bar')
+    layers <- list()
+    used <- list()
+    if (bar) {
+        fixed <- .cdrgam_cli_null(style$fill, style$color)
+        fill <- if (is.null(fixed)) .cdrgam_cli_null(columns$fill, columns$color)
+        layers <- c(layers, list(.cdrgam_cli_ggplot_geom(ggplot2::geom_rect, list(
+            data=rows, mapping=.cdrgam_cli_ggplot_aes(
+                xmin='.cdrgam_xmin', xmax='.cdrgam_xmax', ymin='.cdrgam_ymin',
+                ymax='.cdrgam_ymax', fill=fill, group=spec$group
+            ),
+            alpha=style$alpha, inherit.aes=FALSE
+        ), list(fill=fixed))))
+        used$fill <- fill
     }
-    candidates <- setdiff(names(data), c(reserved, mapped))
-    candidates <- candidates[!startsWith(candidates, '.') &
-        !endsWith(candidates, '_reference')]
-    # An axis of only some terms is missing elsewhere; it splits series only
-    # where it takes several values within one term.
-    candidates[vapply(candidates, function(name) {
-        values <- data[[name]]
-        is.numeric(values) && any(tapply(values, data$term, function(value) {
-            length(unique(value[!is.na(value)])) > 1L
-        }), na.rm=TRUE)
-    }, logical(1))]
-}
-
-# Numeric color and linetype mappings with few distinct values are shown as
-# discrete legends, one entry per evaluated value.
-.cdrgam_cli_discrete_mappings <- function(data, mappings) {
-    for (aesthetic in intersect(c('color', 'linetype'), names(mappings))) {
-        column <- .cdrgam_cli_mapping_column(mappings[[aesthetic]])
-        values <- data[[column]]
-        if (!is.numeric(values)) next
-        levels <- sort(unique(values))
-        if (length(levels) > 12L && identical(aesthetic, 'color')) next
-        labels <- format(signif(levels, 4L), trim=TRUE, drop0trailing=TRUE)
-        data[[column]] <- factor(match(values, levels), seq_along(levels), labels)
+    colour <- if (!bar && is.null(style$color)) columns$color
+    if (identical(layer$interval, 'errorbar') && any(is.finite(rows$lower))) {
+        layers <- c(layers, list(.cdrgam_cli_ggplot_geom(ggplot2::geom_errorbar, list(
+            data=rows, mapping=.cdrgam_cli_ggplot_aes(
+                x='.cdrgam_x', ymin='lower', ymax='upper', width='.cdrgam_whisker',
+                colour=colour, linetype=columns$linetype, group=spec$group
+            ),
+            alpha=style$alpha, linewidth=style$linewidth * 0.7, inherit.aes=FALSE
+        ), list(colour=if (bar) 'grey20' else style$color))))
     }
-    data
+    if (!bar) {
+        layers <- c(layers, list(.cdrgam_cli_ggplot_geom(ggplot2::geom_point, list(
+            data=rows, mapping=.cdrgam_cli_ggplot_aes(
+                x='.cdrgam_x', y=columns$y, colour=colour,
+                linetype=columns$linetype, group=spec$group
+            ),
+            alpha=style$alpha, size=style$linewidth * 2.5, inherit.aes=FALSE
+        ), list(colour=style$color))))
+    }
+    used$colour <- colour
+    list(layers=layers, used=used)
 }
 
-# Rainbow colors from red through violet, darkened enough to read on white.
-# irf(1), the response to an average event, is drawn in black.
-.cdrgam_cli_rainbow <- function(levels) {
-    constant <- levels == 'irf(1)'
-    colors <- rep.int('black', length(levels))
-    colors[!constant] <- grDevices::hsv(
-        seq(0, 0.8, length.out=sum(!constant)), 0.9, 0.8
+# Color and fill scales for the aesthetics that map the specification's
+# color column.
+.cdrgam_cli_ggplot_color_scales <- function(color, aesthetics) {
+    if (is.null(color) || !length(aesthetics)) return(list())
+    list(if (identical(color$kind, 'continuous')) {
+        ggplot2::scale_colour_gradientn(colours=color$stops, aesthetics=aesthetics)
+    } else ggplot2::scale_colour_manual(
+        values=color$values, breaks=color$levels, labels=color$labels,
+        aesthetics=aesthetics
+    ))
+}
+
+.cdrgam_cli_ggplot_surface <- function(spec) {
+    data <- spec$rows
+    columns <- spec$columns
+    plot <- ggplot2::ggplot()
+    if (spec$surface$raster) {
+        plot <- plot + ggplot2::geom_tile(
+            data=data, mapping=.cdrgam_cli_ggplot_mapping(
+                columns[setdiff(names(columns), 'facet')], data
+            )
+        )
+    }
+    if (spec$surface$contour) {
+        contour <- list(x=columns$x, y=columns$y, z=spec$surface$z)
+        missing <- setdiff(unlist(contour), names(data))
+        if (length(missing)) .cdrgam_cli_abort(paste0(
+            'Contour mappings reference unavailable columns: ',
+            paste(missing, collapse=', ')
+        ))
+        plot <- plot + ggplot2::geom_contour(
+            data=data, mapping=do.call(ggplot2::aes, lapply(contour, as.name)),
+            color='grey20', linewidth=0.35, inherit.aes=FALSE
+        )
+    }
+    plot + if (identical(spec$surface$scale, 'se')) {
+        ggplot2::scale_fill_gradient(low='white', high='#2166AC')
+    } else ggplot2::scale_fill_gradient2(
+        low='#2166AC', mid='white', high='#B2182B', midpoint=0
     )
-    names(colors) <- levels
-    colors
 }
 
-.cdrgam_cli_rainbow_scales <- function(plot, data, mappings) {
-    if (is.null(mappings$color)) return(plot)
-    values <- data[[.cdrgam_cli_mapping_column(mappings$color)]]
-    if (is.numeric(values)) {
-        colors <- grDevices::hsv(seq(0, 0.8, length.out=7L), 0.9, 0.8)
-        return(plot + ggplot2::scale_color_gradientn(colors=colors) +
-            ggplot2::scale_fill_gradientn(colors=colors))
+# Draw a plot specification with ggplot2.
+.cdrgam_cli_ggplot_plot <- function(spec) {
+    if (!is.null(spec$surface)) {
+        plot <- .cdrgam_cli_ggplot_surface(spec)
+    } else {
+        plot <- ggplot2::ggplot()
+        used <- character()
+        for (layer in spec$layers) {
+            rows <- spec$rows[spec$rows$layer == layer$id, , drop=FALSE]
+            drawn <- if (identical(spec$geometry, 'line')) {
+                .cdrgam_cli_ggplot_curves(rows, spec, layer)
+            } else .cdrgam_cli_ggplot_points(rows, spec, layer)
+            for (item in drawn$layers) plot <- plot + item
+            mapped <- unlist(drawn$used)
+            used <- union(used, names(mapped)[mapped %in% spec$color$column])
+        }
+        if (!identical(spec$x$kind, 'continuous')) {
+            plot <- plot + ggplot2::scale_x_continuous(
+                breaks=spec$x$breaks, labels=spec$x$labels,
+                expand=if (identical(spec$x$kind, 'discrete')) {
+                    ggplot2::expansion(add=0.6)
+                } else ggplot2::waiver()
+            )
+        }
+        if (identical(spec$geometry, 'bar')) {
+            plot <- plot + ggplot2::geom_hline(yintercept=0, linewidth=0.3)
+        }
+        plot <- plot + .cdrgam_cli_ggplot_color_scales(spec$color, used)
     }
-    levels <- if (is.factor(values)) levels(values) else sort(unique(as.character(values)))
-    colors <- .cdrgam_cli_rainbow(levels)
-    plot + ggplot2::scale_color_manual(values=colors, breaks=levels) +
-        ggplot2::scale_fill_manual(values=colors, breaks=levels)
+    if (!is.null(spec$facet)) plot <- plot + ggplot2::facet_wrap(
+        stats::as.formula(paste('~', spec$facet$column)), scales=spec$facet$scales
+    )
+    plot + ggplot2::labs(title=spec$labels$title, x=spec$labels$x, y=spec$labels$y) +
+        .cdrgam_cli_ggplot_theme(spec$theme)
 }
 
 .cdrgam_cli_visualization_plot <- function(data, definition) {
-    render <- definition$render
-    mappings <- render$mappings
-    series_axes <- .cdrgam_cli_series_axes(data, mappings)
-    data <- .cdrgam_cli_discrete_mappings(data, mappings)
-    data$.cdrgam_series <- do.call(interaction, c(
-        list(
-            data$term,
-            ifelse(is.na(data$group), '<population>', as.character(data$group)),
-            data$layer
-        ),
-        unname(lapply(data[series_axes], function(value) {
-            ifelse(is.na(value), '<none>', format(value, digits=15L))
-        })),
-        list(drop=TRUE, lex.order=TRUE)
-    ))
-    if (is.null(mappings$group)) mappings$group <- '.cdrgam_series'
+    .cdrgam_cli_ggplot_plot(.cdrgam_cli_plot_spec(data, definition))
+}
+
+# Draw a peak-strip specification with ggplot2: a long tick at each peak's
+# point estimate, the central interval of its posterior draws as a bar, and
+# the draws as faint ticks, so that draws split between separate lags show
+# both clusters.
+.cdrgam_cli_ggplot_peak_strip <- function(strip) {
+    by_term <- !is.null(strip$colors)
+    aesthetics <- function(...) .cdrgam_cli_ggplot_aes(
+        ..., colour=if (by_term) 'term'
+    )
+    fixed <- list(colour=if (by_term) NULL else 'black')
     plot <- ggplot2::ggplot()
-    layers <- .cdrgam_cli_effect_layers(definition$query, definition$layers)
-    if (identical(render$geometry, 'line')) {
-        for (layer in layers) {
-            selected <- data[data$layer == layer$id, , drop=FALSE]
-            interval <- .cdrgam_cli_null(layer$interval, render$interval)
-            plot <- .cdrgam_cli_add_curve_layer(
-                plot, selected, mappings, interval,
-                .cdrgam_cli_layer_style(layer)
-            )
-        }
-    } else {
-        mapping <- .cdrgam_cli_ggplot_mapping(mappings, data)
-        if (render$geometry %in% c('raster', 'raster-contour')) {
-            plot <- plot + ggplot2::geom_tile(data=data, mapping=mapping)
-        }
-        if (render$geometry %in% c('contour', 'raster-contour')) {
-            contour_mappings <- list(
-                x=mappings$x, y=mappings$y,
-                z=.cdrgam_cli_null(mappings$fill, 'estimate')
-            )
-            contour_columns <- lapply(contour_mappings, .cdrgam_cli_mapping_column)
-            missing <- setdiff(unlist(contour_columns), names(data))
-            if (length(missing)) .cdrgam_cli_abort(paste0(
-                'Contour mappings reference unavailable columns: ',
-                paste(missing, collapse=', ')
-            ))
-            contour_mapping <- do.call(
-                ggplot2::aes, lapply(contour_columns, as.name)
-            )
-            plot <- plot + ggplot2::geom_contour(
-                data=data, mapping=contour_mapping,
-                color='grey20', linewidth=0.35, inherit.aes=FALSE
-            )
-        }
-        if (identical(.cdrgam_cli_mapping_column(mappings$fill), 'se')) {
-            plot <- plot + ggplot2::scale_fill_gradient(
-                low='white', high='#2166AC'
-            )
-        } else {
-            plot <- plot + ggplot2::scale_fill_gradient2(
-                low='#2166AC', mid='white', high='#B2182B', midpoint=0
-            )
-        }
-    }
-    facet <- mappings$facet
-    if (!is.null(facet)) {
-        facet <- .cdrgam_cli_mapping_column(facet)
-        if (!(facet %in% names(data))) .cdrgam_cli_abort(paste0(
-            'Visualization facet references unavailable column: ', facet
-        ))
-        plot <- plot + ggplot2::facet_wrap(
-            stats::as.formula(paste('~', facet)),
-            scales=.cdrgam_cli_null(render$scales, 'fixed')
-        )
-    }
-    if (identical(render$palette, 'rainbow') && identical(render$geometry, 'line')) {
-        plot <- .cdrgam_cli_rainbow_scales(plot, data, mappings)
-    }
-    plot <- plot + ggplot2::labs(
-        title=render$title,
-        x=.cdrgam_cli_null(render$xlab, mappings$x),
-        y=.cdrgam_cli_null(render$ylab, 'Effect on linear predictor')
+    if (!is.null(strip$draws)) plot <- plot + .cdrgam_cli_ggplot_geom(
+        ggplot2::geom_point, list(
+            data=strip$draws, mapping=aesthetics(x='lag', y='.lane'),
+            shape='|', size=3, alpha=strip$draw_alpha
+        ), fixed
     )
-    plot + switch(
-        render$theme,
-        paper=ggplot2::theme_bw(base_size=10),
-        minimal=ggplot2::theme_minimal(base_size=10),
-        slides=ggplot2::theme_minimal(base_size=16)
+    if (nrow(strip$bounded)) plot <- plot + .cdrgam_cli_ggplot_geom(
+        ggplot2::geom_linerange, list(
+            data=strip$bounded, mapping=aesthetics(xmin='lower', xmax='upper', y='.lane'),
+            linewidth=0.6
+        ), fixed
     )
-}
-
-# Whether to draw the peak strip. `auto` draws it when the plotted terms
-# were held at peaks that differ, since the curves then sit at different
-# lags; `always` draws it whenever a peak was used.
-.cdrgam_cli_show_peaks <- function(peaks, setting=NULL) {
-    setting <- .cdrgam_cli_null(setting, 'auto')
-    if (is.null(peaks) || !nrow(peaks) || identical(setting, 'never')) return(FALSE)
-    identical(setting, 'always') || length(unique(signif(peaks$lag, 10L))) > 1L
-}
-
-# One label per strip row. A term held at its own positive peak is labeled
-# by the term alone; other rows also name the peak, as in
-# "x · peak-neg(irf(1))".
-.cdrgam_cli_peak_lanes <- function(peaks) {
-    own <- peaks$source == peaks$term
-    expression <- paste0(
-        ifelse(peaks$direction == 'neg', 'peak-neg', 'peak'),
-        ifelse(own, '', paste0('(', peaks$source, ')'))
+    plot <- plot + .cdrgam_cli_ggplot_geom(ggplot2::geom_point, list(
+        data=strip$peaks, mapping=aesthetics(x='lag', y='.lane'), shape='|', size=7
+    ), fixed)
+    if (by_term) plot <- plot + ggplot2::scale_colour_manual(
+        values=strip$colors, limits=names(strip$colors), guide='none'
     )
-    plain <- own & peaks$direction == 'pos' &
-        !(peaks$term %in% peaks$term[duplicated(peaks$term)])
-    ifelse(plain, peaks$term, paste0(peaks$term, ' \u00b7 ', expression))
-}
-
-# A timeline of the peak lags used by each term: a long tick at the point
-# estimate, the central interval of the posterior draws as a bar, and the
-# draws as faint ticks, so that a peak whose draws split between separate
-# lags shows both clusters. Rows are colored like the main plot's lines
-# when color maps to term. `xlim` aligns the timeline with a lag x-axis.
-.cdrgam_cli_peak_strip <- function(peaks, data, render, xlim=NULL) {
-    peaks$.lane <- .cdrgam_cli_peak_lanes(peaks)
-    peaks$.lane <- factor(peaks$.lane, levels=rev(unique(peaks$.lane)))
-    by_term <- identical(
-        .cdrgam_cli_mapping_column(.cdrgam_cli_null(render$mappings$color, '')), 'term'
-    )
-    aesthetics <- function(...) {
-        columns <- c(list(...), if (by_term) list(colour='term'))
-        do.call(ggplot2::aes, lapply(columns, as.name))
-    }
-    fixed <- if (by_term) list() else list(colour='black')
-    plot <- ggplot2::ggplot()
-    draws <- attr(peaks, 'draws')
-    if (!is.null(draws) && nrow(draws)) {
-        draws <- merge(
-            draws, peaks[c('term', 'source', 'direction', '.lane')],
-            by=c('source', 'direction')
-        )
-        count <- max(table(paste(draws$.lane)))
-        plot <- plot + do.call(ggplot2::geom_point, c(list(
-            data=draws,
-            mapping=aesthetics(x='lag', y='.lane'), shape='|', size=3, alpha=min(1, 25 / count)
-        ), fixed))
-    }
-    bounded <- peaks[is.finite(peaks$lower) & is.finite(peaks$upper), , drop=FALSE]
-    if (nrow(bounded)) plot <- plot + do.call(ggplot2::geom_linerange, c(list(
-        data=bounded, mapping=aesthetics(xmin='lower', xmax='upper', y='.lane'),
-        linewidth=0.6
-    ), fixed))
-    plot <- plot + do.call(ggplot2::geom_point, c(list(
-        data=peaks,
-        mapping=aesthetics(x='lag', y='.lane'), shape='|', size=7
-    ), fixed))
-    if (by_term) {
-        levels <- sort(unique(as.character(data$term)))
-        plot <- plot + if (identical(render$palette, 'rainbow')) {
-            ggplot2::scale_colour_manual(
-                values=.cdrgam_cli_rainbow(levels), limits=levels, guide='none'
-            )
-        } else ggplot2::scale_colour_discrete(limits=levels, guide='none')
-    }
-    if (!is.null(xlim)) plot <- plot + ggplot2::coord_cartesian(xlim=xlim)
-    plot + ggplot2::labs(x=if (is.null(xlim)) 'Peak lag' else NULL, y=NULL) +
-        switch(
-            .cdrgam_cli_null(render$theme, 'paper'),
-            paper=ggplot2::theme_bw(base_size=10),
-            minimal=ggplot2::theme_minimal(base_size=10),
-            slides=ggplot2::theme_minimal(base_size=16)
-        )
+    # Lanes keep the specification's order whichever lanes have draws.
+    plot <- plot + ggplot2::scale_y_discrete(limits=levels(strip$peaks$.lane))
+    if (!is.null(strip$xlim)) plot <- plot + ggplot2::coord_cartesian(xlim=strip$xlim)
+    plot + ggplot2::labs(x=strip$label, y=NULL) + .cdrgam_cli_ggplot_theme(strip$theme)
 }
 
 # Stack ggplots into one gtable whose panels share left and right edges.
@@ -504,19 +432,14 @@
 
 # The rendered figure: the main plot alone, or with the peak strip below.
 .cdrgam_cli_peak_figure <- function(plot, data, peaks, definition) {
-    render <- definition$render
-    if (!identical(render$geometry, 'line') ||
-            !.cdrgam_cli_show_peaks(peaks, render$peaks)) return(NULL)
-    shared <- identical(.cdrgam_cli_mapping_column(render$mappings$x), 'lag') &&
-        is.null(render$mappings$facet) && 'lag' %in% names(data)
-    xlim <- if (shared) range(c(data$lag, peaks$lag), na.rm=TRUE) else NULL
-    strip <- .cdrgam_cli_peak_strip(peaks, data, render, xlim)
-    if (shared) plot <- plot + ggplot2::coord_cartesian(xlim=xlim)
-    rows <- length(unique(.cdrgam_cli_peak_lanes(peaks)))
+    strip <- .cdrgam_cli_figure_peaks(data, peaks, definition$render)
+    if (is.null(strip)) return(NULL)
+    drawn <- .cdrgam_cli_ggplot_peak_strip(strip)
+    if (!is.null(strip$xlim)) plot <- plot + ggplot2::coord_cartesian(xlim=strip$xlim)
     list(
-        strip=strip,
+        strip=drawn,
         figure=.cdrgam_cli_stack_plots(
-            list(plot, strip), c(1, min(0.6, 0.1 + 0.05 * rows))
+            list(plot, drawn), c(1, min(0.6, 0.1 + 0.05 * length(strip$lanes)))
         )
     )
 }
@@ -545,10 +468,13 @@
 
 .cdrgam_cli_render_effect <- function(item, stage) {
     data <- readRDS(file.path(item$effect$output, 'effect-grid.rds'))
-    plot <- .cdrgam_cli_visualization_plot(data, item$definition)
-    saveRDS(plot, file.path(stage, 'plot.rds'), version=3)
     peaks_path <- file.path(item$effect$output, 'effect-peaks.rds')
     peaks <- if (file.exists(peaks_path)) readRDS(peaks_path) else NULL
+    if (identical(item$definition$render$statistic, 'peak-lag')) {
+        data <- .cdrgam_cli_peak_data(peaks)
+    }
+    plot <- .cdrgam_cli_visualization_plot(data, item$definition)
+    saveRDS(plot, file.path(stage, 'plot.rds'), version=3)
     figure <- .cdrgam_cli_peak_figure(plot, data, peaks, item$definition)
     if (!is.null(figure)) {
         saveRDS(figure$strip, file.path(stage, 'plot-peaks.rds'), version=3)

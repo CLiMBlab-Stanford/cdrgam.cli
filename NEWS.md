@@ -1,3 +1,53 @@
+# cdrgam.cli (development version)
+
+- Visualizations accept `geometry: point`, which draws estimates as points
+  with error bars, and `geometry: bar`, which draws them as bars with error
+  bars. `interval: errorbar` is their default. Series at one x position are
+  placed side by side.
+
+- `render.spacing` draws a numeric x-axis at its evaluated values, one tick
+  per value, spaced `uniform`ly in sorted order or `linear`ly by value.
+
+- `render.statistic: peak-lag` plots the peak lags a query used, with their
+  posterior intervals, as points or bars.
+
+- `render.palette` accepts `grey`, the viridis options, and ColorBrewer
+  palette names in addition to `default` and `rainbow`. The peak timeline
+  uses the same colors as the main plot.
+
+- `render.palette: okabe-ito` gives the viewer's eight line colors: the
+  colorblind-safe Okabe-Ito colors except yellow, then grey and black.
+
+- The viewer draws its plots from the same plot specification as rendered
+  visualizations. Lines keep their colors; with more than eight lines the
+  viewer switches every line to viridis and says so under the plot.
+  Heatmaps use the rendered surfaces' diverging colors, symmetric about
+  zero.
+
+- The viewer's **Appearance** panel offers the `render` settings that apply
+  to it: points and bars, peak lags, intervals, tick spacing, palettes
+  including custom gradients, the peak timeline, titles, and theme. It
+  replaces the **Show intervals** option and the surface **Display**
+  buttons; surfaces add contour-only and heatmap-with-contours displays and
+  a standard-error heatmap. A test fails when a render field has no viewer
+  control and no stated reason.
+
+- **Show render YAML** in the viewer prints its appearance settings as a
+  `render` block for a visualization definition.
+
+- The peak timeline keeps its lane order when only some peaks have
+  posterior draws; a lane without draws was drawn at the top.
+
+- The vertical axis of a rendered surface is titled by its mapped column,
+  or `ylab`, instead of "Effect on linear predictor".
+
+- Invalid render choices name the field and its accepted values, as in
+  `render.theme must be one of paper, minimal, slides`.
+
+- `render.palette` also accepts a list of two or more colors (hex,
+  `rgb(R, G, B)`, or R color names). The plot colors its lines, points, or
+  bars at equal steps from the first color to the last.
+
 # cdrgam.cli 0.4.0
 
 - Lag values accept `peak(<term>)` and `peak-neg(<term>)`, which hold every

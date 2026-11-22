@@ -215,7 +215,16 @@ and at their training means. Fixed and reference fields accept numbers or
 expressions such as `mean + 2 * sd`, and lag fields also accept `peak`,
 `peak-pos`, and `peak-neg`, as in visualization definitions. Effects are on
 the linear-predictor scale with pointwise or, under **Options**, simultaneous
-intervals. The viewer needs
+intervals.
+
+**Appearance** holds the viewer's counterparts of a visualization's `render`
+settings, with the same meanings and checks: geometry (lines, points, or
+bars; for surfaces a 3D surface, heatmap, or contours), effect estimates or
+peak lags, intervals, tick spacing, palette, the peak timeline, titles, and
+theme. Lines use `okabe-ito` colors in the order they were added; with more
+than eight lines under that palette, every line switches to viridis. The
+standard-error interval of a surface adds a second heatmap, or bounding
+surfaces around a 3D surface. The viewer needs
 the optional R packages `shiny`, `bslib`, `plotly`, `jsonlite`, and `later`.
 
 On a Slurm-configured root the server runs in a Slurm job owned by the calling
@@ -234,8 +243,8 @@ viewer.
 In a Slurm viewer, **Refresh data** rescans for completed fits and reloads any
 fit whose results changed, and **Restart server** restarts the server inside
 the same job so that newly installed code takes effect, for example after
-`./scripts/install-dev`. Plotted lines are kept across a restart in the
-browser tab.
+`./scripts/install-dev`. Plotted lines and appearance settings are kept
+across a restart in the browser tab.
 
 ```sh
 cdrgam viz

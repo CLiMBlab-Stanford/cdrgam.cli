@@ -574,20 +574,100 @@ and value, so terms with different predictors can share an axis.
 
 Line renderings draw one curve per term, group, layer, and value of every
 other varying axis. A numeric `color` or `linetype` mapping with at most 12
-values uses a discrete legend. `palette: rainbow` colors lines from red to
-violet and draws `irf(1)` in black. `scales` (`fixed`, `free`, `free_x`, or
+values uses a discrete legend. `scales` (`fixed`, `free`, `free_x`, or
 `free_y`) sets the facet scales.
 
-`peaks` controls a timeline of peak lags drawn below a line plot: `auto`
+`palette` colors the `color` mapping of line, point, and bar renderings, and
+the bar fill. It accepts `default` (ggplot2's hue palette; `hue` is an alias),
+`rainbow`, `grey`, `okabe-ito`, a viridis option (`magma`, `inferno`,
+`plasma`, `viridis`, `cividis`, `rocket`, `mako`, or `turbo`), or a
+ColorBrewer palette such as `Set1`, `Dark2`, or `RdBu`. Names are matched
+without regard to case. `rainbow` colors lines from red to violet and draws
+`irf(1)` in black. `okabe-ito` gives the viewer's line colors: the
+colorblind-safe Okabe-Ito colors except yellow, then grey and black, eight
+in all. `okabe-ito` or a ColorBrewer palette with fewer colors than the plot
+has color levels fails at rendering; numeric color mappings use the palette's continuous form.
+
+`palette` may instead list two or more colors, each as hex (`#RRGGBB` or
+`#RGB`), `rgb(R, G, B)` with channels from 0 to 255, or an R color name. The
+plot then colors its levels at equal steps along the listed colors, from the
+first to the last, and a numeric mapping uses the same colors as a continuous
+gradient. Colors are stored in hex, so spellings of the same color give the
+same visualization identity:
+
+```yaml
+render:
+  geometry: line
+  mappings: {x: lag, y: estimate, color: "predictor:frequency"}
+  palette: ["#2166AC", "rgb(178, 24, 43)"]
+```
+
+`geometry: point` draws each estimate as a point with an error bar, and
+`geometry: bar` as a bar from zero with an error bar. Their `interval` is
+`errorbar` (default) or `none`. Series that share an x position, such as
+several terms at one lag, are placed side by side. Bars suit estimates at a
+few values: an x mapping to a categorical column such as `term` or `group`,
+including an effect where no axis varies, or a numeric axis requested with
+`values`. For example, the effect of each term at its peak lag:
+
+```yaml
+query:
+  terms: {predictors: "*", interacting: false}
+  axes:
+    lag: peak
+    predictors: {"*": mean + sd}
+  reference: {"*": mean}
+render:
+  geometry: bar
+  mappings: {x: term, y: estimate, color: term}
+  palette: Dark2
+```
+
+`spacing` draws a numeric x at its evaluated values, with one tick per
+value. `uniform` places the ticks equally far apart in sorted order and
+`linear` in proportion to their values. Bars over a numeric x use `uniform`
+unless `spacing` is set; lines and points otherwise keep a continuous x-axis.
+`spacing` has no effect on a categorical x and is not accepted for surfaces.
+
+`statistic: peak-lag` plots the peak lags that the query used instead of the
+effect estimates, with their posterior intervals as error bars. It requires
+point or bar geometry and a query whose lag values use a peak. The plotted
+rows have the columns `term`, `source`, `direction`, `peak` (the label the
+peak timeline uses), `estimate` (the peak lag), `lower`, and `upper`:
+
+```yaml
+render:
+  geometry: bar
+  mappings: {x: peak, y: estimate, color: term}
+  statistic: peak-lag
+```
+
+`peaks` controls a timeline of peak lags drawn below a line or point plot: `auto`
 (default) draws it when the terms were held at different peak lags, `always`
 whenever a peak was used, and `never` not at all. Each row shows one term's
 peak lag as a long tick, its posterior interval as a bar, and the draws as
 faint ticks, in the term's line color when `color` maps to `term`. The
 timeline shares the plot's x-axis when that axis is `lag` and the plot has
-no facets; otherwise it has its own lag axis. The viewer draws the same
+no facets and uniform spacing is not set; otherwise it has its own lag
+axis. The viewer draws the same
 timeline under its line plots.
 
-Line renderings support ribbon, boundary-line, or no interval display. Raster,
+The `cdrgam viz` viewer draws from the same plot description as rendered
+files, so a render setting looks the same in both. Its **Appearance** panel
+has a control for `geometry`, `interval`, `theme`, `title`, `xlab`, `ylab`,
+`palette`, `peaks`, `spacing`, and `statistic`, checked as in a definition.
+The viewer sets `mappings` itself: x is each line's horizontal axis and
+color is the line. It draws no facets, so `scales` does not apply, and
+`formats`, `width`, `height`, and `dpi` affect only rendered files. The
+viewer's palette defaults to `okabe-ito` and switches every line to
+`viridis` when there are more than eight; rendered files use `default` and
+fail past a palette's last color. Its 3D surface has no render geometry.
+**Show render YAML** prints the panel's settings as a `render` block; add
+`mappings` for the definition's query before using it.
+
+Line renderings support ribbon, boundary-line, or no interval display.
+Layer `interval` settings must suit the geometry: `errorbar` or `none` for
+points and bars, and `ribbon`, `lines`, or `none` for lines. Raster,
 contour, and combined raster-contour geometries support predictor-by-lag,
 time-by-lag, and predictor-by-predictor surfaces. For example:
 

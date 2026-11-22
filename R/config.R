@@ -702,7 +702,7 @@
                     layer$groups <- as.character(unlist(layer$groups, use.names=FALSE))
                 }
                 if (!is.null(layer$interval)) layer$interval <- match.arg(
-                    layer$interval, c('ribbon', 'lines', 'none')
+                    layer$interval, c('ribbon', 'lines', 'errorbar', 'none')
                 )
                 if (!is.null(layer$style)) {
                     .cdrgam_cli_check_keys(
@@ -730,6 +730,19 @@
         value$render <- .cdrgam_cli_validate_render(
             value$render, paste0(path, ': render')
         )
+        # Surfaces have no per-layer interval display, so their layers keep
+        # accepting the line intervals.
+        suitable <- if (value$render$geometry %in% .cdrgam_cli_surface_geometries) {
+            c('ribbon', 'lines', 'none')
+        } else .cdrgam_cli_geometry_intervals(value$render$geometry)
+        for (index in seq_along(value$layers)) {
+            interval <- value$layers[[index]]$interval
+            if (is.null(interval) || interval %in% suitable) next
+            .cdrgam_cli_abort(paste0(
+                path, ': layers[[', index, ']].interval ', interval,
+                ' does not suit ', value$render$geometry, ' geometry'
+            ))
+        }
     }
     attr(value, 'path') <- path
     value
@@ -981,81 +994,6 @@
     }
     value$n <- .cdrgam_cli_positive_integer(.cdrgam_cli_null(value$n, 200L), paste0(field, '.n'))
     if (value$n < 2L) .cdrgam_cli_abort(paste0(field, '.n must be at least two'))
-    value
-}
-
-.cdrgam_cli_validate_render <- function(value, field) {
-    if (!is.list(value)) .cdrgam_cli_abort(paste0(field, ' must be a mapping'))
-    .cdrgam_cli_check_keys(
-        value,
-        c(
-            'geometry', 'mappings', 'interval', 'theme', 'formats', 'width',
-            'height', 'dpi', 'title', 'xlab', 'ylab', 'palette', 'scales', 'peaks'
-        ),
-        field, c('geometry', 'mappings')
-    )
-    value$geometry <- match.arg(
-        value$geometry, c('line', 'raster', 'contour', 'raster-contour')
-    )
-    if (!is.list(value$mappings) || is.null(names(value$mappings))) {
-        .cdrgam_cli_abort(paste0(field, '.mappings must be a named mapping'))
-    }
-    value$mappings <- .cdrgam_cli_restore_yaml_keys(
-        value$mappings, c('TRUE'='y'), paste0(field, '.mappings')
-    )
-    .cdrgam_cli_check_keys(
-        value$mappings, c('x', 'y', 'color', 'fill', 'linetype', 'group', 'facet'),
-        paste0(field, '.mappings'), c('x')
-    )
-    value$mappings <- lapply(value$mappings, .cdrgam_cli_scalar_character,
-        field=paste0(field, '.mappings value'))
-    value$interval <- match.arg(
-        .cdrgam_cli_null(value$interval, 'ribbon'), c('ribbon', 'lines', 'companion', 'none')
-    )
-    if (is.null(value$mappings$y)) {
-        .cdrgam_cli_abort(paste0(field, '.mappings.y is required'))
-    }
-    if (identical(value$geometry, 'line') && identical(value$interval, 'companion')) {
-        .cdrgam_cli_abort(paste0(field, '.interval companion requires a surface geometry'))
-    }
-    if (!identical(value$geometry, 'line') &&
-            value$interval %in% c('ribbon', 'lines')) {
-        .cdrgam_cli_abort(paste0(
-            field, '.interval ribbon and lines require line geometry'
-        ))
-    }
-    if (value$geometry %in% c('raster', 'raster-contour') &&
-            is.null(value$mappings$fill)) {
-        .cdrgam_cli_abort(paste0(field, '.mappings.fill is required for raster geometry'))
-    }
-    value$theme <- match.arg(
-        .cdrgam_cli_null(value$theme, 'paper'), c('paper', 'minimal', 'slides')
-    )
-    if (!is.null(value$palette)) value$palette <- match.arg(
-        .cdrgam_cli_scalar_character(value$palette, paste0(field, '.palette')),
-        c('default', 'rainbow')
-    )
-    if (!is.null(value$peaks)) value$peaks <- match.arg(
-        .cdrgam_cli_scalar_character(value$peaks, paste0(field, '.peaks')),
-        c('auto', 'always', 'never')
-    )
-    if (!is.null(value$scales)) value$scales <- match.arg(
-        .cdrgam_cli_scalar_character(value$scales, paste0(field, '.scales')),
-        c('fixed', 'free', 'free_x', 'free_y')
-    )
-    value$formats <- .cdrgam_cli_null(value$formats, 'pdf')
-    value$formats <- unique(as.character(unlist(value$formats, use.names=FALSE)))
-    if (!length(value$formats) || any(!(value$formats %in% c('pdf', 'png', 'svg')))) {
-        .cdrgam_cli_abort(paste0(field, '.formats supports pdf, png, and svg'))
-    }
-    for (name in c('width', 'height', 'dpi')) if (!is.null(value[[name]]) &&
-            (!is.numeric(value[[name]]) || length(value[[name]]) != 1L ||
-             !is.finite(value[[name]]) || value[[name]] <= 0)) {
-        .cdrgam_cli_abort(paste0(field, '.', name, ' must be positive'))
-    }
-    for (name in c('title', 'xlab', 'ylab')) if (!is.null(value[[name]])) {
-        value[[name]] <- .cdrgam_cli_scalar_character(value[[name]], paste0(field, '.', name))
-    }
     value
 }
 

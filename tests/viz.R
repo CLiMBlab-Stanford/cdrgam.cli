@@ -281,6 +281,9 @@ stopifnot(
     any(grepl('viz-server .* --port 41741 \\|\\| status=\\$\\?$', script))
 )
 
+# A plotly title, whether given as text or as a title object.
+title_text <- function(title) if (is.list(title)) title$text else title
+
 if (all(vapply(c('shiny', 'plotly', 'bslib'), requireNamespace, logical(1), quietly=TRUE))) {
     shifted <- peak_line
     attr(shifted, 'peaks') <- transform(line_peaks, lag=lag + 0.5)
@@ -330,6 +333,23 @@ if (all(vapply(c('shiny', 'plotly', 'bslib'), requireNamespace, logical(1), quie
             'z_reference' %in% names(plotted()$entries[[3L]]$data)
         )
         session$setInputs(use_reference=FALSE, remove_line=lines()[[3L]]$id)
+        # Appearance inputs reach the plot: bars at uniform ticks, a
+        # palette that is too small for the lines is shown as an error, and
+        # restored appearance values set the controls once.
+        session$setInputs(render_geometry='bar', render_spacing='uniform',
+            render_palette='Set1', render_title='Bars')
+        drawn <- jsonlite::fromJSON(output$plot, simplifyVector=FALSE)$x
+        stopifnot(
+            any(vapply(drawn$data, function(trace) identical(trace$type, 'bar'), logical(1))),
+            identical(title_text(drawn$layout$title), 'Bars')
+        )
+        session$setInputs(show_render_yaml=1)
+        session$setInputs(render_palette='custom', render_palette_colors='red')
+        stopifnot(grepl('two or more gradient colors', tryCatch(
+            output$plot, error=conditionMessage
+        )))
+        session$setInputs(render_palette='okabe-ito', render_geometry='line',
+            render_spacing='')
         session$setInputs(remove_line=lines()[[1L]]$id)
         stopifnot(identical(length(lines()), 1L))
         kept <- lines()
@@ -339,6 +359,14 @@ if (all(vapply(c('shiny', 'plotly', 'bslib'), requireNamespace, logical(1), quie
         stopifnot(identical(plotted()$mode, 'surface'))
     })
     shiny::testServer(internal('.cdrgam_cli_viz_server')(root), {
+        session$setInputs(mode='line', restore_appearance=
+            '{"geometry":"point","palette":"Dark2","title":"Kept"}')
+        panel <- paste(unlist(output$appearance_controls), collapse='')
+        stopifnot(
+            grepl('<option value="point" selected>', panel, fixed=TRUE),
+            grepl('<option value="Dark2" selected>', panel, fixed=TRUE),
+            grepl('value="Kept"', panel, fixed=TRUE)
+        )
         session$setInputs(restore_lines=internal('.cdrgam_cli_viz_lines_json')(kept_lines))
         stopifnot(
             identical(length(lines()), 4L),
@@ -419,5 +447,186 @@ instructions <- internal('.cdrgam_cli_viz_instructions')(
 stopifnot(grepl(
     'ssh -N -L 41741:node7.example.edu:41741 me@login.example.edu', instructions, fixed=TRUE
 ))
+
+# The viewer draws its lines from the shared plot specification.
+if (requireNamespace('plotly', quietly=TRUE)) {
+    synthetic <- function(axis, shift, lag=NULL) {
+        data <- data.frame(v=seq(0, 1, length.out=5), term='x', group=NA_character_,
+            estimate=seq(0, 1, length.out=5) + shift, se=0.1)
+        names(data)[1L] <- axis
+        data$lower <- data$estimate - 0.2
+        data$upper <- data$estimate + 0.2
+        if (!is.null(lag)) {
+            peaks <- data.frame(term='x', source='x', direction='pos', lag=lag,
+                lower=lag - 0.1, upper=lag + 0.1)
+            attr(peaks, 'draws') <- data.frame(source='x', direction='pos', draw=1:3,
+                lag=lag + c(-0.05, 0, 0.05))
+            attr(data, 'peaks') <- peaks
+        }
+        data
+    }
+    entry <- function(id, label, data, axis='lag') {
+        list(spec=list(id=id, label=label, varying=axis), data=data)
+    }
+    line_colors <- function(plot) {
+        traces <- plotly::plotly_build(plot)$x$data
+        lines <- Filter(function(trace) isTRUE(trace$showlegend), traces)
+        stats::setNames(
+            vapply(lines, function(trace) trace$line$color, character(1)),
+            vapply(lines, function(trace) trace$name, character(1))
+        )
+    }
+    # Up to eight lines use okabe-ito in line order; a ninth switches every
+    # line to viridis. Legend entries are labeled by line, even when two
+    # lines share a label.
+    eight <- lapply(1:8, function(index) entry(
+        paste0('l', index), if (index <= 2L) 'same' else paste0('line ', index),
+        synthetic('lag', index)
+    ))
+    colors <- line_colors(internal('.cdrgam_cli_viz_line_plot')(eight))
+    stopifnot(
+        identical(unname(colors), internal('.cdrgam_cli_okabe_ito')),
+        identical(names(colors)[1:3], c('same', 'same', 'line 3'))
+    )
+    nine <- c(eight, list(entry('l9', 'line 9', synthetic('lag', 9))))
+    stopifnot(
+        identical(
+            unname(line_colors(internal('.cdrgam_cli_viz_line_plot')(nine))),
+            ggplot2::scale_colour_viridis_d()$palette(9L)
+        ),
+        identical(
+            unname(internal('.cdrgam_cli_viz_line_colors')(paste0('l', 1:9))),
+            ggplot2::scale_colour_viridis_d()$palette(9L)
+        )
+    )
+    # Two lines held at the same source term's peak keep their own draws.
+    shared <- list(
+        entry('a', 'first', synthetic('lag', 0, lag=0.2)),
+        entry('b', 'second', synthetic('lag', 1, lag=0.7))
+    )
+    spec <- internal('.cdrgam_cli_viz_line_spec')(shared)
+    strip <- internal('.cdrgam_cli_viz_strip_spec')(shared, spec)
+    stopifnot(
+        identical(strip$lanes, c('first', 'second')),
+        nrow(strip$draws) == 6L,
+        all(abs(strip$draws$lag[strip$draws$line == 'b'] - 0.7) <= 0.05 + 1e-12),
+        !is.null(strip$xlim)
+    )
+    # Heatmaps use the static renderer's diverging colors, symmetric about 0.
+    grid_surface <- expand.grid(lag=seq(0, 1, length.out=3), z=c(-1, 0, 2))
+    grid_surface <- transform(grid_surface, term='s', group=NA_character_,
+        estimate=lag * z, se=0.1, lower=lag * z - 0.1, upper=lag * z + 0.1)
+    heatmap <- plotly::plotly_build(internal('.cdrgam_cli_viz_surface_plot')(
+        grid_surface, list(varying=c('lag', 'z')), display='heatmap'
+    ))$x$data[[1L]]
+    stopifnot(
+        identical(heatmap$type, 'heatmap'), identical(heatmap$zmin, -2),
+        identical(heatmap$zmax, 2)
+    )
+
+    # Every render field with a viewer control has an input in the line
+    # appearance panel, and setting it changes the viewer's render.
+    controls <- internal('.cdrgam_cli_viz_control_fields')()
+    html <- as.character(internal('.cdrgam_cli_viz_appearance')('line'))
+    missing <- controls[!vapply(controls, function(name) {
+        grepl(paste0('id="render_', name, '"'), html, fixed=TRUE)
+    }, logical(1))]
+    if (length(missing)) stop('viewer has no control for render fields: ',
+        paste(missing, collapse=', '))
+    viz_render <- internal('.cdrgam_cli_viz_render')
+    peaked <- list(entry('a', 'first', synthetic('lag', 0, lag=0.2)),
+        entry('b', 'second', synthetic('lag', 1, lag=0.7)))
+    chosen <- list(
+        geometry='point', interval='none', theme='slides', title='T', xlab='X',
+        ylab='Y', palette='Set1', scales=NULL, peaks='never', spacing='linear',
+        statistic='peak-lag'
+    )
+    for (name in controls) {
+        value <- chosen[[name]]
+        settings <- list(value)
+        names(settings) <- name
+        if (identical(name, 'statistic')) settings$geometry <- 'bar'
+        rendered <- viz_render(peaked, settings=settings)
+        if (!identical(rendered[[name]], value)) stop(
+            'viewer control ', name, ' does not reach the render'
+        )
+    }
+
+    # Settings come from render_FIELD inputs; a custom palette is read from
+    # its color list, and empty inputs are left out.
+    settings <- internal('.cdrgam_cli_viz_settings')(list(
+        render_geometry='bar', render_spacing='', render_palette='custom',
+        render_palette_colors='#000000, rgb(255, 0, 0); white'
+    ))
+    stopifnot(
+        identical(settings$geometry, 'bar'), is.null(settings$spacing),
+        identical(settings$palette, c('#000000', 'rgb(255, 0, 0)', 'white'))
+    )
+    # An interval that does not suit the geometry falls back to its default.
+    stopifnot(identical(
+        viz_render(peaked, settings=list(geometry='bar', interval='ribbon'))$interval,
+        'errorbar'
+    ))
+    # Points over uniform ticks, dodged per line, in a custom gradient.
+    points <- plotly::plotly_build(internal('.cdrgam_cli_viz_line_plot')(peaked, settings=list(
+        geometry='point', spacing='uniform', palette=c('#000000', '#FF0000'), peaks='never'
+    )))$x$data
+    markers <- Filter(function(trace) identical(trace$mode, 'markers'), points)
+    stopifnot(
+        length(markers) == 2L,
+        identical(vapply(markers, function(trace) trace$marker$color[[1L]], character(1)),
+            c('#000000', '#FF0000')),
+        all(abs(markers[[1L]]$x - (1:5 - 0.2)) < 1e-9),
+        identical(unlist(plotly::plotly_build(internal('.cdrgam_cli_viz_line_plot')(
+            peaked, settings=list(geometry='point', spacing='uniform', peaks='never')
+        ))$x$layout$xaxis$ticktext), c('0', '0.25', '0.5', '0.75', '1'))
+    )
+    # Peak lags as bars: one per line, labeled by lane, with error bars.
+    bars <- plotly::plotly_build(internal('.cdrgam_cli_viz_line_plot')(
+        peaked, settings=list(geometry='bar', statistic='peak-lag')
+    ))$x
+    bar_traces <- Filter(function(trace) identical(trace$type, 'bar'), bars$data)
+    stopifnot(
+        length(bar_traces) == 2L,
+        identical(vapply(bar_traces, function(trace) trace$y[[1L]], numeric(1)), c(0.2, 0.7)),
+        identical(unlist(bars$layout$xaxis$ticktext), c('first', 'second')),
+        identical(title_text(bars$layout$yaxis$title), 'Peak lag')
+    )
+    no_peaks <- tryCatch(internal('.cdrgam_cli_viz_line_plot')(
+        list(entry('c', 'plain', synthetic('lag', 0))),
+        settings=list(geometry='bar', statistic='peak-lag')
+    ), error=conditionMessage)
+    stopifnot(grepl('No line uses a peak', no_peaks))
+    # The render YAML export pastes into a definition: with mappings added,
+    # it validates to the settings that were chosen.
+    to_yaml <- internal('.cdrgam_cli_viz_render_yaml')
+    exported <- to_yaml(list(geometry='bar', spacing='uniform', title='T',
+        palette=c('#00f', 'red')))
+    parsed <- yaml::yaml.load(exported)$render
+    parsed$mappings <- list(x='lag', y='estimate', color='term')
+    checked <- internal('.cdrgam_cli_validate_render')(parsed, 'render')
+    stopifnot(
+        grepl('^# Render settings from cdrgam viz', exported),
+        identical(names(yaml::yaml.load(exported)$render),
+            c('geometry', 'title', 'palette', 'spacing')),
+        identical(checked$palette, c('#0000FF', '#FF0000')),
+        identical(checked$spacing, 'uniform'),
+        identical(yaml::yaml.load(to_yaml(list()))$render$palette, 'okabe-ito')
+    )
+    flat <- to_yaml(list(geometry='surface', theme='slides'), mode='surface')
+    stopifnot(
+        grepl('3D surfaces are drawn only by the viewer', flat),
+        identical(yaml::yaml.load(flat)$render, list(theme='slides')),
+        identical(yaml::yaml.load(to_yaml(list(geometry='raster'), mode='surface'))$render,
+            list(geometry='raster', interval='none'))
+    )
+    # A surface's standard-error companion stacks a second heatmap.
+    stacked <- plotly::plotly_build(internal('.cdrgam_cli_viz_surface_plot')(
+        grid_surface, list(varying=c('lag', 'z')),
+        settings=list(geometry='raster', interval='companion', title='S')
+    ))$x$data
+    stopifnot(sum(vapply(stacked, function(trace) identical(trace$type, 'heatmap'),
+        logical(1))) == 2L)
+}
 
 cat('viz: ok\n')

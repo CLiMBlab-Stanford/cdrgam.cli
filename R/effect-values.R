@@ -71,6 +71,10 @@
             !nzchar(trimws(text))) {
         .cdrgam_cli_abort(paste0(field, ' must be a number or a value expression'))
     }
+    if (grepl('peak-pointwise', text, fixed=TRUE)) .cdrgam_cli_abort(paste0(
+        field, ': ', text, ' uses a pointwise peak, which may only be the whole ',
+        'value of a fixed lag, not part of an expression or a reference'
+    ))
     source <- .cdrgam_cli_value_rewrite_peaks(text, field)
     parsed <- tryCatch(
         parse(text=source, keep.source=FALSE), error=function(error) NULL
@@ -209,11 +213,13 @@
     )
 }
 
-# The request whose lag profile locates a term's peak: the term alone with
-# each of its predictors one training standard deviation above the mean,
-# relative to the term at the means; for irf(1) it is irf(1) itself. Other
-# axes are held at their training means.
-.cdrgam_cli_peak_request <- function(term, n) {
+# The request whose lag profile locates a term's peak: the response, under
+# `composition`, to raising each of the term's predictors one training
+# standard deviation above the mean, relative to the means; for irf(1) under
+# term composition it is irf(1) itself. Other axes are held at their training
+# means. Under total composition the lower-order terms count, so the peak of
+# an interaction is that of the response a line of it shows.
+.cdrgam_cli_peak_request <- function(term, n, composition='term') {
     roles <- .cdrgam_cli_term_axes(term)
     if (!('lag' %in% roles$axes)) .cdrgam_cli_abort(paste0(
         'Term ', term$label, ' has no lag axis, so it has no peak'
@@ -235,7 +241,7 @@
         lapply(roles$predictors, statistic, field='mean'), roles$predictors
     )) else list()
     c(list(
-        terms=term$label, axes=axes, composition='term', grouping='population',
+        terms=term$label, axes=axes, composition=composition, grouping='population',
         n=as.integer(n)
     ), reference)
 }
@@ -248,11 +254,12 @@
 # .cdrgam_cli_peak_request(), is largest (`direction = "pos"`) or smallest
 # ("neg") over the fitted lag domain.
 .cdrgam_cli_effect_peak <- function(
-        fit, term, direction, impulses=NULL, responses=NULL, n=200L
+        fit, term, direction, impulses=NULL, responses=NULL, n=200L,
+        composition='term'
 ) {
     value <- do.call(.cdrgam_cli_core_estimate_effect, c(
         list(fit, impulses=impulses, responses=responses, se=FALSE),
-        .cdrgam_cli_peak_request(term, n)
+        .cdrgam_cli_peak_request(term, n, composition)
     ))
     value$lag[[.cdrgam_cli_peak_index(value$estimate, direction)]]
 }
@@ -262,7 +269,7 @@
 # limited to the lag grid, so their resolution is the grid spacing.
 .cdrgam_cli_effect_peak_draws <- function(
         fit, term, direction, impulses=NULL, responses=NULL, n=200L,
-        draws=1000L, seed=1L, unconditional=FALSE
+        draws=1000L, seed=1L, unconditional=FALSE, composition='term'
 ) {
     if (!.cdrgam_cli_core_has_simulate_effect()) return(NULL)
     value <- do.call(.cdrgam_cli_core_simulate_effect, c(
@@ -270,7 +277,7 @@
             fit, impulses=impulses, responses=responses, draws=as.integer(draws),
             seed=seed, unconditional=unconditional
         ),
-        .cdrgam_cli_peak_request(term, n)
+        .cdrgam_cli_peak_request(term, n, composition)
     ))
     lags <- value$grid$lag
     lags[apply(value$draws, 2L, .cdrgam_cli_peak_index, direction=direction)]
@@ -280,13 +287,15 @@
 # label, where NULL means `term` itself. Peaks are memoized by term and
 # direction in `cache`, an environment that callers may share across the
 # terms of one evaluation so that a peak borrowed by many terms is located
-# once. Other terms are found in the fit's effect catalog.
+# once. Other terms are found in the fit's effect catalog. Peaks are found
+# under `composition`, the composition of the line that uses them.
 .cdrgam_cli_peak_function <- function(
-        fit, term, impulses=NULL, responses=NULL, n=200L, cache=new.env()
+        fit, term, impulses=NULL, responses=NULL, n=200L, cache=new.env(),
+        composition='term'
 ) {
     function(direction, label=NULL) {
         label <- .cdrgam_cli_null(label, term$label)
-        key <- paste0(direction, '\r', label)
+        key <- paste0(direction, '\r', label, '\r', composition)
         if (is.null(cache[[key]])) {
             source <- if (identical(label, term$label)) term else {
                 if (is.null(cache$.catalog)) {
@@ -308,12 +317,12 @@
                 .cdrgam_cli_catalog_row(catalog, index)
             }
             cache[[key]] <- .cdrgam_cli_effect_peak(
-                fit, source, direction, impulses, responses, n
+                fit, source, direction, impulses, responses, n, composition
             )
         }
         used <- data.frame(
-            term=term$label, source=label, direction=direction, lag=cache[[key]],
-            stringsAsFactors=FALSE
+            term=term$label, source=label, direction=direction,
+            composition=composition, lag=cache[[key]], stringsAsFactors=FALSE
         )
         cache$.used <- unique(rbind(cache$.used, used))
         cache[[key]]
@@ -342,24 +351,26 @@
         if (is.null(catalog)) {
             catalog <- .cdrgam_cli_core_effect_catalog(fit, impulses, responses)
         }
-        sources <- unique(used[c('source', 'direction')])
+        sources <- unique(used[c('source', 'direction', 'composition')])
         for (index in seq_len(nrow(sources))) {
             source <- sources$source[[index]]
             direction <- sources$direction[[index]]
+            composition <- sources$composition[[index]]
             term <- .cdrgam_cli_catalog_row(catalog, match(source, catalog$label))
             lags <- .cdrgam_cli_effect_peak_draws(
                 fit, term, direction, impulses, responses, n, draws, seed,
-                unconditional
+                unconditional, composition
             )
-            rows <- used$source == source & used$direction == direction
+            rows <- used$source == source & used$direction == direction &
+                used$composition == composition
             bounds <- stats::quantile(
                 lags, c((1 - level) / 2, (1 + level) / 2), names=FALSE, type=1
             )
             used$lower[rows] <- bounds[[1L]]
             used$upper[rows] <- bounds[[2L]]
             samples[[index]] <- data.frame(
-                source=source, direction=direction, draw=seq_along(lags), lag=lags,
-                stringsAsFactors=FALSE
+                source=source, direction=direction, composition=composition,
+                draw=seq_along(lags), lag=lags, stringsAsFactors=FALSE
             )
         }
     }
@@ -406,13 +417,19 @@
 # A wildcard reference applies to every predictor of the term that has no
 # explicit reference; a term without predictors gets none.
 .cdrgam_cli_term_request <- function(
-        fit, term, query, impulses=NULL, responses=NULL, peaks=new.env()
+        fit, term, query, impulses=NULL, responses=NULL, peaks=new.env(),
+        composition=.cdrgam_cli_null(query$composition, 'term')
 ) {
     roles <- .cdrgam_cli_term_axes(term)
     n <- .cdrgam_cli_null(query$n, 200L)
-    peak <- .cdrgam_cli_peak_function(fit, term, impulses, responses, n, peaks)
+    peak <- .cdrgam_cli_peak_function(
+        fit, term, impulses, responses, n, peaks, composition
+    )
     requests <- list()
     for (name in roles$axes) {
+        # A pointwise peak is located by .cdrgam_cli_pointwise_effect().
+        if (identical(name, 'lag') &&
+                !is.null(.cdrgam_cli_pointwise_direction(query$axes$lag))) next
         request <- if (identical(name, 'lag')) {
             query$axes$lag
         } else if (name %in% roles$predictors) {

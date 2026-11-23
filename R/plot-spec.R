@@ -465,3 +465,52 @@
         theme=.cdrgam_cli_null(render$theme, 'paper')
     )
 }
+
+# The specification of the pointwise-peak panel drawn below a plot whose
+# lines hold lag at peak-pointwise: each series' peak lag across the main
+# plot's x-axis, with the central interval of its posterior draws. `table`
+# has one row per point, as from .cdrgam_cli_pointwise_effect(), with the
+# main plot's x and color columns; `main` is the main plot specification.
+# Series follow the main plot's color column and layer, and take its
+# colors. NULL when the main plot is faceted or its x-axis is not numeric
+# or not in `table`.
+.cdrgam_cli_pointwise_spec <- function(table, main, render) {
+    x <- main$columns$x
+    if (is.null(table) || !nrow(table) || !is.null(main$facet) ||
+            !(x %in% names(table)) || !is.numeric(table[[x]]) ||
+            !is.numeric(main$rows[[x]])) {
+        return(NULL)
+    }
+    table <- as.data.frame(table)
+    axis <- .cdrgam_cli_x_axis(c(main$rows[[x]], table[[x]]), render)
+    color <- main$color$column
+    discrete <- !is.null(color) && identical(main$color$kind, 'discrete') &&
+        color %in% names(table)
+    key <- if (discrete) as.character(table[[color]]) else rep.int('', nrow(table))
+    layer <- if ('layer' %in% names(table)) as.character(table$layer) else ''
+    rows <- data.frame(
+        .x=axis$position[-seq_len(nrow(main$rows))], lag=table$lag,
+        lower=table$lower, upper=table$upper, .color=key,
+        .series=paste(key, layer, sep='\r'), stringsAsFactors=FALSE
+    )
+    rows <- rows[order(rows$.series, rows$.x), , drop=FALSE]
+    rownames(rows) <- NULL
+    list(
+        rows=rows, colors=if (discrete) main$color$values else NULL,
+        x=main$x, theme=main$theme,
+        labels=list(x=main$labels$x, y='Peak lag')
+    )
+}
+
+# The pointwise-peak panel for a figure, or NULL when none is drawn: under
+# lines or points of estimates whose query used peak-pointwise, unless
+# render.peaks is never.
+.cdrgam_cli_figure_pointwise <- function(data, pointwise, definition) {
+    render <- definition$render
+    if (is.null(pointwise) || !(render$geometry %in% c('line', 'point')) ||
+            identical(render$statistic, 'peak-lag') ||
+            identical(render$peaks, 'never')) return(NULL)
+    .cdrgam_cli_pointwise_spec(
+        pointwise, .cdrgam_cli_plot_spec(data, definition), render
+    )
+}

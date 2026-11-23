@@ -8,9 +8,22 @@
     sub('^fixed_', 'reference_', .cdrgam_cli_viz_input_id(axis))
 }
 
-# Predictor axes can be left at the model default; lag and time cannot.
-.cdrgam_cli_viz_reference_axes <- function(term) {
-    setdiff(names(term$axes), c('lag', 'time'))
+# The axes a reference may set: the fixed ones. A varying axis keeps its
+# plotted value in the reference, so the line shows the change from moving
+# only the fixed axes to their reference values.
+.cdrgam_cli_viz_reference_axes <- function(term, varying) {
+    setdiff(names(term$axes), varying)
+}
+
+# Lag and time have no model default, so an empty reference field leaves
+# them at their plotted value instead.
+.cdrgam_cli_viz_reference_values <- function(values) {
+    keep <- vapply(names(values), function(name) {
+        !(name %in% c('lag', 'time')) || is.character(values[[name]]) ||
+            !is.na(values[[name]])
+    }, logical(1))
+    values <- values[keep]
+    if (length(values)) values else NULL
 }
 
 .cdrgam_cli_viz_format <- function(value) {
@@ -263,10 +276,40 @@
     )
 }
 
+# The pointwise peaks of the viewer's lines that hold lag at
+# peak-pointwise, one row per point, with the line id in `line` and the
+# point's horizontal axis value in `.viewer_x`; NULL when no line does.
+.cdrgam_cli_viz_pointwise <- function(entries) {
+    tables <- lapply(entries, function(entry) {
+        table <- attr(entry$data, 'pointwise_peaks')
+        if (is.null(table) || !nrow(table)) return(NULL)
+        table <- as.data.frame(table)
+        table$.viewer_x <- table[[entry$spec$varying[[1L]]]]
+        table$line <- entry$spec$id
+        table$layer <- 'estimate'
+        table
+    })
+    tables <- Filter(Negate(is.null), tables)
+    if (!length(tables)) return(NULL)
+    .cdrgam_cli_bind_tables(tables)
+}
+
+# The pointwise-peak panel of the viewer's lines, or NULL when none is
+# drawn: as for rendered plots, under lines or points of estimates unless
+# render.peaks is never. `spec` is the lines' plot specification.
+.cdrgam_cli_viz_pointwise_spec <- function(entries, spec) {
+    render <- spec$render
+    if (!(render$geometry %in% c('line', 'point')) ||
+            identical(render$statistic, 'peak-lag') ||
+            identical(render$peaks, 'never')) return(NULL)
+    .cdrgam_cli_pointwise_spec(.cdrgam_cli_viz_pointwise(entries), spec, render)
+}
+
 .cdrgam_cli_viz_line_plot <- function(entries, show_interval=TRUE, settings=list()) {
     spec <- .cdrgam_cli_viz_line_spec(entries, show_interval, settings)
     .cdrgam_cli_plotly_figure(
-        .cdrgam_cli_plotly_plot(spec), .cdrgam_cli_viz_strip_spec(entries, spec), spec
+        .cdrgam_cli_plotly_plot(spec), .cdrgam_cli_viz_strip_spec(entries, spec), spec,
+        .cdrgam_cli_viz_pointwise_spec(entries, spec)
     )
 }
 
@@ -509,12 +552,16 @@ $(function() {
 "))
 
 # Read a fixed or reference text field: empty is NA, a plain number is
-# numeric, and anything else must be a value expression for that axis.
-.cdrgam_cli_viz_input_value <- function(text, name) {
+# numeric, and anything else must be a value expression for that axis. A
+# fixed lag (`pointwise = TRUE`) may also be peak-pointwise or
+# peak-pointwise-neg.
+.cdrgam_cli_viz_input_value <- function(text, name, pointwise=FALSE) {
     if (is.null(text) || (length(text) == 1L && is.na(text))) return(NA_real_)
     if (is.numeric(text)) return(as.numeric(text))
     text <- trimws(as.character(text))
     if (!nzchar(text)) return(NA_real_)
+    if (pointwise && identical(name, 'lag') &&
+            !is.null(.cdrgam_cli_pointwise_direction(text))) return(text)
     number <- suppressWarnings(as.numeric(text))
     if (is.finite(number)) return(number)
     .cdrgam_cli_value_parse(text, name, lag=identical(name, 'lag'))
@@ -568,8 +615,7 @@ $(function() {
                 shiny::textInput('label', 'Line label', placeholder='Automatic'),
                 shiny::div(
                     style='display:flex; gap:0.5rem;',
-                    shiny::actionButton('add_line', 'Add line', class='btn-primary'),
-                    shiny::uiOutput('update_button', inline=TRUE)
+                    shiny::uiOutput('line_buttons', inline=TRUE)
                 )
             ),
             shiny::conditionalPanel(
@@ -860,9 +906,12 @@ $(function() {
                         'Enter a number or an expression in mean, sd, and median,',
                         'such as mean + 2 * sd. Lag also accepts peak (or',
                         'peak-pos) and peak-neg: the lag at which the term\'s',
-                        'response to a one-SD increase is largest or smallest.',
+                        'response to a one-SD increase, under the chosen',
+                        'composition, is largest or smallest.',
                         'Add a term label, as in peak(irf(1)), to use that',
-                        'term\'s peak instead.'
+                        'term\'s peak instead. peak-pointwise (or',
+                        'peak-pointwise-neg) holds each point at its own peak',
+                        'lag for this line\'s contrast, shown in a panel below.'
                     )
                 )
             )
@@ -870,7 +919,7 @@ $(function() {
 
         output$reference_controls <- shiny::renderUI({
             info <- term()
-            axes <- .cdrgam_cli_viz_reference_axes(info)
+            axes <- .cdrgam_cli_viz_reference_axes(info, varying())
             if (!length(axes)) return(NULL)
             pending <- shiny::isolate(session$userData$pending_reference)
             fields <- lapply(axes, function(name) {
@@ -882,7 +931,8 @@ $(function() {
                     shiny::textInput(
                         .cdrgam_cli_viz_reference_id(name), name, value=value
                     ),
-                    placeholder='model default', .cssSelector='input'
+                    placeholder=if (name %in% c('lag', 'time')) 'plotted value' else
+                        'model default', .cssSelector='input'
                 )
             })
             shiny::tagList(
@@ -896,10 +946,11 @@ $(function() {
                     shiny::div(
                         class='form-text mt-n2 mb-2',
                         paste(
-                            'The line shows the effect minus the effect at these values.',
-                            'An empty field uses the model default: terms involving',
-                            'that predictor drop out of the reference. To hold a',
-                            'predictor at its plotted value, enter the same value.'
+                            'The line shows the effect minus the effect with these',
+                            'fixed values changed; plotted axes keep their values.',
+                            'An empty predictor field uses the model default: terms',
+                            'involving that predictor drop out of the reference. An',
+                            'empty lag or time field keeps its fixed value.'
                         )
                     )
                 )
@@ -910,7 +961,9 @@ $(function() {
             info <- term()
             axes <- varying()
             fixed <- lapply(setdiff(names(info$axes), axes), function(name) {
-                .cdrgam_cli_viz_input_value(input[[.cdrgam_cli_viz_input_id(name)]], name)
+                .cdrgam_cli_viz_input_value(
+                    input[[.cdrgam_cli_viz_input_id(name)]], name, pointwise=TRUE
+                )
             })
             names(fixed) <- setdiff(names(info$axes), axes)
             grouping <- if (isTRUE(info$grouped)) {
@@ -923,12 +976,14 @@ $(function() {
                 group=if (identical(grouping, 'population')) NULL else input$group
             )
             if (isTRUE(input$use_reference)) {
-                names <- .cdrgam_cli_viz_reference_axes(info)
-                value$reference <- stats::setNames(lapply(names, function(name) {
-                    .cdrgam_cli_viz_input_value(
-                        input[[.cdrgam_cli_viz_reference_id(name)]], name
-                    )
-                }), names)
+                names <- .cdrgam_cli_viz_reference_axes(info, axes)
+                value$reference <- .cdrgam_cli_viz_reference_values(
+                    stats::setNames(lapply(names, function(name) {
+                        .cdrgam_cli_viz_input_value(
+                            input[[.cdrgam_cli_viz_reference_id(name)]], name
+                        )
+                    }), names)
+                )
             }
             value$label <- if (nzchar(trimws(.cdrgam_cli_null(input$label, '')))) {
                 trimws(input$label)
@@ -993,13 +1048,19 @@ $(function() {
             lines(c(lines(), list(value)))
             shiny::updateTextInput(session, 'label', value='')
         })
-        output$update_button <- shiny::renderUI({
-            if (is.null(editing())) return(NULL)
+        # While a line is being edited, Update and Cancel replace Add.
+        output$line_buttons <- shiny::renderUI({
+            if (is.null(editing())) {
+                return(shiny::actionButton('add_line', 'Add line', class='btn-primary'))
+            }
             shiny::tagList(
-                shiny::actionButton('update_line', 'Update line'),
+                shiny::actionButton('update_line', 'Update line', class='btn-primary'),
                 shiny::actionLink('cancel_edit', 'Cancel', class='ms-2 align-self-center')
             )
         })
+        # The buttons start in a panel hidden in surface mode; keep them drawn
+        # so they are there when the panel appears.
+        shiny::outputOptions(output, 'line_buttons', suspendWhenHidden=FALSE)
         shiny::observeEvent(input$update_line, {
             target <- editing()
             value <- tryCatch(spec(), error=function(error) {

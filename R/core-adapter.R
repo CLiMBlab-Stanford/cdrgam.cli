@@ -150,6 +150,11 @@
     'simulate_effect' %in% getNamespaceExports('cdrgam')
 }
 
+# estimate_effect(points=) is new after cdrgam 0.4.0; peak-pointwise needs it.
+.cdrgam_cli_core_has_points <- function() {
+    'points' %in% names(formals(cdrgam::estimate_effect))
+}
+
 .cdrgam_cli_core_simulate_effect <- function(fit, ...) {
     getExportedValue('cdrgam', 'simulate_effect')(fit, ...)
 }

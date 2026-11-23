@@ -152,6 +152,27 @@ stopifnot(
 bad <- base
 bad$axes$predictors$wlen <- 'peak'
 expect_error(validate(bad, 'query'), 'only lag values')
+# peak-pointwise is accepted only as the whole fixed lag of a query with
+# pointwise intervals and no test.
+pointwise <- base
+pointwise$axes <- list(lag='peak-pointwise-neg')
+stopifnot(identical(validate(pointwise, 'query')$axes$lag, 'peak-pointwise-neg'))
+pointwise$axes <- list(lag=list(at='peak-pointwise'))
+stopifnot(identical(validate(pointwise, 'query')$axes$lag, list(at='peak-pointwise')))
+for (lag in list('peak-pointwise + 0.1', list(values=list('peak-pointwise')))) {
+    bad <- base
+    bad$axes <- list(lag=lag)
+    expect_error(validate(bad, 'query'), 'may only be the whole value of a fixed lag')
+}
+bad <- base
+bad$reference <- list(lag='peak-pointwise')
+expect_error(validate(bad, 'query'), 'may only be the whole value of a fixed lag')
+bad <- pointwise
+bad$uncertainty <- list(kind='simultaneous')
+expect_error(validate(bad, 'query'), 'needs uncertainty.kind pointwise')
+bad <- pointwise
+bad$test <- TRUE
+expect_error(validate(bad, 'query'), 'cannot be combined with test')
 bad <- base
 bad$reference <- list(wlen=list(range=list('mean', 'mean + sd')))
 expect_error(validate(bad, 'query'), 'must resolve to one value')

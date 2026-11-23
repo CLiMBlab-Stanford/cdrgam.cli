@@ -262,14 +262,58 @@
 
 # A plot with its peak strip below. The strip shares the plot's x-axis when
 # the strip specification gives x-limits.
-.cdrgam_cli_plotly_figure <- function(plot, strip, spec) {
-    if (is.null(strip)) return(plot)
+.cdrgam_cli_plotly_figure <- function(plot, strip, spec, pointwise=NULL) {
+    if (is.null(strip) && is.null(pointwise)) return(plot)
+    plots <- list(plot)
+    heights <- 1
+    if (!is.null(pointwise)) {
+        plots <- c(plots, list(.cdrgam_cli_plotly_pointwise(pointwise)))
+        heights <- c(heights, 0.45)
+    }
     shared <- !is.null(strip$xlim)
-    if (shared) strip$label <- spec$labels$x
-    drawn <- .cdrgam_cli_plotly_peak_strip(strip)
-    ratio <- min(0.4, 0.08 + 0.04 * length(strip$lanes))
-    plotly::subplot(
-        plot, drawn, nrows=2L, shareX=shared, titleX=TRUE, titleY=TRUE,
-        heights=c(1, ratio) / (1 + ratio)
+    if (!is.null(strip)) {
+        if (shared) strip$label <- spec$labels$x
+        plots <- c(plots, list(.cdrgam_cli_plotly_peak_strip(strip)))
+        heights <- c(heights, min(0.4, 0.08 + 0.04 * length(strip$lanes)))
+    }
+    figure <- plotly::subplot(
+        plots, nrows=length(plots), shareX=shared && is.null(pointwise),
+        titleX=TRUE, titleY=TRUE, heights=heights / sum(heights)
+    )
+    # The pointwise panel shares the main plot's x-axis.
+    if (!is.null(pointwise)) figure <- plotly::layout(figure, xaxis2=list(matches='x'))
+    figure
+}
+
+# Draw a pointwise-peak panel specification with plotly: each series' peak
+# lag as a line over its posterior interval band.
+.cdrgam_cli_plotly_pointwise <- function(panel) {
+    plot <- plotly::plot_ly()
+    rows <- panel$rows
+    for (series in unique(rows$.series)) {
+        selected <- rows[rows$.series == series, , drop=FALSE]
+        color <- if (is.null(panel$colors)) '#000000' else
+            unname(panel$colors[[selected$.color[[1L]]]])
+        bounded <- selected[is.finite(selected$lower) & is.finite(selected$upper), ,
+            drop=FALSE]
+        if (nrow(bounded)) plot <- plotly::add_ribbons(
+            plot, x=bounded$.x, ymin=bounded$lower, ymax=bounded$upper,
+            fillcolor=.cdrgam_cli_viz_rgba(color, 0.2), line=list(width=0),
+            hoverinfo='skip', showlegend=FALSE
+        )
+        plot <- plotly::add_lines(
+            plot, x=selected$.x, y=selected$lag, line=list(color=color, width=2),
+            text=sprintf('peak lag %s', signif(selected$lag, 4L)),
+            hoverinfo='x+text', showlegend=FALSE
+        )
+    }
+    xaxis <- list(title=panel$labels$x, zeroline=FALSE)
+    if (!identical(panel$x$kind, 'continuous')) {
+        xaxis$tickvals <- panel$x$breaks
+        xaxis$ticktext <- panel$x$labels
+    }
+    plotly::layout(
+        plot, xaxis=xaxis, yaxis=list(title=panel$labels$y, zeroline=FALSE),
+        font=.cdrgam_cli_plotly_font(panel$theme)
     )
 }

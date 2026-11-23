@@ -771,8 +771,13 @@
     trimws(value)
 }
 
-.cdrgam_cli_validate_axis_request <- function(value, field, lag=FALSE) {
+# `pointwise` admits peak-pointwise and peak-pointwise-neg, as a string or
+# as `at`, for a query's fixed lag.
+.cdrgam_cli_validate_axis_request <- function(value, field, lag=FALSE, pointwise=FALSE) {
     if (is.numeric(value)) return(as.numeric(value))
+    if (pointwise && !is.null(.cdrgam_cli_pointwise_direction(value))) {
+        return(if (is.list(value)) list(at=trimws(value$at)) else trimws(value))
+    }
     if (is.character(value) && length(value) == 1L) {
         return(.cdrgam_cli_validate_value(value, field, lag))
     }
@@ -893,7 +898,8 @@
     .cdrgam_cli_check_keys(value$axes, c('lag', 'time', 'predictors'), paste0(field, '.axes'))
     for (name in intersect(c('lag', 'time'), names(value$axes))) {
         value$axes[[name]] <- .cdrgam_cli_validate_axis_request(
-            value$axes[[name]], paste0(field, '.axes.', name), lag=identical(name, 'lag')
+            value$axes[[name]], paste0(field, '.axes.', name), lag=identical(name, 'lag'),
+            pointwise=identical(name, 'lag')
         )
     }
     if (!is.null(value$axes$predictors)) {
@@ -994,6 +1000,15 @@
     }
     value$n <- .cdrgam_cli_positive_integer(.cdrgam_cli_null(value$n, 200L), paste0(field, '.n'))
     if (value$n < 2L) .cdrgam_cli_abort(paste0(field, '.n must be at least two'))
+    if (!is.null(.cdrgam_cli_pointwise_direction(value$axes$lag))) {
+        lag <- if (is.list(value$axes$lag)) value$axes$lag$at else value$axes$lag
+        if (identical(value$uncertainty$kind, 'simultaneous')) .cdrgam_cli_abort(paste0(
+            field, '.axes.lag ', lag, ' needs uncertainty.kind pointwise'
+        ))
+        if (isTRUE(value$test)) .cdrgam_cli_abort(paste0(
+            field, '.axes.lag ', lag, ' cannot be combined with test'
+        ))
+    }
     value
 }
 

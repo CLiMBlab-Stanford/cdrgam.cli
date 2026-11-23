@@ -206,14 +206,19 @@ cdrgam fetch SOURCE --results brown-results.tar.gz
 It draws effect lines, with several lines per plot drawn from any fits, and
 two-axis effect surfaces. For each line or surface you choose the term, the
 axes that vary, and fixed values for the remaining axes of tensor terms. A
-reference can be subtracted from each line; an empty reference field leaves
-that predictor at the model default, so terms involving it drop out. With the
+reference can be subtracted from each line by giving reference values for its
+fixed axes; plotted axes keep their values. An empty reference field leaves
+that predictor at the model default, so terms involving it drop out, and
+leaves lag at its fixed value. With the
 Total composition, fixing `wlen` at one value, leaving its reference empty,
 and giving `repetition_index` the same reference as its fixed value gives the
 word-length effect at that repetition. Axes that are not varied start at lag 0
 and at their training means. Fixed and reference fields accept numbers or
 expressions such as `mean + 2 * sd`, and lag fields also accept `peak`,
-`peak-pos`, and `peak-neg`, as in visualization definitions. Effects are on
+`peak-pos`, and `peak-neg`, as in visualization definitions. A fixed lag of
+`peak-pointwise` or `peak-pointwise-neg` holds each point of the line at its
+own peak lag for the line's contrast, and adds a panel of those lags below the
+plot; **Peak timeline: never** under **Appearance** hides it. Effects are on
 the linear-predictor scale with pointwise or, under **Options**, simultaneous
 intervals.
 

@@ -1783,6 +1783,45 @@ stopifnot(
     ))
 )
 
+# lag: peak-pointwise holds each predictor value at its own peak lag and
+# records those lags with posterior intervals; the rendered figure adds a
+# panel of the peak lag over the predictor.
+yaml::write_yaml(list(
+    schema=1L, model='decay',
+    query=list(
+        terms='x', axes=list(lag='peak-pointwise', predictors=list(
+            x=list(grid='fitted', n=7L)
+        )),
+        uncertainty=list(peak_draws=50L), n=9L
+    ),
+    render=list(
+        geometry='line', mappings=list(x='x', y='estimate', color='term'),
+        formats='pdf'
+    )
+), file.path(project, 'definitions', 'visualizations', 'pointwise.yml'))
+pointwise_plan <- cdrgam_cli_plan(projects='test-project', visualizations='pointwise')
+cdrgam_cli_run(projects='test-project', visualizations='pointwise')
+pointwise_effect <- pointwise_plan$path[pointwise_plan$kind == 'effect']
+pointwise_grid <- readRDS(file.path(pointwise_effect, 'effect-grid.rds'))
+pointwise_peaks <- readRDS(file.path(pointwise_effect, 'effect-pointwise-peaks.rds'))
+pointwise_output <- file.path(
+    project, 'results', 'models', 'decay', 'visualizations', 'pointwise'
+)
+stopifnot(
+    nrow(pointwise_grid) == 7L, nrow(pointwise_peaks) == 7L,
+    isTRUE(all.equal(pointwise_grid$lag, pointwise_peaks$lag)),
+    isTRUE(all.equal(pointwise_grid$x, pointwise_peaks$x)),
+    all(is.finite(pointwise_grid$se)),
+    file.exists(file.path(pointwise_effect, 'effect-pointwise-peaks.csv')),
+    !file.exists(file.path(pointwise_effect, 'effect-peaks.rds')),
+    !simulating || all(
+        pointwise_peaks$lower <= pointwise_peaks$lag &
+            pointwise_peaks$lag <= pointwise_peaks$upper
+    ),
+    file.exists(file.path(pointwise_output, 'visualization.pdf')),
+    file.exists(file.path(pointwise_output, 'plot-pointwise.rds'))
+)
+
 comparison_plan <- cdrgam_cli_plan(
     projects='test-project', comparisons='alternatives'
 )

@@ -27,7 +27,8 @@
         fit, term, query, layer, training, peaks=new.env()
 ) {
     request <- .cdrgam_cli_term_request(
-        fit, term, query, training$impulses, training$responses, peaks
+        fit, term, query, training$impulses, training$responses, peaks,
+        layer$composition
     )
     # References need cdrgam > 0.2.0; omit the argument otherwise so that
     # other queries still run against older core releases.
@@ -46,6 +47,20 @@
         unconditional=query$uncertainty$unconditional,
         n=query$n
     ), reference)
+    direction <- .cdrgam_cli_pointwise_direction(query$axes$lag)
+    if (!is.null(direction)) {
+        value <- .cdrgam_cli_pointwise_effect(
+            fit, arguments[-1L], direction,
+            draws=.cdrgam_cli_null(query$uncertainty$peak_draws, .cdrgam_cli_peak_draws),
+            level=query$uncertainty$level
+        )
+        pointwise <- attr(value, 'pointwise_peaks')
+        pointwise$layer <- layer$id
+        return(list(
+            estimate=.cdrgam_cli_predictor_columns(value, term), test=NULL,
+            pointwise=.cdrgam_cli_predictor_columns(pointwise, term)
+        ))
+    }
     value <- do.call(.cdrgam_cli_core_estimate_effect, c(
         arguments, list(se=TRUE, level=query$uncertainty$level)
     ))
@@ -103,6 +118,7 @@
     })
     tables <- list()
     tests <- list()
+    pointwise <- list()
     peaks <- new.env()
     peaks$.catalog <- catalog
     for (layer in layers) {
@@ -114,7 +130,17 @@
                 value$test$layer <- rep.int(layer$id, nrow(value$test))
                 tests[[length(tests) + 1L]] <- value$test
             }
+            if (!is.null(value$pointwise)) {
+                pointwise[[length(pointwise) + 1L]] <- value$pointwise
+            }
         }
+    }
+    if (length(pointwise)) {
+        pointwise <- .cdrgam_cli_bind_tables(pointwise)
+        saveRDS(pointwise, file.path(stage, 'effect-pointwise-peaks.rds'), version=3)
+        utils::write.csv(
+            pointwise, file.path(stage, 'effect-pointwise-peaks.csv'), row.names=FALSE
+        )
     }
     if (isTRUE(query$test)) {
         utils::write.csv(
@@ -388,6 +414,41 @@
     plot + ggplot2::labs(x=strip$label, y=NULL) + .cdrgam_cli_ggplot_theme(strip$theme)
 }
 
+# Draw a pointwise-peak panel specification with ggplot2: each series' peak
+# lag as a line over its posterior interval band.
+.cdrgam_cli_ggplot_pointwise <- function(panel) {
+    rows <- panel$rows
+    by_color <- !is.null(panel$colors)
+    aesthetics <- function(...) .cdrgam_cli_ggplot_aes(
+        ..., colour=if (by_color) '.color', group='.series'
+    )
+    plot <- ggplot2::ggplot()
+    bounded <- rows[is.finite(rows$lower) & is.finite(rows$upper), , drop=FALSE]
+    if (nrow(bounded)) plot <- plot + .cdrgam_cli_ggplot_geom(
+        ggplot2::geom_ribbon, list(
+            data=bounded, mapping=.cdrgam_cli_ggplot_aes(
+                x='.x', ymin='lower', ymax='upper', fill=if (by_color) '.color',
+                group='.series'
+            ),
+            alpha=0.2, colour=NA
+        ), list(fill=if (by_color) NULL else 'black')
+    )
+    plot <- plot + .cdrgam_cli_ggplot_geom(ggplot2::geom_line, list(
+        data=rows, mapping=aesthetics(x='.x', y='lag'), linewidth=0.8
+    ), list(colour=if (by_color) NULL else 'black'))
+    if (by_color) plot <- plot + ggplot2::scale_colour_manual(
+        values=panel$colors, limits=names(panel$colors), guide='none',
+        aesthetics=c('colour', 'fill')
+    )
+    if (!identical(panel$x$kind, 'continuous')) {
+        plot <- plot + ggplot2::scale_x_continuous(
+            breaks=panel$x$breaks, labels=panel$x$labels
+        )
+    }
+    plot + ggplot2::labs(x=panel$labels$x, y=panel$labels$y) +
+        .cdrgam_cli_ggplot_theme(panel$theme)
+}
+
 # Stack ggplots into one gtable whose panels share left and right edges.
 # Each plot is padded on the left and right to the widest plot's axis and
 # legend widths. `heights` are relative. Grobs are built on a null device,
@@ -430,17 +491,30 @@
     output
 }
 
-# The rendered figure: the main plot alone, or with the peak strip below.
-.cdrgam_cli_peak_figure <- function(plot, data, peaks, definition) {
+# The rendered figure: the main plot alone (NULL), or with the
+# pointwise-peak panel and the peak strip below it.
+.cdrgam_cli_peak_figure <- function(plot, data, peaks, definition, pointwise=NULL) {
     strip <- .cdrgam_cli_figure_peaks(data, peaks, definition$render)
-    if (is.null(strip)) return(NULL)
-    drawn <- .cdrgam_cli_ggplot_peak_strip(strip)
-    if (!is.null(strip$xlim)) plot <- plot + ggplot2::coord_cartesian(xlim=strip$xlim)
+    panel <- .cdrgam_cli_figure_pointwise(data, pointwise, definition)
+    if (is.null(strip) && is.null(panel)) return(NULL)
+    plots <- list(plot)
+    heights <- 1
+    drawn_panel <- if (!is.null(panel)) .cdrgam_cli_ggplot_pointwise(panel)
+    if (!is.null(drawn_panel)) {
+        plots <- c(plots, list(drawn_panel))
+        heights <- c(heights, 0.45)
+    }
+    drawn_strip <- if (!is.null(strip)) .cdrgam_cli_ggplot_peak_strip(strip)
+    if (!is.null(drawn_strip)) {
+        if (!is.null(strip$xlim)) {
+            plots[[1L]] <- plots[[1L]] + ggplot2::coord_cartesian(xlim=strip$xlim)
+        }
+        plots <- c(plots, list(drawn_strip))
+        heights <- c(heights, min(0.6, 0.1 + 0.05 * length(strip$lanes)))
+    }
     list(
-        strip=drawn,
-        figure=.cdrgam_cli_stack_plots(
-            list(plot, drawn), c(1, min(0.6, 0.1 + 0.05 * length(strip$lanes)))
-        )
+        strip=drawn_strip, pointwise=drawn_panel,
+        figure=.cdrgam_cli_stack_plots(plots, heights)
     )
 }
 
@@ -470,14 +544,19 @@
     data <- readRDS(file.path(item$effect$output, 'effect-grid.rds'))
     peaks_path <- file.path(item$effect$output, 'effect-peaks.rds')
     peaks <- if (file.exists(peaks_path)) readRDS(peaks_path) else NULL
+    pointwise_path <- file.path(item$effect$output, 'effect-pointwise-peaks.rds')
+    pointwise <- if (file.exists(pointwise_path)) readRDS(pointwise_path) else NULL
     if (identical(item$definition$render$statistic, 'peak-lag')) {
         data <- .cdrgam_cli_peak_data(peaks)
     }
     plot <- .cdrgam_cli_visualization_plot(data, item$definition)
     saveRDS(plot, file.path(stage, 'plot.rds'), version=3)
-    figure <- .cdrgam_cli_peak_figure(plot, data, peaks, item$definition)
-    if (!is.null(figure)) {
+    figure <- .cdrgam_cli_peak_figure(plot, data, peaks, item$definition, pointwise)
+    if (!is.null(figure$strip)) {
         saveRDS(figure$strip, file.path(stage, 'plot-peaks.rds'), version=3)
+    }
+    if (!is.null(figure$pointwise)) {
+        saveRDS(figure$pointwise, file.path(stage, 'plot-pointwise.rds'), version=3)
     }
     paths <- .cdrgam_cli_save_ggplot(
         if (is.null(figure)) plot else figure$figure, stage, item$definition$render

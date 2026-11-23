@@ -35,6 +35,25 @@
 - **Show render YAML** in the viewer prints its appearance settings as a
   `render` block for a visualization definition.
 
+- `lag: peak-pointwise` and `peak-pointwise-neg` hold each evaluation point
+  at its own peak lag: the lag where the query's effect, after its reference
+  subtraction, is largest or smallest at that point. Effect artifacts record
+  the lags in `effect-pointwise-peaks.csv` with posterior intervals, and line
+  and point plots, rendered and in the viewer, add a panel of peak lag over
+  the x-axis. This needs `estimate_effect(points=)` from the development
+  cdrgam.
+
+- Under `composition: total`, and the viewer's Total composition, `peak`
+  and `peak-neg` locate the peak of the total response to a one-SD increase
+  rather than of the term alone. An interaction's peak now matches the curve
+  its lines show. Peak tables gain a `composition` column.
+
+- The viewer's reference fields cover only the fixed axes, lag included;
+  a plotted axis keeps its value in the reference. Previously each plotted
+  predictor was set to its model default, which dropped the term from the
+  reference. While a line is being edited, **Update line** and **Cancel**
+  replace **Add line**.
+
 - The peak timeline keeps its lane order when only some peaks have
   posterior draws; a lane without draws was drawn at the top.
 

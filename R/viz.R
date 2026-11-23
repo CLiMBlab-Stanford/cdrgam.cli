@@ -127,9 +127,13 @@
     )
 }
 
-.cdrgam_cli_viz_peak <- function(fit, term, cache=new.env(), n=200L) {
+.cdrgam_cli_viz_peak <- function(
+        fit, term, cache=new.env(), n=200L, composition='term'
+) {
     if (is.null(fit) || is.null(term$catalog)) return(NULL)
-    .cdrgam_cli_peak_function(fit, term$catalog, n=n, cache=cache)
+    .cdrgam_cli_peak_function(
+        fit, term$catalog, n=n, cache=cache, composition=composition
+    )
 }
 
 # Build an estimate_effect() axis request. Varying axes span the fitted domain
@@ -158,6 +162,9 @@
             return(list(grid='fitted', n=as.integer(n)))
         }
         value <- fixed[[name]]
+        # A pointwise peak is located by .cdrgam_cli_pointwise_effect().
+        if (identical(name, 'lag') &&
+                !is.null(.cdrgam_cli_pointwise_direction(value))) return(NULL)
         if (is.null(value) || (length(value) == 1L && is.na(value))) {
             value <- .cdrgam_cli_viz_default(name)
             if (identical(value, 'mean') && !is.finite(axis$mean)) value <- 'median'
@@ -169,7 +176,7 @@
         list(at=value)
     })
     names(output) <- names(term$axes)
-    output
+    Filter(Negate(is.null), output)
 }
 
 # Evaluate one line or surface specification. `spec` holds term, varying,
@@ -187,8 +194,9 @@
         grouping <- 'population'
         groups <- NULL
     }
+    composition <- .cdrgam_cli_null(spec$composition, 'term')
     peaks <- new.env()
-    peak <- .cdrgam_cli_viz_peak(fit, term, peaks, n)
+    peak <- .cdrgam_cli_viz_peak(fit, term, peaks, n, composition)
     # Pass reference only when set, so that older cores without the argument
     # still evaluate ordinary lines.
     resolved <- if (length(spec$reference)) stats::setNames(lapply(
@@ -197,9 +205,8 @@
         }
     ), names(spec$reference)) else NULL
     reference <- if (length(resolved)) list(reference=resolved) else list()
-    composition <- .cdrgam_cli_null(spec$composition, 'term')
     unconditional <- isTRUE(options$unconditional)
-    value <- do.call(.cdrgam_cli_core_estimate_effect, c(list(
+    arguments <- c(list(
         fit,
         terms=term$label,
         axes=.cdrgam_cli_viz_axes(
@@ -207,9 +214,23 @@
             .cdrgam_cli_null(spec$ranges, list()), fit, peak
         ),
         composition=composition,
-        grouping=grouping, groups=groups, se=TRUE,
-        unconditional=unconditional, level=level, n=n
-    ), reference))
+        grouping=grouping, groups=groups,
+        unconditional=unconditional, n=n
+    ), reference)
+    direction <- .cdrgam_cli_pointwise_direction(spec$fixed$lag)
+    if (!is.null(direction)) {
+        if (identical(options$interval, 'simultaneous')) .cdrgam_cli_abort(
+            'A pointwise peak lag needs pointwise intervals'
+        )
+        value <- .cdrgam_cli_pointwise_effect(
+            fit, arguments[-1L], direction, draws=.cdrgam_cli_peak_draws, level=level
+        )
+        attr(value, 'peaks') <- NULL
+        return(value)
+    }
+    value <- do.call(.cdrgam_cli_core_estimate_effect, c(
+        arguments, list(se=TRUE, level=level)
+    ))
     if (identical(options$interval, 'simultaneous')) {
         value <- .cdrgam_cli_simultaneous_band(fit, value, list(
             term=term$label, axes_names=names(term$axes), reference=resolved,

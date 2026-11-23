@@ -535,4 +535,57 @@ if (requireNamespace('plotly', quietly=TRUE)) {
     )
 }
 
+# The pointwise-peak panel: each line's peak lag over the main x-axis, in
+# the line's color, with its interval band. ggplot2 and plotly draw the same
+# values, and the rendered figure stacks it under the main plot.
+pointwise_data <- expand.grid(x=c(-1, 0, 2), term=c('a', 'b'), stringsAsFactors=FALSE)
+pointwise_data <- transform(pointwise_data, lag=0.5, estimate=x, se=0.1,
+    lower=x - 0.2, upper=x + 0.2, group=NA_character_, layer='estimate',
+    term_id=term)
+pointwise_table <- transform(pointwise_data[c('term', 'x', 'layer')],
+    lag=c(0, 0.2, 0.4, 1, 1.2, 1.4), lower=c(0, 0.1, 0.3, 0.9, 1, 1.3),
+    upper=c(0.1, 0.3, 0.5, 1.1, 1.4, 1.5))
+for (spacing in list(NULL, 'uniform')) {
+    render <- validated(Filter(Negate(is.null), list(
+        geometry='line', mappings=list(x='x', y='estimate', color='term'),
+        palette='Set1', spacing=spacing
+    )))
+    definition <- list(render=render)
+    panel <- internal('.cdrgam_cli_figure_pointwise')(
+        pointwise_data, pointwise_table, definition
+    )
+    expected_x <- if (is.null(spacing)) c(-1, 0, 2) else 1:3
+    stopifnot(
+        identical(panel$rows$.x, rep(expected_x, 2L)),
+        identical(panel$rows$lag, pointwise_table$lag),
+        identical(names(panel$colors), c('a', 'b'))
+    )
+    drawn <- ggplot2::ggplot_build(internal('.cdrgam_cli_ggplot_pointwise')(panel))
+    lines <- drawn$data[[2L]]
+    traces <- plotly::plotly_build(internal('.cdrgam_cli_plotly_pointwise')(panel))$x$data
+    plotted <- Filter(function(trace) identical(trace$mode, 'lines') &&
+        is.null(trace$fill), traces)
+    stopifnot(
+        isTRUE(all.equal(sort(lines$y), sort(pointwise_table$lag))),
+        isTRUE(all.equal(sort(unlist(lapply(plotted, `[[`, 'y'))),
+            sort(pointwise_table$lag))),
+        identical(toupper(unname(panel$colors)),
+            toupper(substr(unique(lines$colour), 1L, 7L)))
+    )
+    figure <- internal('.cdrgam_cli_peak_figure')(
+        internal('.cdrgam_cli_visualization_plot')(pointwise_data, definition),
+        pointwise_data, NULL, definition, pointwise_table
+    )
+    stopifnot(
+        inherits(figure$pointwise, 'ggplot'), is.null(figure$strip),
+        inherits(figure$figure, 'gtable'), nrow(figure$figure$layout) == 2L
+    )
+}
+never <- list(render=validated(list(
+    geometry='line', mappings=list(x='x', y='estimate', color='term'), peaks='never'
+)))
+stopifnot(is.null(internal('.cdrgam_cli_figure_pointwise')(
+    pointwise_data, pointwise_table, never
+)))
+
 cat('render: ok\n')

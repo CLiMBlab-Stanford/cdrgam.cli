@@ -121,6 +121,76 @@ stopifnot(
     identical(own, peak), identical(borrowed, expected),
     grepl('the fit has no term nope; terms with a lag axis:', unknown_peak, fixed=TRUE)
 )
+# Under total composition the peak is that of the total response to a
+# one-SD increase, the curve a total line shows, and a line records it.
+total_request <- internal('.cdrgam_cli_peak_request')(tensor$catalog, 41L, 'total')
+total_curve <- do.call(cdrgam::estimate_effect, c(list(fit, se=FALSE), total_request))
+total_peak <- internal('.cdrgam_cli_effect_peak')(
+    fit, tensor$catalog, 'pos', n=41L, composition='total'
+)
+total_line <- internal('.cdrgam_cli_viz_estimate')(fit, tensor, list(
+    term='x:z', varying='x', fixed=list(lag='peak', z='mean'), composition='total'
+), list(n=41L))
+stopifnot(
+    identical(total_request$composition, 'total'),
+    identical(total_peak, total_curve$lag[[which.max(total_curve$estimate)]]),
+    identical(attr(total_line, 'peaks')$composition, 'total'),
+    isTRUE(all.equal(unique(total_line$lag), total_peak))
+)
+# peak-pointwise holds each point at the lag where the line's own contrast
+# (here z = 1 against z = 0) peaks at that point's x. Estimates and standard
+# errors are those at the chosen (x, lag) pairs, and each point's peak has a
+# posterior interval.
+pointwise_spec <- list(
+    term='x:z', varying='x', fixed=list(lag='peak-pointwise', z=1),
+    reference=list(z=0), composition='total'
+)
+pointwise_line <- internal('.cdrgam_cli_viz_estimate')(
+    fit, tensor, pointwise_spec, list(n=15L)
+)
+pointwise <- attr(pointwise_line, 'pointwise_peaks')
+search <- cdrgam::estimate_effect(
+    fit, terms='x:z', composition='total', n=15L, se=FALSE,
+    axes=list(lag=list(grid='fitted', n=15L), x=list(grid='fitted', n=15L), z=list(at=1)),
+    reference=list(z=0)
+)
+expected_lags <- vapply(split(search, search$x), function(rows) {
+    rows$lag[[which.max(rows$estimate)]]
+}, numeric(1))
+direct <- cdrgam::estimate_effect(
+    fit, terms='x:z', composition='total', reference=list(z=0),
+    points=data.frame(x=pointwise_line$x, lag=pointwise_line$lag, z=1)
+)
+stopifnot(
+    nrow(pointwise_line) == 15L, nrow(pointwise) == 15L,
+    isTRUE(all.equal(unname(expected_lags[as.character(pointwise_line$x)]),
+        pointwise_line$lag)),
+    isTRUE(all.equal(pointwise_line$estimate, direct$estimate)),
+    isTRUE(all.equal(pointwise_line$se, direct$se)),
+    is.null(attr(pointwise_line, 'peaks')),
+    identical(pointwise$direction, rep('pos', 15L))
+)
+if ('simulate_effect' %in% getNamespaceExports('cdrgam')) stopifnot(
+    all(pointwise$lower <= pointwise$lag & pointwise$lag <= pointwise$upper)
+)
+# peak-pointwise is a whole fixed-lag value only: not a reference, not part
+# of an expression, and not with simultaneous intervals.
+input_value <- internal('.cdrgam_cli_viz_input_value')
+pointwise_errors <- c(
+    tryCatch(input_value('peak-pointwise', 'lag'), error=conditionMessage),
+    tryCatch(input_value('peak-pointwise + 1', 'lag', pointwise=TRUE),
+        error=conditionMessage),
+    tryCatch(internal('.cdrgam_cli_viz_estimate')(
+        fit, tensor, pointwise_spec, list(n=5L, interval='simultaneous')
+    ), error=conditionMessage)
+)
+stopifnot(
+    identical(input_value('peak-pointwise-neg', 'lag', pointwise=TRUE),
+        'peak-pointwise-neg'),
+    grepl('may only be the whole value of a fixed lag', pointwise_errors[[1L]], fixed=TRUE),
+    grepl('may only be the whole value of a fixed lag', pointwise_errors[[2L]], fixed=TRUE),
+    identical(pointwise_errors[[3L]], 'A pointwise peak lag needs pointwise intervals')
+)
 # A line held at a peak carries that peak, with posterior draws whose
 # central interval contains it. The static strip stacks under the main plot
 # when peaks differ, and saves to every format.
@@ -219,9 +289,20 @@ stopifnot(
     all(is.na(default_line$x_reference)),
     isTRUE(all.equal(default_line$estimate, line$estimate, tolerance=1e-10))
 )
-stopifnot(identical(
-    internal('.cdrgam_cli_viz_reference_axes')(tensor), c('x', 'z')
-))
+# Only fixed axes take reference values; a varying axis keeps its plotted
+# value. An empty lag field keeps lag at its fixed value.
+stopifnot(
+    identical(internal('.cdrgam_cli_viz_reference_axes')(tensor, 'x'), c('lag', 'z')),
+    identical(internal('.cdrgam_cli_viz_reference_axes')(tensor, c('lag', 'x')), 'z'),
+    identical(
+        internal('.cdrgam_cli_viz_reference_values')(list(lag=NA_real_, z=NA_real_)),
+        list(z=NA_real_)
+    ),
+    identical(
+        internal('.cdrgam_cli_viz_reference_values')(list(lag='peak')), list(lag='peak')
+    ),
+    is.null(internal('.cdrgam_cli_viz_reference_values')(list(lag=NA_real_)))
+)
 contrast_spec <- list(
     model_id='viz-test/tensor', term='x:z', varying='x', fixed=list(lag=0.2, z=1),
     composition='total', grouping='population', reference=list(x=NA_real_, z=0)
@@ -296,6 +377,22 @@ if (all(vapply(c('shiny', 'plotly', 'bslib'), requireNamespace, logical(1), quie
         is.null(internal('.cdrgam_cli_viz_peak_strip')(strip_entries[1L]))
     )
     invisible(plotly::plotly_build(internal('.cdrgam_cli_viz_line_plot')(strip_entries)))
+    # A line at peak-pointwise adds a panel of its peak lag over x, which
+    # shares the main x-axis; render.peaks never removes it.
+    pointwise_entries <- list(
+        list(spec=list(id='p', label='p', varying='x'), data=pointwise_line)
+    )
+    with_panel <- plotly::plotly_build(
+        internal('.cdrgam_cli_viz_line_plot')(pointwise_entries)
+    )$x$layout
+    without_panel <- plotly::plotly_build(internal('.cdrgam_cli_viz_line_plot')(
+        pointwise_entries, settings=list(peaks='never')
+    ))$x$layout
+    stopifnot(
+        identical(title_text(with_panel$yaxis2$title), 'Peak lag'),
+        identical(with_panel$xaxis2$matches, 'x'),
+        is.null(without_panel$yaxis2)
+    )
     invisible(plotly::plotly_build(internal('.cdrgam_cli_viz_line_plot')(list(
         list(spec=list(id='a', label='a', varying='x'), data=line)
     ))))
@@ -332,6 +429,15 @@ if (all(vapply(c('shiny', 'plotly', 'bslib'), requireNamespace, logical(1), quie
             identical(lines()[[3L]]$reference, list(x=NA_real_, z=0)),
             'z_reference' %in% names(plotted()$entries[[3L]]$data)
         )
+        # Editing a line replaces Add line with Update line and Cancel.
+        stopifnot(grepl('add_line', output$line_buttons$html, fixed=TRUE))
+        session$setInputs(edit_line=lines()[[3L]]$id)
+        stopifnot(
+            grepl('update_line', output$line_buttons$html, fixed=TRUE),
+            !grepl('add_line', output$line_buttons$html, fixed=TRUE)
+        )
+        session$setInputs(cancel_edit=1)
+        stopifnot(grepl('add_line', output$line_buttons$html, fixed=TRUE))
         session$setInputs(use_reference=FALSE, remove_line=lines()[[3L]]$id)
         # Appearance inputs reach the plot: bars at uniform ticks, a
         # palette that is too small for the lines is shown as an error, and

@@ -494,9 +494,12 @@ reference:
 
 Lag values may also use `peak` or `peak-pos`, the lag at which a term's
 response is largest, and `peak-neg`, the lag at which it is smallest, over
-the fitted lag domain. The response used is the term alone with each of its
-predictors at the mean plus one SD, minus the term at the means, and with
-other axes at their training means; for `irf(1)` it is `irf(1)` itself.
+the fitted lag domain. The response used is the effect, under the layer's
+`composition`, with each of the term's predictors at the mean plus one SD,
+minus the effect at the means, and with other axes at their training means.
+Under `term` it is the term alone, and for `irf(1)` it is `irf(1)` itself.
+Under `total` the lower-order terms count too, so an interaction's peak is
+that of the total response its lines show.
 Expressions are resolved separately for each selected term, so `"*"` entries
 use each predictor's own summaries and each term's own peak. To hold every
 term at the same lag, name the term whose peak to use: `peak(irf(1))`,
@@ -506,6 +509,19 @@ named term must have a lag axis. A `"*"`
 reference applies to every predictor of a term that has no reference of its
 own; a term without predictors, such as `irf(1)`, gets no reference.
 Expressions fail at evaluation when the fit stores no summary for the axis.
+
+`lag: peak-pointwise` instead holds each evaluation point at its own lag: the
+lag where the evaluated effect, after the `reference` subtraction and under the
+layer's `composition`, is largest at that point's other axis values.
+`peak-pointwise-neg` takes the smallest. Without a reference, the effect itself
+is used. Unlike `peak`, the lag can change along a line, and it follows the
+query's own fixed and reference values rather than a one-SD contrast. The peak
+at each point is found on a lag grid of `n` points; estimates and intervals are
+then evaluated at each point's (value, lag) pair. Either keyword must be the
+whole lag value, as a string or as `at`. It cannot appear in an expression, in
+a range or list of values, or in a reference, and it requires
+`uncertainty.kind: pointwise` and no `test`. It needs a cdrgam release whose
+`estimate_effect()` accepts `points`.
 
 `reference` subtracts the same effect evaluated at reference values of some
 axes. Axes not named in `reference` keep their evaluated values. Each entry
@@ -556,6 +572,11 @@ It reports this value in a `critical_value` column. The cost is one extra
 core evaluation per covariance point and reference value, for example 81 for
 a 40-point lag curve with a predictor reference. Reference predictors must
 have values; `default` is not supported.
+
+With `peak-pointwise`, the effect artifact has `effect-pointwise-peaks.csv`
+(and `.rds`), with one row per evaluated point: its term, layer, group, axis
+values, direction, peak `lag`, and the central `level` interval of the peak
+lags of `uncertainty.peak_draws` posterior draws of the search grid.
 
 When any value uses a peak, the effect artifact also has `effect-peaks.csv`
 (and `.rds`). It has one row per term, peak term, and direction, with the
@@ -651,6 +672,12 @@ timeline shares the plot's x-axis when that axis is `lag` and the plot has
 no facets and uniform spacing is not set; otherwise it has its own lag
 axis. The viewer draws the same
 timeline under its line plots.
+
+When the query uses `peak-pointwise`, a line or point plot also gets a panel
+below the main plot with each line's peak lag over the main x-axis and its
+interval band, in the line's color. `peaks: never` removes it. The panel is
+not drawn for faceted plots or a categorical x-axis. The viewer draws the same
+panel, saved separately as `plot-pointwise.rds` in rendered visualizations.
 
 The `cdrgam viz` viewer draws from the same plot description as rendered
 files, so a render setting looks the same in both. Its **Appearance** panel

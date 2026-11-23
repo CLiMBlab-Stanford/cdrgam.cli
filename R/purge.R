@@ -161,7 +161,9 @@ cdrgam_cli_purge <- function(
             ), use.names=FALSE))
         }
         project_targets <- c(project_targets, .cdrgam_cli_purge_work_targets(
-            definitions, project_targets
+            definitions, project_targets,
+            archives=workload_selected && isTRUE(work),
+            logs=workload_selected && isTRUE(logs)
         ))
         project_registry_keys <- if (!workload_selected) {
             .cdrgam_cli_registry_keys_for_project(
@@ -174,9 +176,14 @@ cdrgam_cli_purge <- function(
         }
         registry_keys <- c(registry_keys, project_registry_keys)
         targets <- c(targets, project_targets)
-        for (kind in c(if (work) 'work', if (logs) 'log')) {
-            directory <- .cdrgam_cli_path(definitions, kind)
-            if (dir.exists(directory)) targets <- c(targets, directory)
+        # With a workload selector, `--work` and `--logs` are limited to the
+        # selected work items above. Only a project-wide purge removes the
+        # whole work and log directories.
+        if (!workload_selected) {
+            for (kind in c(if (work) 'work', if (logs) 'log')) {
+                directory <- .cdrgam_cli_path(definitions, kind)
+                if (dir.exists(directory)) targets <- c(targets, directory)
+            }
         }
     }
     targets <- unique(targets[file.exists(targets)])
@@ -272,15 +279,42 @@ cdrgam_cli_purge <- function(
     if (length(response)) response[[1L]] else ''
 }
 
-# Private attempt directories are named `<kind>_<name>` beneath the work root.
-# Return the existing directories that belong to work items whose generated
-# artifacts are selected, so a purge cannot leave a failed attempt (and its
-# optimizer checkpoints) to be resumed by the next run.
-.cdrgam_cli_purge_work_targets <- function(definitions, targets) {
-    root <- .cdrgam_cli_path(definitions, 'work')
-    if (!length(targets) || !dir.exists(root)) return(character())
-    existing <- basename(list.dirs(root, recursive=FALSE, full.names=TRUE))
-    if (!length(existing)) return(character())
+# Work item files are keyed by work-item kind and name. A live attempt
+# directory is `work/<kind>_<name>`, an artifact moved aside on republication
+# is `work/archive/<kind>_<name>_<identity>`, and the item log is
+# `logs/<kind>/<name>.log`. Return the existing files that belong to work items
+# whose generated artifacts are selected, so a purge cannot leave a failed
+# attempt (and its optimizer checkpoints) to be resumed by the next run.
+# Archived artifacts and logs are returned only when `archives` or `logs` is
+# TRUE.
+.cdrgam_cli_purge_work_targets <- function(
+        definitions, targets, archives=FALSE, logs=FALSE
+) {
+    if (!length(targets)) return(character())
+    work_root <- .cdrgam_cli_path(definitions, 'work')
+    archive_root <- .cdrgam_cli_path(definitions, 'work', name='archive')
+    log_root <- .cdrgam_cli_path(definitions, 'log')
+    list_names <- function(directory, directories=TRUE) {
+        if (!dir.exists(directory)) return(character())
+        if (directories) {
+            basename(list.dirs(directory, recursive=FALSE, full.names=TRUE))
+        } else {
+            list.files(directory, all.files=TRUE, no..=TRUE)
+        }
+    }
+    existing <- list_names(work_root)
+    archived <- if (archives) list_names(archive_root) else character()
+    logged <- list()
+    if (logs) {
+        for (kind in list_names(log_root)) {
+            files <- list_names(file.path(log_root, kind), directories=FALSE)
+            files <- files[endsWith(files, '.log')]
+            logged[[kind]] <- substring(files, 1L, nchar(files) - 4L)
+        }
+    }
+    if (!length(existing) && !length(archived) && !length(logged)) {
+        return(character())
+    }
     # The central path builder returns normalized paths, so only the targets
     # need normalizing. Normalizing once keeps this linear in the number of
     # candidates.
@@ -292,50 +326,65 @@ cdrgam_cli_purge <- function(
         any(path == normalized_targets |
             startsWith(path, paste0(normalized_targets, '/')))
     }
+    hex <- function(value) grepl('^[0-9a-f]+$', value)
     # Work items are named from their workload; list the expected names as
-    # strings and build artifact paths only for work directories that exist.
+    # strings and build artifact paths only for work items that left files.
     # Projects with many models and datasets otherwise build thousands of
     # paths, each of which touches the file system.
     models <- names(definitions$models)
     candidates <- list()
-    add <- function(name, artifact) {
-        candidates[[length(candidates) + 1L]] <<- list(name=name, artifact=artifact)
+    add <- function(kind, name, artifact) {
+        candidates[[length(candidates) + 1L]] <<- list(
+            kind=kind, name=name, artifact=artifact
+        )
     }
     for (model_name in models) {
-        add(paste0('fit_', model_name), list('model', model_name))
+        add('fit', model_name, list('model', model_name))
         model <- definitions$models[[model_name]]
         for (dataset_name in unique(c(
                 names(model$datasets), names(definitions$datasets)))) {
             add(
-                paste('prediction', model_name, dataset_name, sep='_'),
+                'prediction', paste(model_name, dataset_name, sep='_'),
                 list('prediction', model_name, dataset_name)
             )
         }
     }
     for (name in names(definitions$visualizations)) {
         add(
-            paste0('visualization_', name),
+            'visualization', name,
             list('visualization', definitions$visualizations[[name]]$model, name)
         )
     }
     for (name in names(definitions$comparisons)) {
-        add(paste0('comparison_', name), list('comparison', name))
+        add('comparison', name, list('comparison', name))
     }
     # Effect items are named `<model>_<request hash>`; their outputs live
     # under the model, so they are selected exactly when the model is.
+    effect_names <- unique(c(
+        sub('^effect_', '', existing[startsWith(existing, 'effect_')]),
+        sub('^effect_(.*)_[0-9a-f]+$', '\\1',
+            archived[grepl('^effect_.*_[0-9a-f]+$', archived)]),
+        logged[['effect']]
+    ))
     for (model_name in models) {
-        prefix <- paste0('effect_', model_name, '_')
-        matches <- existing[startsWith(existing, prefix) & grepl(
-            '^[0-9a-f]+$', substring(existing, nchar(prefix) + 1L)
-        )]
-        for (name in matches) add(name, list('model', model_name))
+        prefix <- paste0(model_name, '_')
+        matches <- effect_names[startsWith(effect_names, prefix) &
+            hex(substring(effect_names, nchar(prefix) + 1L))]
+        for (name in matches) add('effect', name, list('model', model_name))
     }
     names_seen <- character()
     artifact_selected <- new.env(parent=emptyenv())
     output <- character()
     for (candidate in candidates) {
-        if (!(candidate$name %in% existing) || candidate$name %in% names_seen) next
-        names_seen <- c(names_seen, candidate$name)
+        item <- paste(candidate$kind, candidate$name, sep='_')
+        if (item %in% names_seen) next
+        names_seen <- c(names_seen, item)
+        has_work <- item %in% existing
+        archive_prefix <- paste0(item, '_')
+        archive_matches <- archived[startsWith(archived, archive_prefix) &
+            hex(substring(archived, nchar(archive_prefix) + 1L))]
+        has_log <- candidate$name %in% logged[[candidate$kind]]
+        if (!has_work && !length(archive_matches) && !has_log) next
         artifact <- candidate$artifact
         key <- paste(unlist(artifact), collapse='\034')
         if (!exists(key, envir=artifact_selected, inherits=FALSE)) {
@@ -352,9 +401,18 @@ cdrgam_cli_purge <- function(
             )
             assign(key, selected(path), envir=artifact_selected)
         }
-        if (get(key, envir=artifact_selected, inherits=FALSE)) {
+        if (!get(key, envir=artifact_selected, inherits=FALSE)) next
+        if (has_work) {
+            output <- c(output, .cdrgam_cli_path(definitions, 'work', name=item))
+        }
+        for (entry in archive_matches) {
             output <- c(output, .cdrgam_cli_path(
-                definitions, 'work', name=candidate$name
+                definitions, 'work', name='archive', identity=entry
+            ))
+        }
+        if (has_log) {
+            output <- c(output, .cdrgam_cli_work_log_path(
+                definitions, candidate$kind, candidate$name
             ))
         }
     }

@@ -2150,6 +2150,40 @@ stopifnot(
     any(vapply(work_preview, same_path, logical(1), right=work_root)),
     any(under_path(work_preview, file.path(project, 'results')))
 )
+# With a model selector, --work and --logs select only that model's archived
+# artifacts and logs, never the whole work or log directory or files that
+# belong to another model, including one whose name extends the selected name.
+log_root <- file.path(project, '.cdrgam', 'logs')
+scoped_files <- c(
+    file.path(work_root, 'archive', 'fit_decay_0123abcd'),
+    file.path(work_root, 'archive', 'fit_decay-two_0123abcd'),
+    file.path(log_root, 'fit', 'decay.log'),
+    file.path(log_root, 'fit', 'decay-two.log')
+)
+scoped_created <- scoped_files[!file.exists(scoped_files)]
+for (path in scoped_created[!endsWith(scoped_created, '.log')]) {
+    dir.create(path, recursive=TRUE)
+}
+for (path in scoped_created[endsWith(scoped_created, '.log')]) {
+    dir.create(dirname(path), recursive=TRUE, showWarnings=FALSE)
+    writeLines('log', path)
+}
+scoped_preview <- cdrgam_cli_purge(
+    projects='test-project', models='decay', work=TRUE, logs=TRUE, force=FALSE
+)
+scoped_has <- function(path) {
+    any(vapply(scoped_preview, same_path, logical(1), right=path))
+}
+stopifnot(
+    !scoped_has(work_root),
+    !scoped_has(log_root),
+    !scoped_has(file.path(work_root, 'archive')),
+    scoped_has(scoped_files[[1L]]),
+    !scoped_has(scoped_files[[2L]]),
+    scoped_has(scoped_files[[3L]]),
+    !scoped_has(scoped_files[[4L]])
+)
+unlink(scoped_created, recursive=TRUE)
 
 model_definition$formula <- paste0(model_definition$formula, ' + 0')
 yaml::write_yaml(

@@ -1,5 +1,11 @@
 # cdrgam.cli (development version)
 
+- `cdrgam purge --work --logs` with a workload selector removes only the
+  selected work items' attempts, archived artifacts, and logs. It previously
+  removed the project's entire work and log directories, including files
+  that belonged to other models. Without a workload selector, both options
+  still remove the whole directories.
+
 - Visualizations accept `geometry: point`, which draws estimates as points
   with error bars, and `geometry: bar`, which draws them as bars with error
   bars. `interval: errorbar` is their default. Series at one x position are

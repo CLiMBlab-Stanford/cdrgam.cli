@@ -196,12 +196,25 @@
             definitions, value$model, selector, fit, fingerprints
         )
     })
-    effect <- if (is.null(value$kind)) {
+    lines <- value$lines
+    # Each line is its own effect, so lines shared between visualizations
+    # are evaluated once.
+    effects <- if (!is.null(lines)) lapply(lines, function(line) {
+        line_fit <- if (identical(line$model, value$model)) fit else {
+            .cdrgam_cli_fit_item(definitions, line$model, fingerprints)
+        }
+        .cdrgam_cli_effect_item(
+            definitions, line$model, list(query=line$query), line_fit, fingerprints
+        )
+    })
+    effect <- if (is.null(value$kind) && is.null(lines)) {
         .cdrgam_cli_effect_item(
             definitions, value$model, value, fit, fingerprints
         )
     } else NULL
-    inputs <- if (is.null(effect)) c(
+    inputs <- if (!is.null(effects)) {
+        list(effects=lapply(effects, function(item) item$resolved_identity$resolved))
+    } else if (is.null(effect)) c(
         list(model=fit$resolved_identity$resolved),
         lapply(predictions, function(item) item$resolved_identity$resolved)
     ) else list(effect=effect$resolved_identity$resolved)
@@ -209,6 +222,9 @@
     if (!is.null(effect)) {
         presentation$query <- NULL
         presentation$layers <- NULL
+    }
+    if (!is.null(effects)) {
+        presentation$lines <- lapply(lines, function(line) line[c('id', 'label')])
     }
     identity <- .cdrgam_cli_visualization_identity(presentation, inputs)
     key <- paste(
@@ -219,10 +235,13 @@
         key=key, kind='visualization', project=definitions$project$project$name,
         name=name, model_name=value$model, identity=identity$identity,
         resolved_identity=identity,
-        dependencies=if (is.null(effect)) {
+        dependencies=if (!is.null(effects)) {
+            unique(vapply(effects, `[[`, character(1), 'key'))
+        } else if (is.null(effect)) {
             c(fit$key, vapply(predictions, `[[`, character(1), 'key'))
         } else effect$key,
-        definition=value, fit=fit, effect=effect, predictions=predictions,
+        definition=value, fit=fit, effect=effect, effects=effects,
+        predictions=predictions,
         output=.cdrgam_cli_path(
             definitions, 'visualization', value$model, dataset=name
         )
@@ -300,7 +319,9 @@
         item$kind,
         prediction=list(item$fit),
         effect=list(item$fit),
-        visualization=if (is.null(item$effect)) {
+        visualization=if (!is.null(item$effects)) {
+            item$effects
+        } else if (is.null(item$effect)) {
             c(list(item$fit), item$predictions)
         } else list(item$effect),
         comparison=item$predictions,

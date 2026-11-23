@@ -112,7 +112,7 @@ render_errors <- list(
     line_peak=list(
         geometry='line', mappings=list(x='lag', y='estimate'), statistic='peak-lag'
     ),
-    bad_theme=list(geometry='line', mappings=list(x='lag', y='estimate'), theme='dark'),
+    bad_theme=list(geometry='line', mappings=list(x='lag', y='estimate'), theme='neon'),
     bad_palette=list(geometry='line', mappings=list(x='lag', y='estimate'), palette='nope'),
     bad_gradient=list(
         geometry='line', mappings=list(x='lag', y='estimate'),
@@ -195,7 +195,7 @@ expected <- list(
         unknown_field=paste0(
             'render contains unknown field: size. Allowed fields: geometry, mapping',
             's, interval, theme, formats, width, height, dpi, title, xlab, ylab, pa',
-            'lette, scales, peaks, spacing, statistic'
+            'lette, scales, peaks, spacing, statistic, y_zero'
         ),
         bad_geometry=paste0(
             'render.geometry must be one of line, point, bar, raster, contour, rast',
@@ -218,7 +218,10 @@ expected <- list(
         surface_spacing='render.spacing requires line, point, or bar geometry',
         bad_statistic='render.statistic must be one of estimate, peak-lag',
         line_peak='render.statistic peak-lag requires point or bar geometry',
-        bad_theme='render.theme must be one of paper, minimal, slides',
+        bad_theme=paste0(
+            'render.theme must be one of paper, slides, grey, gray, bw, linedraw, ',
+            'light, dark, minimal, classic, void, test'
+        ),
         bad_palette=paste0(
             'render.palette must be default, rainbow, grey, okabe-ito, a viridis op',
             'tion (magma, inferno, plasma, viridis, cividis, rocket, mako, turbo), ',
@@ -242,6 +245,21 @@ expected <- list(
         not_mapping='render must be a mapping'
     )
 )
+
+# y_zero is a flag that keeps zero on the vertical axis of line geometries;
+# false is the same as leaving it out. Every native ggplot2 theme renders.
+stopifnot(
+    isTRUE(validate_render(list(geometry='point', mappings=list(x='lag', y='estimate'),
+        y_zero=TRUE), 'render')$y_zero),
+    is.null(validate_render(list(geometry='line', mappings=list(x='lag', y='estimate'),
+        y_zero=FALSE), 'render')$y_zero),
+    grepl('must be true or false', tryCatch(validate_render(list(geometry='line',
+        mappings=list(x='lag', y='estimate'), y_zero='yes'), 'render'),
+        error=conditionMessage), fixed=TRUE)
+)
+for (theme in internal('.cdrgam_cli_render_fields')$theme$choices) {
+    stopifnot(inherits(internal('.cdrgam_cli_ggplot_theme')(theme), 'theme'))
+}
 
 for (part in names(expected)) {
     differs <- names(expected[[part]])[
@@ -284,16 +302,23 @@ grid <- expand.grid(lag=c(0, 0.5, 2), term=c('x', 'y'), stringsAsFactors=FALSE)
 grid <- transform(grid, term_id=term, group=NA_character_, layer='estimate',
     estimate=lag, lower=lag - 0.1, upper=lag + 0.1)
 
-# Two series at each tick are dodged symmetrically within 80% of the tick
-# gap, and a single series sits on its tick.
+# Two series of points at each tick sit in adjacent columns one point wide,
+# centered on the tick, so clusters keep a gap; bars fill 80% of the gap.
 spec <- plot_spec(grid, list(render=validated(list(
     geometry='point', spacing='uniform', mappings=list(x='lag', y='estimate', color='term')
 ))))
+column <- 9 * 2 / (0.85 * 96 * 7)
 stopifnot(
     identical(spec$x$kind, 'ticks'), identical(spec$x$labels, c('0', '0.5', '2')),
-    isTRUE(all.equal(sort(spec$rows$.cdrgam_x), c(0.8, 1.2, 1.8, 2.2, 2.8, 3.2))),
-    isTRUE(all.equal(unique(spec$rows$.cdrgam_width), 0.4))
+    isTRUE(all.equal(sort(spec$rows$.cdrgam_x),
+        rep(1:3, each=2) + c(-1, 1) * column / 2)),
+    isTRUE(all.equal(unique(spec$rows$.cdrgam_width), column))
 )
+# A wide figure or few ticks never widens a cluster past 80% of the gap.
+wide <- plot_spec(grid, list(render=validated(list(
+    geometry='bar', spacing='uniform', mappings=list(x='lag', y='estimate', color='term')
+))))
+stopifnot(isTRUE(all.equal(unique(wide$rows$.cdrgam_width), 0.4)))
 single <- plot_spec(grid[grid$term == 'x', ], list(render=validated(list(
     geometry='bar', mappings=list(x='lag', y='estimate')
 ))))
@@ -517,21 +542,27 @@ if (requireNamespace('plotly', quietly=TRUE)) {
     gg <- ggplot2::ggplot_build(internal('.cdrgam_cli_ggplot_peak_strip')(strip))
     gg_peaks <- gg$data[[length(gg$data)]]
     gg_lanes <- levels(strip$peaks$.lane)[as.integer(gg_peaks$y)]
-    py <- Filter(function(trace) identical(trace$marker$size, 22),
-        plotly::plotly_build(internal('.cdrgam_cli_plotly_peak_strip')(strip))$x$data)
+    py_strip <- plotly::plotly_build(internal('.cdrgam_cli_plotly_peak_strip')(strip))$x
+    py <- Filter(function(trace) identical(trace$marker$size, 12), py_strip$data)
+    # Lanes sit at 1, 2, ... from the bottom; the top lane is the first.
+    py_lane <- function(trace) strip$lanes[[length(strip$lanes) + 1L - unlist(trace$y)]]
     stopifnot(
         identical(
             facts(lane=gg_lanes, lag=gg_peaks$x, color=hex(gg_peaks$colour)),
-            facts(lane=vapply(py, function(trace) unlist(trace$y), character(1)),
+            facts(lane=vapply(py, py_lane, character(1)),
                 lag=vapply(py, function(trace) unlist(trace$x), numeric(1)),
                 color=hex(vapply(py, function(trace) trace$marker$color, character(1))))
         ),
-        identical(
-            unlist(plotly::plotly_build(
-                internal('.cdrgam_cli_plotly_peak_strip')(strip)
-            )$x$layout$yaxis$categoryarray),
-            rev(strip$lanes)
-        )
+        identical(unlist(py_strip$layout$yaxis$ticktext), strip$lanes),
+        identical(as.integer(unlist(py_strip$layout$yaxis$tickvals)),
+            rev(seq_along(strip$lanes))),
+        # Each tick spans at most its own lane.
+        all(vapply(Filter(function(trace) identical(trace$mode, 'lines'), py_strip$data),
+            function(trace) {
+                y <- unlist(trace$y)
+                y <- y[is.finite(y)]
+                !length(y) || diff(range(y)) <= 0.8 + 1e-9
+            }, logical(1)))
     )
 }
 

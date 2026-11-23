@@ -125,6 +125,47 @@
     list(size=if (identical(theme, 'slides')) 16 else 12)
 }
 
+# The plotly counterpart of a ggplot2 theme: panel background, grid, and
+# axis lines, as list(panel, axis), where `axis` styles both axes.
+.cdrgam_cli_plotly_theme <- function(theme) {
+    theme <- .cdrgam_cli_null(theme, 'paper')
+    grid <- '#EBEBEB'
+    box <- function(color) list(showline=TRUE, linecolor=color, mirror=TRUE)
+    style <- switch(
+        theme,
+        grey=, gray=list(panel='#EBEBEB', axis=list(gridcolor='#FFFFFF')),
+        dark=list(panel='#7F7F7F', axis=list(gridcolor='#A8A8A8')),
+        # paper keeps the viewer's plain grid, without a panel outline.
+        paper=list(panel='#FFFFFF', axis=list(gridcolor=grid)),
+        bw=, test=list(panel='#FFFFFF', axis=c(list(gridcolor=grid), box('#333333'))),
+        linedraw=list(panel='#FFFFFF', axis=c(list(gridcolor='#BFBFBF'), box('#000000'))),
+        light=list(panel='#FFFFFF', axis=c(list(gridcolor='#DEDEDE'), box('#B3B3B3'))),
+        classic=list(panel='#FFFFFF', axis=list(
+            showgrid=FALSE, showline=TRUE, linecolor='#000000', mirror=FALSE
+        )),
+        void=list(panel='#FFFFFF', axis=list(
+            showgrid=FALSE, showline=FALSE, showticklabels=FALSE, title=list(text='')
+        )),
+        list(panel='#FFFFFF', axis=list(gridcolor=grid))
+    )
+    style
+}
+
+# Apply a theme to a plotly plot: `xaxis` and `yaxis` are the plot's own
+# axis settings, which take precedence over the theme's.
+.cdrgam_cli_plotly_themed <- function(plot, theme, xaxis=list(), yaxis=list(), ...) {
+    style <- .cdrgam_cli_plotly_theme(theme)
+    merge <- function(axis) {
+        value <- utils::modifyList(style$axis, axis)
+        if (identical(theme, 'void')) value <- utils::modifyList(value, style$axis)
+        value
+    }
+    plotly::layout(
+        plot, font=.cdrgam_cli_plotly_font(theme), plot_bgcolor=style$panel,
+        xaxis=merge(xaxis), yaxis=merge(yaxis), ...
+    )
+}
+
 # The diverging or standard-error color scale of a surface, as in the
 # ggplot2 renderer, with its limits.
 .cdrgam_cli_plotly_colorscale <- function(scale, z) {
@@ -200,47 +241,58 @@
         xaxis$tickvals <- spec$x$breaks
         xaxis$ticktext <- spec$x$labels
     }
-    plotly::layout(
-        plot, title=spec$labels$title, font=.cdrgam_cli_plotly_font(spec$theme),
-        xaxis=xaxis, yaxis=list(title=spec$labels$y, zeroline=TRUE),
+    yaxis <- list(title=spec$labels$y, zeroline=TRUE)
+    if (isTRUE(spec$y_zero)) yaxis$rangemode <- 'tozero'
+    .cdrgam_cli_plotly_themed(
+        plot, spec$theme, xaxis=xaxis, yaxis=yaxis, title=spec$labels$title,
         legend=list(orientation='h', y=-0.2), hovermode='closest', barmode='overlay'
     )
 }
 
 # Draw a peak-strip specification with plotly: the draws as faint ticks, the
 # central interval as a bar, and the point estimate as a long tick, in each
-# lane's color.
+# lane's color. Lanes sit at 1, 2, ... from the bottom, and every tick spans
+# at most its own lane, so lanes never overlap.
 .cdrgam_cli_plotly_peak_strip <- function(strip) {
     plot <- plotly::plot_ly()
     peaks <- strip$peaks
+    lanes <- strip$lanes
+    level <- function(lane) length(lanes) + 1L - match(lane, lanes)
     color_of <- function(term) {
         if (is.null(strip$colors)) '#000000' else unname(strip$colors[[term]])
+    }
+    # Vertical ticks at `x`, each from y - half to y + half, as one trace.
+    ticks <- function(plot, x, y, half, color, width, opacity=1) {
+        plotly::add_trace(
+            plot, type='scatter', mode='lines',
+            x=as.vector(rbind(x, x, NA)), y=as.vector(rbind(y - half, y + half, NA)),
+            line=list(color=color, width=width), opacity=opacity,
+            hoverinfo='skip', showlegend=FALSE
+        )
     }
     for (row in seq_len(nrow(peaks))) {
         peak <- peaks[row, , drop=FALSE]
         lane <- as.character(peak$.lane)
+        y <- level(lane)
         color <- color_of(peak$term)
         draws <- if (is.null(strip$draws)) numeric() else {
             keep <- as.character(strip$draws$.lane) == lane &
                 strip$draws$source == peak$source & strip$draws$direction == peak$direction
             strip$draws$lag[keep]
         }
-        if (length(draws)) plot <- plotly::add_markers(
-            plot, x=draws, y=rep.int(lane, length(draws)),
-            marker=list(
-                symbol='line-ns-open', size=10, color=color, opacity=strip$draw_alpha
-            ),
-            hoverinfo='skip', showlegend=FALSE
+        if (length(draws)) plot <- ticks(
+            plot, draws, rep.int(y, length(draws)), 0.2, color, 1,
+            .cdrgam_cli_null(strip$draw_alpha, 1)
         )
         if (is.finite(peak$lower) && is.finite(peak$upper)) {
             plot <- plotly::add_segments(
-                plot, x=peak$lower, xend=peak$upper, y=lane, yend=lane,
+                plot, x=peak$lower, xend=peak$upper, y=y, yend=y,
                 line=list(color=color, width=2), hoverinfo='skip', showlegend=FALSE
             )
         }
+        plot <- ticks(plot, peak$lag, y, 0.4, color, 3)
         plot <- plotly::add_markers(
-            plot, x=peak$lag, y=lane,
-            marker=list(symbol='line-ns-open', size=22, color=color, line=list(width=3)),
+            plot, x=peak$lag, y=y, marker=list(size=12, color=color, opacity=0),
             text=sprintf(
                 '%s<br>peak lag %s%s', lane, signif(peak$lag, 4L),
                 if (is.finite(peak$lower)) sprintf(
@@ -250,39 +302,63 @@
             hoverinfo='text', showlegend=FALSE
         )
     }
-    plotly::layout(
-        plot,
+    .cdrgam_cli_plotly_themed(
+        plot, strip$theme,
         xaxis=list(title=.cdrgam_cli_null(strip$label, ''), zeroline=FALSE),
         yaxis=list(
-            title='', type='category', categoryorder='array',
-            categoryarray=rev(strip$lanes)
+            title='', range=c(0.5, length(lanes) + 0.5), zeroline=FALSE,
+            showgrid=FALSE, fixedrange=TRUE,
+            # Label every lane; automatic ticks skip some in a short strip.
+            tickmode='array', tickvals=rev(seq_along(lanes)), ticktext=lanes
         )
     )
 }
 
-# A plot with its peak strip below. The strip shares the plot's x-axis when
-# the strip specification gives x-limits.
+# A plot with its pointwise-peak panel and peak strip below. Panels whose
+# x-axis matches the panel below drop their x title and tick labels, which
+# the lower panel shows; every other panel keeps room below for its own.
 .cdrgam_cli_plotly_figure <- function(plot, strip, spec, pointwise=NULL) {
     if (is.null(strip) && is.null(pointwise)) return(plot)
     plots <- list(plot)
     heights <- 1
+    # Whether each panel's x-axis is the same as the next panel's.
+    linked <- logical()
     if (!is.null(pointwise)) {
         plots <- c(plots, list(.cdrgam_cli_plotly_pointwise(pointwise)))
         heights <- c(heights, 0.45)
+        linked <- c(linked, TRUE)
     }
     shared <- !is.null(strip$xlim)
     if (!is.null(strip)) {
         if (shared) strip$label <- spec$labels$x
         plots <- c(plots, list(.cdrgam_cli_plotly_peak_strip(strip)))
-        heights <- c(heights, min(0.4, 0.08 + 0.04 * length(strip$lanes)))
+        heights <- c(heights, min(0.4, 0.1 + 0.06 * length(strip$lanes)))
+        linked <- c(linked, shared && is.null(pointwise))
     }
+    linked <- c(linked, FALSE)
     figure <- plotly::subplot(
-        plots, nrows=length(plots), shareX=shared && is.null(pointwise),
-        titleX=TRUE, titleY=TRUE, heights=heights / sum(heights)
+        plots, nrows=length(plots), titleX=TRUE, titleY=TRUE
     )
-    # The pointwise panel shares the main plot's x-axis.
-    if (!is.null(pointwise)) figure <- plotly::layout(figure, xaxis2=list(matches='x'))
-    figure
+    # Gaps below each panel, as fractions of the figure: tick labels and a
+    # title, or a sliver above a panel that repeats the axis.
+    gaps <- ifelse(linked, 0.03, 0.13)[-length(plots)]
+    space <- 1 - sum(gaps)
+    sizes <- space * heights / sum(heights)
+    top <- 1
+    axes <- list()
+    for (index in seq_along(plots)) {
+        suffix <- if (index == 1L) '' else as.character(index)
+        bottom <- top - sizes[[index]]
+        axes[[paste0('yaxis', suffix)]] <- list(domain=c(max(0, bottom), top))
+        if (linked[[index]]) {
+            axes[[paste0('xaxis', suffix)]] <- list(
+                title=list(text=''), showticklabels=FALSE,
+                matches=paste0('x', if (index + 1L == 1L) '' else index + 1L)
+            )
+        }
+        if (index < length(plots)) top <- bottom - gaps[[index]]
+    }
+    do.call(plotly::layout, c(list(figure), axes))
 }
 
 # Draw a pointwise-peak panel specification with plotly: each series' peak
@@ -312,8 +388,7 @@
         xaxis$tickvals <- panel$x$breaks
         xaxis$ticktext <- panel$x$labels
     }
-    plotly::layout(
-        plot, xaxis=xaxis, yaxis=list(title=panel$labels$y, zeroline=FALSE),
-        font=.cdrgam_cli_plotly_font(panel$theme)
+    .cdrgam_cli_plotly_themed(
+        plot, panel$theme, xaxis=xaxis, yaxis=list(title=panel$labels$y, zeroline=FALSE)
     )
 }

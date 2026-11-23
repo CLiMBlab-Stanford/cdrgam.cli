@@ -573,6 +573,19 @@ core evaluation per covariance point and reference value, for example 81 for
 a 40-point lag curve with a predictor reference. Reference predictors must
 have values; `default` is not supported.
 
+When a value of the query uses a peak, such as `lag: peak`,
+`lag: peak-pointwise`, or a reference at a peak, simultaneous limits also
+cover the uncertainty about where the peak lies. They then come from
+`uncertainty.peak_draws` posterior draws (default 1000, with a fixed seed).
+Each draw re-locates the peaks on the same coefficient draw and evaluates the
+effect at the values those peaks give. The band is the estimate plus or minus
+`critical_value` times each point's draw standard deviation. `critical_value`
+is the `level` quantile over draws of the largest absolute standardized
+deviation within the term and group. Under `peak-pointwise`, each draw takes
+the effect at its own peak for each point. Pointwise limits treat peak lags as
+known. Simultaneous limits at a peak need a `cdrgam` release with
+`sample_effect_coefficients()`.
+
 With `peak-pointwise`, the effect artifact has `effect-pointwise-peaks.csv`
 (and `.rds`), with one row per evaluated point: its term, layer, group, axis
 values, direction, peak `lag`, and the central `level` interval of the peak
@@ -708,8 +721,11 @@ render:
 
 `predictor:` is an optional disambiguating prefix in mappings. A `companion`
 interval produces a second surface showing pointwise standard errors. Mapping
-fields are `x`, `y`, `color`, `fill`, `linetype`, `group`, and `facet`; themes are
-`paper`, `minimal`, and `slides`.
+fields are `x`, `y`, `color`, `fill`, `linetype`, `group`, and `facet`. Themes are
+`paper` (ggplot2's bw), `slides` (minimal at a larger base size), and the native
+ggplot2 themes `grey`, `gray`, `bw`, `linedraw`, `light`, `dark`, `minimal`,
+`classic`, `void`, and `test`. `y_zero: true` extends the vertical axis of a
+line, point, or bar plot to include zero.
 
 Multiple layers can superimpose related estimands without repeating the axis
 query. Each layer has an `id` and may override `composition`, `grouping`,
@@ -731,6 +747,62 @@ For this overlay, select the corresponding grouped term with
 ungrouped counterpart, and the conditional layer adds each requested
 deviation. The renderer keeps term, group, and layer series separate unless an
 explicit `group` mapping is supplied.
+
+### Lines
+
+A visualization can instead list `lines`, each one effect of one term with
+its own model, axes, reference, composition, and grouping, drawn on one
+plot. This is the form the viewer exports under **Definition YAML**, and
+`cdrgam run` renders it with the figure the viewer draws:
+
+```yaml
+schema: 1
+model: main
+query:
+  composition: total
+  n: 200
+  axes:
+    lag: peak
+    predictors: {z: mean}
+  uncertainty: {kind: simultaneous}
+lines:
+  - term: x
+    axes:
+      predictors: {x: {grid: fitted}}
+  - id: interaction
+    term: "x:z"
+    label: x by z at z = 1
+    axes:
+      predictors: {x: {grid: fitted}, z: 1}
+    reference: {z: 0}
+  - term: y
+    model: other
+    axes:
+      lag: {grid: fitted}
+render:
+  geometry: line
+  palette: okabe-ito
+```
+
+`query` here holds defaults that every line inherits; it takes the query
+fields other than `terms`. A line overrides any of them. `axes` and
+`reference` merge axis by axis (`axes.predictors` predictor by predictor) and
+`uncertainty` setting by setting, so a line can change one axis and keep
+the rest. Other fields replace the default. Each line needs `term`, the
+exact label of one term. `model` defaults to the definition's, and outputs
+live under the definition's model. `id` defaults to `line1`, `line2`, and so
+on; `label`, the legend entry, defaults to the term, with the model when it
+differs from the definition's.
+
+Each line's query must vary exactly one axis, its horizontal axis. Lines over
+different axes share the horizontal axis, titled with their axis names
+unless `xlab` is set. `render.mappings` defaults to that axis, the estimate,
+and color by line; mappings may also use the `line` column (the line id) and
+`.line_x` (the horizontal value). Line, point, and bar geometries are
+supported. `layers` do not apply, since each line sets its own composition
+and grouping. Each line is its own effect work item, so a line that two
+visualizations share is evaluated once. As in the viewer, the peak timeline
+appears whenever a line uses a peak, unless `render.peaks` is `never`.
 
 Two presets give common CDR plots without writing a query:
 

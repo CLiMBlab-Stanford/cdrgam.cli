@@ -1822,6 +1822,76 @@ stopifnot(
     file.exists(file.path(pointwise_output, 'plot-pointwise.rds'))
 )
 
+# uncertainty.kind simultaneous at lag: peak: each draw re-finds the peak,
+# so the band includes the peak's uncertainty.
+if ('sample_effect_coefficients' %in% getNamespaceExports('cdrgam')) {
+    yaml::write_yaml(list(
+        schema=1L, model='decay',
+        query=list(
+            terms='x', axes=list(lag='peak', predictors=list(
+                x=list(grid='fitted', n=7L)
+            )),
+            uncertainty=list(kind='simultaneous', peak_draws=50L), n=9L
+        ),
+        render=list(
+            geometry='line', mappings=list(x='x', y='estimate', color='term'),
+            formats='pdf'
+        )
+    ), file.path(project, 'definitions', 'visualizations', 'posterior.yml'))
+    posterior_plan <- cdrgam_cli_plan(projects='test-project', visualizations='posterior')
+    cdrgam_cli_run(projects='test-project', visualizations='posterior')
+    posterior_grid <- readRDS(file.path(
+        posterior_plan$path[posterior_plan$kind == 'effect'], 'effect-grid.rds'
+    ))
+    stopifnot(
+        nrow(posterior_grid) == 7L,
+        all(posterior_grid$lower <= posterior_grid$upper),
+        all(is.finite(posterior_grid$critical_value)),
+        all(is.finite(posterior_grid$lower)),
+        file.exists(file.path(
+            project, 'results', 'models', 'decay', 'visualizations', 'posterior',
+            'visualization.pdf'
+        ))
+    )
+}
+
+# A lines visualization: each line is its own effect, inheriting the
+# definition's query, and the figure draws them together with their peak
+# timeline. Another visualization with one of the same lines reuses its
+# effect artifact.
+lines_definition <- list(
+    schema=1L, model='decay',
+    query=list(n=9L, uncertainty=list(level=0.9), axes=list(lag='peak')),
+    lines=list(
+        list(term='x', id='by-x', axes=list(predictors=list(x=list(grid='fitted', n=5L)))),
+        list(term='x', id='by-lag', label='x over lag',
+            axes=list(lag=list(grid='fitted', n=6L)))
+    ),
+    render=list(geometry='line', formats='pdf')
+)
+yaml::write_yaml(lines_definition,
+    file.path(project, 'definitions', 'visualizations', 'lines.yml'))
+lines_one <- lines_definition
+lines_one$lines <- lines_definition$lines[1L]
+yaml::write_yaml(lines_one,
+    file.path(project, 'definitions', 'visualizations', 'lines-one.yml'))
+lines_plan <- cdrgam_cli_plan(projects='test-project', visualizations=c('lines', 'lines-one'))
+stopifnot(
+    sum(lines_plan$kind == 'effect') == 2L,
+    sum(lines_plan$kind == 'visualization') == 2L
+)
+cdrgam_cli_run(projects='test-project', visualizations=c('lines', 'lines-one'))
+lines_output <- file.path(project, 'results', 'models', 'decay', 'visualizations', 'lines')
+lines_plot <- readRDS(file.path(lines_output, 'plot.rds'))
+stopifnot(
+    file.exists(file.path(lines_output, 'visualization.pdf')),
+    file.exists(file.path(lines_output, 'plot-peaks.rds')),
+    identical(lines_plot$labels$x, 'x / lag'),
+    setequal(unique(as.character(unlist(lapply(lines_plot$layers, function(layer) {
+        if (is.data.frame(layer$data)) layer$data$line
+    })))), c('by-x', 'by-lag'))
+)
+
 comparison_plan <- cdrgam_cli_plan(
     projects='test-project', comparisons='alternatives'
 )

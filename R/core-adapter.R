@@ -155,6 +155,16 @@
     'points' %in% names(formals(cdrgam::estimate_effect))
 }
 
+# sample_effect_coefficients() and simulate_effect(coefficients=) are new
+# after cdrgam 0.4.0; posterior intervals need them.
+.cdrgam_cli_core_has_shared_draws <- function() {
+    'sample_effect_coefficients' %in% getNamespaceExports('cdrgam')
+}
+
+.cdrgam_cli_core_sample_coefficients <- function(fit, ...) {
+    getExportedValue('cdrgam', 'sample_effect_coefficients')(fit, ...)
+}
+
 .cdrgam_cli_core_simulate_effect <- function(fit, ...) {
     getExportedValue('cdrgam', 'simulate_effect')(fit, ...)
 }

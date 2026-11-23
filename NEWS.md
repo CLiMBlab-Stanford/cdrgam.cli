@@ -41,6 +41,42 @@
 - **Show render YAML** in the viewer prints its appearance settings as a
   `render` block for a visualization definition.
 
+- Simultaneous intervals for values that use a peak, such as `lag: peak` or
+  `peak-pointwise`, now include the uncertainty about where the peak lies:
+  posterior draws each re-find the peak before the band is formed. Lines at
+  `peak-pointwise` accept simultaneous intervals. This needs cdrgam's new
+  `sample_effect_coefficients()`, and changes the bands of the `irf-predictor`
+  preset, which plots at peak lags.
+
+- Visualization definitions accept `lines`: one effect per line, each with
+  its own term, model, axes, reference, composition, and grouping, drawn on
+  one plot. The definition's `query` gives defaults that lines inherit and
+  may override. The viewer evaluates every line through the same code as
+  `cdrgam run`, draws the same figure, and exports its lines, options, and
+  appearance as such a definition under **Definition YAML**.
+
+- `render.theme` accepts every native ggplot2 theme (`grey`, `gray`, `bw`,
+  `linedraw`, `light`, `dark`, `minimal`, `classic`, `void`, `test`), and
+  `render.y_zero: true` keeps zero on the vertical axis. The viewer offers
+  both under **Appearance** and starts in `classic`; definitions still
+  default to `paper`.
+
+- The viewer keeps its form, including the model, term, axes, fixed and
+  reference values, and the **Options** panel, across **Refresh data**, page
+  reloads, and server restarts, as it already kept lines and appearance.
+
+- In the viewer, the peak timeline appears whenever a line uses a peak,
+  unless **Show peak lags** under the plot is off, and its rows carry the
+  legend labels. Its ticks stay within their own row, and stacked panels
+  leave room for each x-axis title.
+
+- Points at one x position sit in adjacent columns one point wide, so
+  clusters at different positions stay apart; bars still fill 80% of the
+  gap.
+  Arrows in the lines list reorder lines, the palette menu shows each
+  palette's colors, and **X tick values** under **Options** evaluates lines
+  at chosen x values with a tick at each.
+
 - `lag: peak-pointwise` and `peak-pointwise-neg` hold each evaluation point
   at its own peak lag: the lag where the query's effect, after its reference
   subtraction, is largest or smallest at that point. Effect artifacts record

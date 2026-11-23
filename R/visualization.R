@@ -52,7 +52,8 @@
         value <- .cdrgam_cli_pointwise_effect(
             fit, arguments[-1L], direction,
             draws=.cdrgam_cli_null(query$uncertainty$peak_draws, .cdrgam_cli_peak_draws),
-            level=query$uncertainty$level
+            level=query$uncertainty$level,
+            simultaneous=identical(query$uncertainty$kind, 'simultaneous')
         )
         pointwise <- attr(value, 'pointwise_peaks')
         pointwise$layer <- layer$id
@@ -64,7 +65,31 @@
     value <- do.call(.cdrgam_cli_core_estimate_effect, c(
         arguments, list(se=TRUE, level=query$uncertainty$level)
     ))
-    if (identical(query$uncertainty$kind, 'simultaneous')) {
+    used <- peaks$.used
+    if (!is.null(used)) used <- used[used$term == term$label, , drop=FALSE]
+    # A query whose values use peaks gets a band that re-finds them on every
+    # draw; other queries keep the analytic band.
+    peaked <- identical(query$uncertainty$kind, 'simultaneous') && !is.null(used) &&
+        nrow(used) > 0L
+    if (peaked) {
+        if (is.null(peaks$.catalog)) {
+            peaks$.catalog <- .cdrgam_cli_core_effect_catalog(
+                fit, training$impulses, training$responses
+            )
+        }
+        value <- .cdrgam_cli_peak_band(
+            fit, value, arguments[-1L], used, function(cache) {
+                resolved <- .cdrgam_cli_term_request(
+                    fit, term, query, training$impulses, training$responses, cache,
+                    layer$composition
+                )
+                list(axes=resolved$axes, reference=resolved$reference)
+            }, peaks$.catalog,
+            .cdrgam_cli_null(query$uncertainty$peak_draws, .cdrgam_cli_peak_draws),
+            query$uncertainty$level
+        )
+    }
+    if (!peaked && identical(query$uncertainty$kind, 'simultaneous')) {
         value <- .cdrgam_cli_simultaneous_band(fit, value, list(
             term=term$label, axes_names=term$axes,
             reference=request$reference, composition=layer$composition,
@@ -91,8 +116,10 @@
     output
 }
 
-.cdrgam_cli_execute_effect <- function(item, stage) {
-    fit <- readRDS(file.path(item$fit$output, 'fit.rds'))
+# The training data an effect needs: none when the fit's effect catalog
+# stores every axis summary, else the fit's training dataset, with the
+# catalog recomputed from it.
+.cdrgam_cli_effect_training <- function(fit, dataset) {
     catalog <- .cdrgam_cli_core_effect_catalog(fit)
     summaries_complete <- vapply(seq_len(nrow(catalog)), function(index) {
         axes <- catalog$axes[[index]]
@@ -100,16 +127,26 @@
         all(axes %in% names(summaries)) &&
             all(vapply(summaries[axes], function(value) !is.null(value), logical(1)))
     }, logical(1))
-    training <- if (all(summaries_complete)) {
-        list(impulses=NULL, responses=NULL)
-    } else .cdrgam_cli_load_dataset(item$fit$dataset)
-    if (!all(summaries_complete)) {
-        catalog <- .cdrgam_cli_core_effect_catalog(
-            fit, training$impulses, training$responses
-        )
+    if (all(summaries_complete)) {
+        return(list(impulses=NULL, responses=NULL, catalog=catalog))
     }
-    query <- item$query
-    layers <- .cdrgam_cli_effect_layers(query, item$layers)
+    training <- .cdrgam_cli_load_dataset(dataset)
+    training$catalog <- .cdrgam_cli_core_effect_catalog(
+        fit, training$impulses, training$responses
+    )
+    training
+}
+
+# Evaluate a validated effect query in memory: the effect grid of every
+# selected term and layer, with attribute `peaks` (the peaks its values
+# used, from .cdrgam_cli_peak_summary(), or NULL), attribute
+# `pointwise_peaks` (for lag: peak-pointwise, or NULL), and attribute
+# `tests` (for test: true, or NULL). `training` holds impulses, responses,
+# and the effect catalog, as from .cdrgam_cli_effect_training(). Both
+# `cdrgam run` and the viewer evaluate effects here.
+.cdrgam_cli_compute_effect <- function(fit, query, layers=NULL, training) {
+    catalog <- training$catalog
+    query_layers <- .cdrgam_cli_effect_layers(query, layers)
     labels <- .cdrgam_cli_select_terms(
         fit, catalog, query$terms, training$impulses, training$responses
     )
@@ -121,7 +158,7 @@
     pointwise <- list()
     peaks <- new.env()
     peaks$.catalog <- catalog
-    for (layer in layers) {
+    for (layer in query_layers) {
         for (term in terms) {
             value <- .cdrgam_cli_evaluate_term(fit, term, query, layer, training, peaks)
             value$estimate$layer <- layer$id
@@ -135,25 +172,37 @@
             }
         }
     }
-    if (length(pointwise)) {
-        pointwise <- .cdrgam_cli_bind_tables(pointwise)
+    output <- .cdrgam_cli_bind_tables(tables)
+    attr(output, 'pointwise_peaks') <- if (length(pointwise)) {
+        .cdrgam_cli_bind_tables(pointwise)
+    }
+    attr(output, 'tests') <- if (length(tests)) .cdrgam_cli_bind_tables(tests)
+    attr(output, 'peaks') <- .cdrgam_cli_peak_summary(
+        fit, peaks, training$impulses, training$responses, query$n,
+        .cdrgam_cli_null(query$uncertainty$peak_draws, .cdrgam_cli_peak_draws),
+        query$uncertainty$level, query$uncertainty$unconditional
+    )
+    output
+}
+
+.cdrgam_cli_execute_effect <- function(item, stage) {
+    fit <- readRDS(file.path(item$fit$output, 'fit.rds'))
+    training <- .cdrgam_cli_effect_training(fit, item$fit$dataset)
+    query <- item$query
+    output <- .cdrgam_cli_compute_effect(fit, query, item$layers, training)
+    pointwise <- attr(output, 'pointwise_peaks')
+    tests <- attr(output, 'tests')
+    peaks <- attr(output, 'peaks')
+    for (name in c('pointwise_peaks', 'tests', 'peaks')) attr(output, name) <- NULL
+    if (!is.null(pointwise)) {
         saveRDS(pointwise, file.path(stage, 'effect-pointwise-peaks.rds'), version=3)
         utils::write.csv(
             pointwise, file.path(stage, 'effect-pointwise-peaks.csv'), row.names=FALSE
         )
     }
     if (isTRUE(query$test)) {
-        utils::write.csv(
-            .cdrgam_cli_bind_tables(tests), file.path(stage, 'effect-tests.csv'),
-            row.names=FALSE
-        )
+        utils::write.csv(tests, file.path(stage, 'effect-tests.csv'), row.names=FALSE)
     }
-    output <- .cdrgam_cli_bind_tables(tables)
-    peaks <- .cdrgam_cli_peak_summary(
-        fit, peaks, training$impulses, training$responses, query$n,
-        .cdrgam_cli_null(query$uncertainty$peak_draws, .cdrgam_cli_peak_draws),
-        query$uncertainty$level, query$uncertainty$unconditional
-    )
     if (!is.null(peaks)) {
         saveRDS(peaks, file.path(stage, 'effect-peaks.rds'), version=3)
         utils::write.csv(
@@ -167,7 +216,8 @@
     saveRDS(output, file.path(stage, 'effect-grid.rds'), version=3)
     utils::write.csv(output, file.path(stage, 'effect-grid.csv'), row.names=FALSE)
     .cdrgam_cli_write_yaml(
-        list(query=query, layers=layers), file.path(stage, 'request.yml')
+        list(query=query, layers=.cdrgam_cli_effect_layers(query, item$layers)),
+        file.path(stage, 'request.yml')
     )
     list(
         rows=nrow(output), terms=length(unique(output$term_id)),
@@ -201,8 +251,8 @@
 .cdrgam_cli_ggplot_theme <- function(theme) switch(
     .cdrgam_cli_null(theme, 'paper'),
     paper=ggplot2::theme_bw(base_size=10),
-    minimal=ggplot2::theme_minimal(base_size=10),
-    slides=ggplot2::theme_minimal(base_size=16)
+    slides=ggplot2::theme_minimal(base_size=16),
+    getExportedValue('ggplot2', paste0('theme_', theme))(base_size=10)
 )
 
 # A geom call with fixed aesthetics that are given.
@@ -371,6 +421,7 @@
     if (!is.null(spec$facet)) plot <- plot + ggplot2::facet_wrap(
         stats::as.formula(paste('~', spec$facet$column)), scales=spec$facet$scales
     )
+    if (isTRUE(spec$y_zero)) plot <- plot + ggplot2::expand_limits(y=0)
     plot + ggplot2::labs(title=spec$labels$title, x=spec$labels$x, y=spec$labels$y) +
         .cdrgam_cli_ggplot_theme(spec$theme)
 }
@@ -494,8 +545,16 @@
 # The rendered figure: the main plot alone (NULL), or with the
 # pointwise-peak panel and the peak strip below it.
 .cdrgam_cli_peak_figure <- function(plot, data, peaks, definition, pointwise=NULL) {
-    strip <- .cdrgam_cli_figure_peaks(data, peaks, definition$render)
-    panel <- .cdrgam_cli_figure_pointwise(data, pointwise, definition)
+    .cdrgam_cli_ggplot_figure(
+        plot, .cdrgam_cli_figure_peaks(data, peaks, definition$render),
+        .cdrgam_cli_figure_pointwise(data, pointwise, definition)
+    )
+}
+
+# Draw a main plot with its pointwise-peak panel and peak strip
+# specifications below it, either NULL when not drawn; NULL when neither
+# is drawn.
+.cdrgam_cli_ggplot_figure <- function(plot, strip, panel) {
     if (is.null(strip) && is.null(panel)) return(NULL)
     plots <- list(plot)
     heights <- 1
@@ -540,7 +599,69 @@
     paths
 }
 
+# The horizontal axis of one line: the one axis its effect grid varies.
+.cdrgam_cli_line_axis <- function(data, line) {
+    columns <- setdiff(names(data), c(
+        .cdrgam_cli_effect_columns, 'predictor', 'predictor_value', 'critical_value',
+        grep('_reference$', names(data), value=TRUE)
+    ))
+    varying <- columns[vapply(columns, function(name) {
+        length(unique(data[[name]])) > 1L
+    }, logical(1))]
+    if (length(varying) != 1L) .cdrgam_cli_abort(paste0(
+        'Line ', line$id, ' varies ',
+        if (length(varying)) paste(varying, collapse=', ') else 'no axis',
+        '; a line needs exactly one varying axis'
+    ))
+    varying
+}
+
+# Render a visualization of lines from each line's effect artifact, with
+# the figure the viewer draws for the same lines.
+.cdrgam_cli_render_lines <- function(item, stage) {
+    definition <- item$definition
+    entries <- lapply(seq_along(definition$lines), function(index) {
+        line <- definition$lines[[index]]
+        output <- item$effects[[index]]$output
+        data <- readRDS(file.path(output, 'effect-grid.rds'))
+        for (name in c('peaks', 'pointwise_peaks')) {
+            path <- file.path(output, paste0(
+                'effect-', if (identical(name, 'peaks')) 'peaks' else 'pointwise-peaks',
+                '.rds'
+            ))
+            if (file.exists(path)) attr(data, name) <- readRDS(path)
+        }
+        list(spec=list(
+            id=line$id, label=line$label, varying=.cdrgam_cli_line_axis(data, line)
+        ), data=data)
+    })
+    render <- definition$render
+    if (is.null(render$xlab) && identical(render$mappings$x, '.line_x')) {
+        render$xlab <- paste(unique(vapply(
+            entries, function(entry) entry$spec$varying, character(1)
+        )), collapse=' / ')
+    }
+    figure <- .cdrgam_cli_lines_figure(entries, render)
+    plot <- .cdrgam_cli_ggplot_plot(figure$spec)
+    saveRDS(plot, file.path(stage, 'plot.rds'), version=3)
+    stacked <- .cdrgam_cli_ggplot_figure(plot, figure$strip, figure$pointwise)
+    if (!is.null(stacked$strip)) {
+        saveRDS(stacked$strip, file.path(stage, 'plot-peaks.rds'), version=3)
+    }
+    if (!is.null(stacked$pointwise)) {
+        saveRDS(stacked$pointwise, file.path(stage, 'plot-pointwise.rds'), version=3)
+    }
+    paths <- .cdrgam_cli_save_ggplot(
+        if (is.null(stacked)) plot else stacked$figure, stage, render
+    )
+    list(
+        kind='lines', rows=nrow(figure$spec$rows), files=paths,
+        effect_identities=vapply(item$effects, `[[`, character(1), 'identity')
+    )
+}
+
 .cdrgam_cli_render_effect <- function(item, stage) {
+    if (!is.null(item$effects)) return(.cdrgam_cli_render_lines(item, stage))
     data <- readRDS(file.path(item$effect$output, 'effect-grid.rds'))
     peaks_path <- file.path(item$effect$output, 'effect-peaks.rds')
     peaks <- if (file.exists(peaks_path)) readRDS(peaks_path) else NULL

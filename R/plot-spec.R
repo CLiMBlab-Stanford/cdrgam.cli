@@ -253,6 +253,22 @@
     if (length(gaps)) 0.8 * min(gaps) else 0.8
 }
 
+# The width of a cluster of points sharing an x position: one point's width
+# per series, so the series sit in adjacent columns, but no more than
+# `width`, which leaves a gap between clusters. A point is taken as
+# .cdrgam_cli_point_columns_px pixels of a panel `figure_width` inches wide
+# (7 when unset, as in the viewer) at 96 pixels per inch.
+.cdrgam_cli_point_columns_px <- 9
+.cdrgam_cli_point_cluster_width <- function(position, series, key, width, figure_width=NULL) {
+    span <- diff(range(position[is.finite(position)]))
+    if (!length(span) || !is.finite(span) || span <= 0) return(width)
+    slot <- paste(key, sprintf('%.17g', position), sep='\r')
+    count <- max(vapply(split(series, slot), function(value) length(unique(value)),
+        integer(1)))
+    panel <- 0.85 * 96 * .cdrgam_cli_null(figure_width, 7)
+    min(width, count * .cdrgam_cli_point_columns_px * span / panel)
+}
+
 # Offsets that place the series sharing an x position side by side within
 # `width`, ordered by series, as ggplot2's position_dodge() does. `key`
 # identifies the panel and layer, within which positions are shared.
@@ -298,7 +314,8 @@
         style=.cdrgam_cli_layer_style(layer)
     ))
     spec <- list(
-        geometry=geometry, theme=render$theme, columns=columns, facet=facet,
+        geometry=geometry, theme=render$theme, y_zero=isTRUE(render$y_zero),
+        columns=columns, facet=facet,
         layers=layers,
         labels=list(
             title=render$title, x=.cdrgam_cli_null(render$xlab, mappings$x),
@@ -343,11 +360,16 @@
             sep='\r'
         )
         series <- as.integer(interaction(data[[group]], drop=TRUE))
+        if (identical(geometry, 'point')) {
+            width <- .cdrgam_cli_point_cluster_width(
+                data$.cdrgam_x, series, key, width, render$width
+            )
+        }
         dodge <- .cdrgam_cli_dodge(data$.cdrgam_x, series, key, width)
         data$.cdrgam_x <- dodge$center
         data$.cdrgam_width <- width / dodge$count
         data$.cdrgam_whisker <- data$.cdrgam_width *
-            if (identical(geometry, 'bar')) 0.3 else 0.2
+            if (identical(geometry, 'bar')) 0.3 else 0.8
         if (identical(geometry, 'bar')) {
             data$.cdrgam_xmin <- data$.cdrgam_x - data$.cdrgam_width / 2
             data$.cdrgam_xmax <- data$.cdrgam_x + data$.cdrgam_width / 2
@@ -370,11 +392,13 @@
 
 # Whether to draw the peak strip. `auto` draws it when the plotted terms
 # were held at peaks that differ, since the curves then sit at different
-# lags; `always` draws it whenever a peak was used.
-.cdrgam_cli_show_peaks <- function(peaks, setting=NULL) {
+# lags; `always` draws it whenever a peak was used. `lines = TRUE` treats
+# `auto` as `always`, since a line at a peak lag needs the strip to show
+# where that peak is.
+.cdrgam_cli_show_peaks <- function(peaks, setting=NULL, lines=FALSE) {
     setting <- .cdrgam_cli_null(setting, 'auto')
     if (is.null(peaks) || !nrow(peaks) || identical(setting, 'never')) return(FALSE)
-    identical(setting, 'always') || length(unique(signif(peaks$lag, 10L))) > 1L
+    lines || identical(setting, 'always') || length(unique(signif(peaks$lag, 10L))) > 1L
 }
 
 # One label per strip row. A term held at its own positive peak is labeled

@@ -207,26 +207,36 @@ It draws effect lines, with several lines per plot drawn from any fits, and
 two-axis effect surfaces. For each line or surface you choose the term, the
 axes that vary, and fixed values for the remaining axes of tensor terms. A
 reference can be subtracted from each line by giving reference values for its
-fixed axes; plotted axes keep their values. An empty reference field leaves
-that predictor at the model default, so terms involving it drop out, and
-leaves lag at its fixed value. With the
-Total composition, fixing `wlen` at one value, leaving its reference empty,
-and giving `repetition_index` the same reference as its fixed value gives the
-word-length effect at that repetition. Axes that are not varied start at lag 0
+fixed axes; plotted axes keep their values. An empty reference field keeps
+the line's fixed value for that axis. A predictor's reference set to `default`
+takes the model default, so terms involving it drop out. With the
+Total composition, fixing `wlen` at one value, setting its reference to
+`default`, and leaving `repetition_index` empty gives the word-length effect
+at that repetition. Axes that are not varied start at lag 0
 and at their training means. Fixed and reference fields accept numbers or
 expressions such as `mean + 2 * sd`, and lag fields also accept `peak`,
 `peak-pos`, and `peak-neg`, as in visualization definitions. A fixed lag of
 `peak-pointwise` or `peak-pointwise-neg` holds each point of the line at its
 own peak lag for the line's contrast, and adds a panel of those lags below the
-plot; **Peak timeline: never** under **Appearance** hides it. Effects are on
+plot. **Show peak lags**, under the plot, turns the peak timeline and this
+panel on and off. Effects are on
 the linear-predictor scale with pointwise or, under **Options**, simultaneous
-intervals.
+intervals. For a line at a peak, simultaneous intervals come from posterior
+draws that each re-find the peak, so they include uncertainty about where the
+peak lies. **X tick values** under **Options** evaluates every line at the
+listed x values and puts a tick at each. In the viewer the peak timeline
+appears whenever a line uses a peak, unless **Show peak lags** is off.
+
+**Definition YAML**, in the lines list, shows the plot as a visualization
+definition with `lines` (see the project schema): its lines, options, and
+appearance. Saved in a project, `cdrgam run` renders the same figure.
 
 **Appearance** holds the viewer's counterparts of a visualization's `render`
 settings, with the same meanings and checks: geometry (lines, points, or
 bars; for surfaces a 3D surface, heatmap, or contours), effect estimates or
-peak lags, intervals, tick spacing, palette, the peak timeline, titles, and
-theme. Lines use `okabe-ito` colors in the order they were added; with more
+peak lags, intervals, tick spacing, palette, titles, and theme. The palette menu shows each palette's colors. Lines use `okabe-ito`
+colors in list order, and the arrows in the lines list move a line up or
+down; with more
 than eight lines under that palette, every line switches to viridis. The
 standard-error interval of a surface adds a second heatmap, or bounding
 surfaces around a 3D surface. The viewer needs

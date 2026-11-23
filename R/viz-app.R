@@ -15,12 +15,15 @@
     setdiff(names(term$axes), varying)
 }
 
-# Lag and time have no model default, so an empty reference field leaves
-# them at their plotted value instead.
+# An empty reference field (NULL) leaves its axis at the line's fixed value,
+# so the axis is left out of the reference; NA, typed as `default`, leaves a
+# predictor at the model default. Lag and time have no model default, so NA
+# also leaves them at their fixed value.
 .cdrgam_cli_viz_reference_values <- function(values) {
     keep <- vapply(names(values), function(name) {
-        !(name %in% c('lag', 'time')) || is.character(values[[name]]) ||
-            !is.na(values[[name]])
+        value <- values[[name]]
+        !is.null(value) && (is.character(value) || !is.na(value) ||
+            !(name %in% c('lag', 'time')))
     }, logical(1))
     values <- values[keep]
     if (length(values)) values else NULL
@@ -124,8 +127,51 @@
     if (identical(values$palette, 'custom')) {
         values$palette <- .cdrgam_cli_viz_gradient(input$render_palette_colors)
     }
+    # Show peak lags, under the plot, sets the peak timeline.
+    values$peaks <- if (isFALSE(input$show_peaks)) 'never' else NULL
     Filter(Negate(is.null), values)
 }
+
+# The x values typed into the viewer's tick field, sorted and unique, or
+# NULL when the field is empty.
+.cdrgam_cli_viz_ticks <- function(text) {
+    text <- trimws(.cdrgam_cli_null(text, ''))
+    if (!nzchar(text)) return(NULL)
+    parts <- strsplit(text, '[,[:space:]]+')[[1L]]
+    parts <- parts[nzchar(parts)]
+    values <- suppressWarnings(as.numeric(parts))
+    if (!length(values) || any(!is.finite(values))) .cdrgam_cli_abort(paste0(
+        'X tick values must be numbers separated by commas or spaces, not "',
+        text, '"'
+    ))
+    sort(unique(values))
+}
+
+# Up to eight colors of each named palette, for the palette menu, as a list
+# named by palette; a palette with fewer colors gives all of them, and
+# `custom` none.
+.cdrgam_cli_viz_palette_swatches <- function(palettes) {
+    swatches <- lapply(palettes, function(palette) {
+        if (identical(palette, 'custom')) return(character())
+        count <- if (palette %in% names(.cdrgam_cli_brewer_palettes)) {
+            min(8L, .cdrgam_cli_brewer_palettes[[palette]])
+        } else 8L
+        unname(.cdrgam_cli_palette_colors(palette, paste0('s', seq_len(count))))
+    })
+    stats::setNames(swatches, palettes)
+}
+
+# The selectize render functions that draw a palette's swatches before its
+# name, in the menu and in the chosen item; `%s` takes the swatches as JSON.
+.cdrgam_cli_viz_swatch_render <- paste0(
+    '(function() { var swatches = %s; function draw(item, escape) {',
+    ' var colors = swatches[item.value] || []; var blocks = colors.map(function(color) {',
+    ' return \'<span style="display:inline-block;width:14px;height:14px;background:\'',
+    ' + escape(color) + \';"></span>\'; }).join(\'\');',
+    ' return \'<div><div style="display:flex;margin-bottom:2px;">\' + blocks +',
+    ' \'</div><div class="small">\' + escape(item.label) + \'</div></div>\'; }',
+    ' return {option: draw, item: draw}; })()'
+)
 
 # The viewer's palette for `count` lines: okabe-ito, or viridis when there
 # are more lines than okabe-ito has colors. The switch recolors every line.
@@ -138,80 +184,6 @@
 .cdrgam_cli_viz_line_colors <- function(ids, palette='okabe-ito') {
     if (identical(palette, 'okabe-ito')) palette <- .cdrgam_cli_viz_palette(length(ids))
     .cdrgam_cli_palette_colors(palette, ids)
-}
-
-.cdrgam_cli_viz_ids <- function(entries) {
-    vapply(entries, function(entry) entry$spec$id, character(1))
-}
-
-# The viewer's lines as one effect grid: each line's rows, with its id in
-# `line` (a factor in line order), its horizontal axis name in `.cdrgam_axis`,
-# and that axis's values in `.viewer_x`, so lines over different axes share
-# the horizontal axis.
-.cdrgam_cli_viz_grid <- function(entries) {
-    tables <- lapply(entries, function(entry) {
-        data <- as.data.frame(entry$data)
-        axis <- entry$spec$varying[[1L]]
-        data$.viewer_x <- data[[axis]]
-        data$.cdrgam_axis <- axis
-        data$line <- entry$spec$id
-        data$layer <- 'estimate'
-        data
-    })
-    data <- .cdrgam_cli_bind_tables(tables)
-    data$line <- factor(data$line, levels=.cdrgam_cli_viz_ids(entries))
-    data
-}
-
-# The peaks the viewer's lines used, one row per line and peak, with the
-# lane label each gets: the line's label, adding the peak when the line used
-# more than one, another term's, or a negative peak. `term` and `line` hold
-# the line id, and attribute `draws` the posterior draws with their line.
-# NULL when no line used a peak.
-.cdrgam_cli_viz_peaks <- function(entries) {
-    peaks <- list()
-    draws <- list()
-    for (entry in entries) {
-        table <- attr(entry$data, 'peaks')
-        if (is.null(table) || !nrow(table)) next
-        sampled <- attr(table, 'draws')
-        table <- as.data.frame(table)
-        lanes <- .cdrgam_cli_peak_lanes(table)
-        label <- entry$spec$label
-        table$.label <- ifelse(
-            nrow(table) > 1L | table$source != table$term | table$direction == 'neg',
-            paste0(label, ' · ', sub('^.* · ', '', lanes)), label
-        )
-        table$term <- entry$spec$id
-        table$line <- entry$spec$id
-        peaks[[length(peaks) + 1L]] <- table[c(
-            'term', 'line', 'source', 'direction', 'lag', 'lower', 'upper', '.label'
-        )]
-        if (!is.null(sampled) && nrow(sampled)) {
-            sampled$line <- entry$spec$id
-            draws[[length(draws) + 1L]] <- sampled
-        }
-    }
-    if (!length(peaks)) return(NULL)
-    table <- do.call(rbind, peaks)
-    attr(table, 'draws') <- if (length(draws)) do.call(rbind, draws) else NULL
-    table
-}
-
-# The rows of a peak-lag plot of the viewer's lines: one per line and peak,
-# labeled by lane in line order.
-.cdrgam_cli_viz_peak_rows <- function(entries) {
-    peaks <- .cdrgam_cli_viz_peaks(entries)
-    if (is.null(peaks)) .cdrgam_cli_abort(
-        'No line uses a peak; set lag to peak to plot peak lags'
-    )
-    data.frame(
-        term=peaks$term, line=factor(peaks$line, levels=.cdrgam_cli_viz_ids(entries)),
-        peak=factor(peaks$.label, levels=unique(peaks$.label)), source=peaks$source,
-        direction=peaks$direction, estimate=peaks$lag, lower=peaks$lower,
-        upper=peaks$upper, group=NA_character_, layer='estimate',
-        stringsAsFactors=FALSE
-    )
 }
 
 # The render the viewer draws its lines with, validated like a definition's.
@@ -230,86 +202,30 @@
     if (identical(palette, 'okabe-ito')) palette <- .cdrgam_cli_viz_palette(length(entries))
     render <- list(
         geometry=geometry,
-        mappings=if (peak) list(x='peak', y='estimate', color='line') else
-            list(x='.viewer_x', y='estimate', color='line', group='line'),
+        mappings=.cdrgam_cli_lines_mappings(settings$statistic),
         interval=interval, palette=palette,
         xlab=.cdrgam_cli_null(settings$xlab, if (peak) 'Peak' else paste(axes, collapse=' / ')),
         ylab=.cdrgam_cli_null(settings$ylab, if (peak) 'Peak lag' else 'Effect (linear predictor)')
     )
-    for (name in c('title', 'theme', 'peaks', 'spacing', 'statistic')) {
+    for (name in c('title', 'theme', 'peaks', 'spacing', 'statistic', 'y_zero')) {
         render[[name]] <- settings[[name]]
     }
+    render$theme <- .cdrgam_cli_null(render$theme, 'classic')
     .cdrgam_cli_validate_render(Filter(Negate(is.null), render), 'viewer render')
 }
 
-# The plot specification of the viewer's lines, with legend entries labeled
-# by line label.
+# The plot specification of the viewer's lines under its appearance
+# settings; see .cdrgam_cli_lines_spec().
 .cdrgam_cli_viz_line_spec <- function(entries, show_interval=TRUE, settings=list()) {
-    render <- .cdrgam_cli_viz_render(entries, show_interval, settings)
-    data <- if (identical(render$statistic, 'peak-lag')) {
-        .cdrgam_cli_viz_peak_rows(entries)
-    } else .cdrgam_cli_viz_grid(entries)
-    spec <- .cdrgam_cli_plot_spec(data, list(render=render))
-    labels <- vapply(entries, function(entry) entry$spec$label, character(1))
-    spec$color$labels <- labels[match(spec$color$levels, .cdrgam_cli_viz_ids(entries))]
-    spec$render <- render
-    spec
-}
-
-# The peak timeline of the viewer's lines, or NULL when none is drawn: as
-# for rendered plots, only under lines or points of estimates, when
-# render.peaks allows it (see .cdrgam_cli_show_peaks()). Lanes are colored
-# like their lines; the strip shares the x-axis when every line runs over
-# lag at linear spacing. `spec` is the lines' plot specification.
-.cdrgam_cli_viz_strip_spec <- function(entries, spec) {
-    render <- spec$render
-    if (!(render$geometry %in% c('line', 'point')) ||
-            identical(render$statistic, 'peak-lag')) return(NULL)
-    table <- .cdrgam_cli_viz_peaks(entries)
-    if (!.cdrgam_cli_show_peaks(table, render$peaks)) return(NULL)
-    shared <- all(unique(spec$rows$.cdrgam_axis) == 'lag') &&
-        !identical(render$spacing, 'uniform')
-    .cdrgam_cli_peak_strip_spec(
-        table, colors=spec$color$values, labels=table$.label,
-        xlim=if (shared) range(c(spec$rows$.viewer_x, table$lag), na.rm=TRUE),
-        theme=spec$theme
-    )
-}
-
-# The pointwise peaks of the viewer's lines that hold lag at
-# peak-pointwise, one row per point, with the line id in `line` and the
-# point's horizontal axis value in `.viewer_x`; NULL when no line does.
-.cdrgam_cli_viz_pointwise <- function(entries) {
-    tables <- lapply(entries, function(entry) {
-        table <- attr(entry$data, 'pointwise_peaks')
-        if (is.null(table) || !nrow(table)) return(NULL)
-        table <- as.data.frame(table)
-        table$.viewer_x <- table[[entry$spec$varying[[1L]]]]
-        table$line <- entry$spec$id
-        table$layer <- 'estimate'
-        table
-    })
-    tables <- Filter(Negate(is.null), tables)
-    if (!length(tables)) return(NULL)
-    .cdrgam_cli_bind_tables(tables)
-}
-
-# The pointwise-peak panel of the viewer's lines, or NULL when none is
-# drawn: as for rendered plots, under lines or points of estimates unless
-# render.peaks is never. `spec` is the lines' plot specification.
-.cdrgam_cli_viz_pointwise_spec <- function(entries, spec) {
-    render <- spec$render
-    if (!(render$geometry %in% c('line', 'point')) ||
-            identical(render$statistic, 'peak-lag') ||
-            identical(render$peaks, 'never')) return(NULL)
-    .cdrgam_cli_pointwise_spec(.cdrgam_cli_viz_pointwise(entries), spec, render)
+    .cdrgam_cli_lines_spec(entries, .cdrgam_cli_viz_render(entries, show_interval, settings))
 }
 
 .cdrgam_cli_viz_line_plot <- function(entries, show_interval=TRUE, settings=list()) {
-    spec <- .cdrgam_cli_viz_line_spec(entries, show_interval, settings)
+    figure <- .cdrgam_cli_lines_figure(
+        entries, .cdrgam_cli_viz_render(entries, show_interval, settings)
+    )
     .cdrgam_cli_plotly_figure(
-        .cdrgam_cli_plotly_plot(spec), .cdrgam_cli_viz_strip_spec(entries, spec), spec,
-        .cdrgam_cli_viz_pointwise_spec(entries, spec)
+        .cdrgam_cli_plotly_plot(figure$spec), figure$strip, figure$spec, figure$pointwise
     )
 }
 
@@ -317,7 +233,7 @@
 # plot. NULL when no strip is drawn.
 .cdrgam_cli_viz_peak_strip <- function(entries) {
     spec <- .cdrgam_cli_viz_line_spec(entries)
-    strip <- .cdrgam_cli_viz_strip_spec(entries, spec)
+    strip <- .cdrgam_cli_lines_strip_spec(entries, spec)
     if (is.null(strip)) return(NULL)
     list(
         rows=as.character(strip$peaks$.lane),
@@ -408,6 +324,17 @@
         paste0('render_', name), fields[[name]]$label,
         value=.cdrgam_cli_null(values[[name]], ''), placeholder='Automatic'
     )
+    # The palette menu shows each palette's colors beside its name.
+    palette_input <- function(choices) {
+        swatches <- .cdrgam_cli_viz_palette_swatches(unname(choices))
+        shiny::selectizeInput(
+            'render_palette', fields$palette$label, choices,
+            selected=pick(values$palette, choices, choices[[1L]]),
+            options=list(render=I(sprintf(.cdrgam_cli_viz_swatch_render, as.character(
+                jsonlite::toJSON(swatches, auto_unbox=FALSE)
+            ))))
+        )
+    }
     intervals <- .cdrgam_cli_viz_intervals(geometry)
     default_interval <- if (identical(mode, 'surface')) 'none' else {
         fields$interval$default(list(geometry=geometry))
@@ -422,7 +349,7 @@
             'spacing', c('Continuous axis'='', 'Uniform ticks'='uniform', 'Linear ticks'='linear')
         ),
         palette=if (identical(mode, 'line')) shiny::tagList(
-            choose('palette', c(
+            palette_input(c(
                 'Okabe-Ito (viridis above 8 lines)'='okabe-ito', 'ggplot2 hue'='default',
                 'Rainbow'='rainbow', 'Grey'='grey',
                 stats::setNames(.cdrgam_cli_viridis_palettes, .cdrgam_cli_viridis_palettes),
@@ -440,9 +367,13 @@
                 )
             )
         ),
-        peaks=if (identical(mode, 'line')) choose('peaks', fields$peaks$choices),
+        # The peak timeline is toggled by the Show peak lags box under the plot.
         title=text('title'), xlab=text('xlab'), ylab=text('ylab'),
-        theme=choose('theme', fields$theme$choices, fields$theme$default)
+        # The viewer starts in classic; definitions keep their paper default.
+        theme=choose('theme', fields$theme$choices, 'classic'),
+        y_zero=if (identical(mode, 'line')) shiny::checkboxInput(
+            'render_y_zero', fields$y_zero$label, isTRUE(values$y_zero)
+        )
     )
     shiny::tagList(
         Filter(Negate(is.null), controls[.cdrgam_cli_viz_control_fields()]),
@@ -457,15 +388,62 @@
 # the viewer's default palette differs from a definition's. Mappings are
 # left to the definition, whose query decides which columns exist. A 3D
 # surface has no render geometry, so its geometry is left out with a note.
-.cdrgam_cli_viz_render_yaml <- function(settings, mode='line') {
+# The viewer's lines as a visualization definition in YAML (see
+# .cdrgam_cli_lines_definition()). `lines` are the viewer's line records,
+# `terms` a function of a model id giving that model's viewer terms, and
+# `options` and `settings` the evaluation options and appearance. Lines
+# must come from one project, since a definition belongs to one.
+.cdrgam_cli_viz_definition_yaml <- function(lines, terms, options, settings) {
+    if (!length(lines)) .cdrgam_cli_abort('Add a line first')
+    ids <- vapply(lines, `[[`, character(1), 'model_id')
+    projects <- unique(sub('/.*$', '', ids))
+    if (length(projects) != 1L) .cdrgam_cli_abort(paste0(
+        'The lines come from projects ', paste(projects, collapse=', '),
+        '; a visualization definition belongs to one project'
+    ))
+    entries <- lapply(seq_along(lines), function(index) {
+        line <- lines[[index]]
+        match <- Filter(function(term) identical(term$label, line$term), terms(line$model_id))
+        if (length(match) != 1L) .cdrgam_cli_abort(paste0(
+            'Term ', line$term, ' is no longer in ', line$model_id
+        ))
+        list(
+            id=paste0('line', index), label=line$label, model=sub('^[^/]*/', '', line$model_id),
+            query=.cdrgam_cli_viz_line_query(match[[1L]], line, options)
+        )
+    })
+    render <- .cdrgam_cli_viz_render_values(settings)
+    render <- c(list(geometry=.cdrgam_cli_null(render$geometry, 'line')),
+        render[setdiff(names(render), 'geometry')])
+    definition <- .cdrgam_cli_lines_definition(entries, render)
+    paste(c(
+        paste0('# Visualization definition from cdrgam viz, for project ', projects, '.'),
+        '# Save it under definitions/visualizations/ in that project.',
+        sub('\n$', '', yaml::as.yaml(definition))
+    ), collapse='\n')
+}
+
+# The viewer's appearance as a render block's values: the settings that
+# were chosen, in registry order, and the palette, since the viewer's
+# default palette differs from a definition's.
+.cdrgam_cli_viz_render_values <- function(settings, mode='line') {
     surface <- identical(mode, 'surface')
     fields <- .cdrgam_cli_viz_control_fields()
-    if (surface) fields <- setdiff(fields, c('palette', 'spacing', 'statistic', 'peaks'))
+    if (surface) {
+        fields <- setdiff(fields, c('palette', 'spacing', 'statistic', 'peaks', 'y_zero'))
+    }
     values <- settings[intersect(fields, names(settings))]
     if (!surface) {
         palette <- .cdrgam_cli_null(values$palette, 'okabe-ito')
         values$palette <- .cdrgam_cli_validate_render_palette(palette, 'palette')
     }
+    values[intersect(fields, names(values))]
+}
+
+.cdrgam_cli_viz_render_yaml <- function(settings, mode='line') {
+    surface <- identical(mode, 'surface')
+    fields <- .cdrgam_cli_viz_control_fields()
+    values <- .cdrgam_cli_viz_render_values(settings, mode)
     three_d <- surface && identical(.cdrgam_cli_null(values$geometry, 'surface'), 'surface')
     if (three_d) values$geometry <- NULL
     if (surface && !three_d && is.null(values$interval)) values$interval <- 'none'
@@ -487,6 +465,7 @@
     names <- c(.cdrgam_cli_viz_control_fields(), 'palette_colors')
     values <- lapply(names, function(name) input[[paste0('render_', name)]])
     names(values) <- names
+    values$show_peaks <- input$show_peaks
     Filter(Negate(is.null), values)
 }
 
@@ -524,6 +503,15 @@ $(function() {
   });
   Shiny.addCustomMessageHandler('cdrgam-lines', function(value) {
     try { window.sessionStorage.setItem(key, value); } catch (error) {}
+  });
+  var formKey = 'cdrgam-viz-form';
+  $(document).on('shiny:connected', function() {
+    var saved = null;
+    try { saved = window.sessionStorage.getItem(formKey); } catch (error) {}
+    if (saved) Shiny.setInputValue('restore_form', saved, {priority: 'event'});
+  });
+  Shiny.addCustomMessageHandler('cdrgam-form', function(value) {
+    try { window.sessionStorage.setItem(formKey, value); } catch (error) {}
   });
   var appearanceKey = 'cdrgam-viz-appearance';
   $(document).on('shiny:connected', function() {
@@ -630,6 +618,19 @@ $(function() {
                 bslib::accordion_panel(
                     'Options',
                     shiny::numericInput('n', 'Grid points per axis', 200, min=2, max=2000),
+                    shiny::conditionalPanel(
+                        "input.mode == 'line'",
+                        shiny::textInput(
+                            'x_ticks', 'X tick values', placeholder='Grid points'
+                        ),
+                        shiny::div(
+                            class='form-text mt-n2 mb-2',
+                            paste(
+                                'Numbers separated by commas or spaces. Lines are',
+                                'evaluated at these values, with a tick at each.'
+                            )
+                        )
+                    ),
                     shiny::numericInput(
                         'level', 'Interval level', 0.95,
                         min=0.5, max=0.999, step=0.01
@@ -638,6 +639,14 @@ $(function() {
                         'interval', 'Intervals',
                         c('Pointwise'='pointwise', 'Simultaneous'='simultaneous'),
                         inline=TRUE
+                    ),
+                    shiny::div(
+                        class='form-text mt-n2 mb-2',
+                        paste(
+                            'Simultaneous bands cover the whole line. At a peak lag',
+                            'they come from 1000 posterior draws that each find their',
+                            'own peak, so they include uncertainty about the peak.'
+                        )
                     ),
                     shiny::checkboxInput(
                         'unconditional', 'Include smoothing-parameter uncertainty', FALSE
@@ -652,7 +661,17 @@ $(function() {
                 shiny::div(
                     style='display:flex; justify-content:space-between; align-items:center;',
                     shiny::textOutput('status', inline=TRUE),
-                    shiny::downloadButton('download', 'Data (CSV)', class='btn-sm')
+                    shiny::div(
+                        style='display:flex; gap:1rem; align-items:center;',
+                        shiny::conditionalPanel(
+                            "input.mode == 'line'",
+                            shiny::div(
+                                class='mb-n3',
+                                shiny::checkboxInput('show_peaks', 'Show peak lags', TRUE)
+                            )
+                        ),
+                        shiny::downloadButton('download', 'Data (CSV)', class='btn-sm')
+                    )
                 )
             )
         ),
@@ -665,9 +684,19 @@ $(function() {
                 fill=FALSE, height='220px',
                 bslib::card_header(
                     shiny::div(
-                        style='display:flex; justify-content:space-between;',
-                        'Lines',
-                        shiny::actionLink('clear_lines', 'Remove all')
+                        style=paste(
+                            'display:flex; justify-content:space-between;',
+                            'align-items:center; width:100%;'
+                        ),
+                        shiny::span('Lines'),
+                        shiny::div(
+                            class='ms-auto',
+                            shiny::actionLink(
+                                'show_definition_yaml', 'Definition YAML',
+                                icon=shiny::icon('code'), class='me-3'
+                            ),
+                            shiny::actionLink('clear_lines', 'Remove all')
+                        )
                     )
                 ),
                 bslib::card_body(
@@ -687,7 +716,10 @@ $(function() {
         key <- paste(path, unclass(file.info(path)$mtime))
         if (!exists(key, envir=fits, inherits=FALSE)) {
             fit <- readRDS(path)
-            assign(key, list(fit=fit, terms=.cdrgam_cli_viz_terms(fit)), envir=fits)
+            assign(key, list(
+                fit=fit, terms=.cdrgam_cli_viz_terms(fit),
+                catalog=.cdrgam_cli_core_effect_catalog(fit)
+            ), envir=fits)
         }
         get(key, envir=fits, inherits=FALSE)
     }
@@ -727,7 +759,12 @@ $(function() {
                 jsonlite::fromJSON(input$restore_appearance, simplifyVector=TRUE),
                 error=function(error) NULL
             )
-            if (is.list(values) && length(values)) restored_appearance(values)
+            if (is.list(values) && length(values)) {
+                restored_appearance(values)
+                if (isFALSE(values$show_peaks)) {
+                    shiny::updateCheckboxInput(session, 'show_peaks', value=FALSE)
+                }
+            }
         }, once=TRUE)
         output$appearance_controls <- shiny::renderUI({
             mode <- input$mode
@@ -764,6 +801,28 @@ $(function() {
                     'Paste this into a visualization definition. File-only',
                     'settings (formats, width, height, dpi) and facet scales',
                     'are not set by the viewer.'
+                )),
+                easyClose=TRUE, footer=shiny::modalButton('Close')
+            ))
+        })
+        shiny::observeEvent(input$show_definition_yaml, {
+            text <- tryCatch(
+                .cdrgam_cli_viz_definition_yaml(
+                    lines(), function(id) load_fit(model_path(id))$terms, options(),
+                    settings()
+                ),
+                error=function(error) {
+                    shiny::showNotification(conditionMessage(error), type='error')
+                    NULL
+                }
+            )
+            if (is.null(text)) return()
+            shiny::showModal(shiny::modalDialog(
+                title='Visualization definition', size='l', shiny::tags$pre(text),
+                shiny::div(class='form-text', paste(
+                    'cdrgam run renders this definition with the same lines,',
+                    'options, and appearance. Add formats, width, height, or dpi',
+                    'under render for the files.'
                 )),
                 easyClose=TRUE, footer=shiny::modalButton('Close')
             ))
@@ -817,7 +876,11 @@ $(function() {
         output$axis_controls <- shiny::renderUI({
             info <- term()
             axes <- names(info$axes)
-            pending <- shiny::isolate(session$userData$pending_varying)
+            # Without a pending line, keep the axes already chosen, so a data
+            # refresh leaves the form as it was.
+            pending <- shiny::isolate(.cdrgam_cli_null(
+                session$userData$pending_varying, c(input$x_axis, input$y_axis)
+            ))
             if (identical(input$mode, 'surface')) {
                 if (length(axes) < 2L) return(shiny::div(
                     class='text-danger small mb-3',
@@ -855,7 +918,10 @@ $(function() {
         output$group_controls <- shiny::renderUI({
             info <- term()
             if (!isTRUE(info$grouped)) return(NULL)
-            pending <- shiny::isolate(session$userData$pending_group)
+            pending <- shiny::isolate(.cdrgam_cli_null(
+                session$userData$pending_group,
+                list(grouping=input$grouping, group=input$group)
+            ))
             shiny::tagList(
                 shiny::selectInput(
                     'grouping', 'Grouping',
@@ -880,7 +946,11 @@ $(function() {
             pending <- shiny::isolate(session$userData$pending_fixed)
             controls <- lapply(fixed_axes, function(name) {
                 axis <- info$axes[[name]]
-                value <- pending[[name]]
+                # A pending line's value, else the value already typed.
+                value <- if (is.null(pending)) {
+                    typed <- shiny::isolate(input[[.cdrgam_cli_viz_input_id(name)]])
+                    if (is.null(typed) || !nzchar(trimws(typed))) NULL else typed
+                } else pending[[name]]
                 if (is.null(value) || (!is.character(value) && is.na(value))) {
                     value <- .cdrgam_cli_viz_default(name)
                 }
@@ -922,24 +992,28 @@ $(function() {
             axes <- .cdrgam_cli_viz_reference_axes(info, varying())
             if (!length(axes)) return(NULL)
             pending <- shiny::isolate(session$userData$pending_reference)
+            # Without a pending line, keep what is already typed and checked.
+            typed <- if (is.null(pending)) shiny::isolate(stats::setNames(lapply(
+                axes, function(name) input[[.cdrgam_cli_viz_reference_id(name)]]
+            ), axes))
+            checked <- if (is.null(pending)) {
+                isTRUE(shiny::isolate(input$use_reference))
+            } else length(pending) > 0L
             fields <- lapply(axes, function(name) {
-                value <- pending[[name]]
-                value <- if (is.null(value) || (!is.character(value) && is.na(value))) {
-                    ''
+                value <- if (is.null(pending)) typed[[name]] else pending[[name]]
+                value <- if (is.null(value)) '' else if (!is.character(value) && is.na(value)) {
+                    'default'
                 } else .cdrgam_cli_viz_format(value)
                 shiny::tagAppendAttributes(
                     shiny::textInput(
                         .cdrgam_cli_viz_reference_id(name), name, value=value
                     ),
-                    placeholder=if (name %in% c('lag', 'time')) 'plotted value' else
-                        'model default', .cssSelector='input'
+                    placeholder='plotted value', .cssSelector='input'
                 )
             })
             shiny::tagList(
                 shiny::tags$h6('Reference', class='mt-2'),
-                shiny::checkboxInput(
-                    'use_reference', 'Subtract a reference', length(pending) > 0L
-                ),
+                shiny::checkboxInput('use_reference', 'Subtract a reference', checked),
                 shiny::conditionalPanel(
                     'input.use_reference',
                     fields,
@@ -948,9 +1022,9 @@ $(function() {
                         paste(
                             'The line shows the effect minus the effect with these',
                             'fixed values changed; plotted axes keep their values.',
-                            'An empty predictor field uses the model default: terms',
-                            'involving that predictor drop out of the reference. An',
-                            'empty lag or time field keeps its fixed value.'
+                            'An empty field keeps the line\'s fixed value. A',
+                            'predictor set to default takes the model default: terms',
+                            'involving it drop out of the reference.'
                         )
                     )
                 )
@@ -979,9 +1053,12 @@ $(function() {
                 names <- .cdrgam_cli_viz_reference_axes(info, axes)
                 value$reference <- .cdrgam_cli_viz_reference_values(
                     stats::setNames(lapply(names, function(name) {
-                        .cdrgam_cli_viz_input_value(
-                            input[[.cdrgam_cli_viz_reference_id(name)]], name
-                        )
+                        text <- trimws(.cdrgam_cli_null(
+                            input[[.cdrgam_cli_viz_reference_id(name)]], ''
+                        ))
+                        if (!nzchar(text)) return(NULL)
+                        if (identical(text, 'default')) return(NA_real_)
+                        .cdrgam_cli_viz_input_value(text, name)
                     }), names)
                 )
             }
@@ -995,7 +1072,10 @@ $(function() {
             n=max(2L, as.integer(.cdrgam_cli_null(input$n, 200L))),
             level=.cdrgam_cli_null(input$level, 0.95),
             unconditional=isTRUE(input$unconditional),
-            interval=.cdrgam_cli_null(input$interval, 'pointwise')
+            interval=.cdrgam_cli_null(input$interval, 'pointwise'),
+            ticks=if (!identical(input$mode, 'surface')) {
+                tryCatch(.cdrgam_cli_viz_ticks(input$x_ticks), error=function(error) NULL)
+            }
         ))
 
         evaluate <- function(value, options) {
@@ -1011,7 +1091,9 @@ $(function() {
             if (length(match) != 1L) .cdrgam_cli_abort(paste0(
                 'Term ', value$term, ' is no longer in ', value$model_id
             ))
-            data <- .cdrgam_cli_viz_estimate(loaded$fit, match[[1L]], value, options)
+            data <- .cdrgam_cli_viz_estimate(
+                loaded$fit, match[[1L]], value, options, loaded$catalog
+            )
             assign(key, data, envir=results)
             data
         }
@@ -1019,8 +1101,8 @@ $(function() {
         restore <- function(value) {
             session$userData$pending_term <- value$term
             session$userData$pending_varying <- value$varying
-            session$userData$pending_fixed <- value$fixed
-            session$userData$pending_reference <- value$reference
+            session$userData$pending_fixed <- .cdrgam_cli_null(value$fixed, list())
+            session$userData$pending_reference <- .cdrgam_cli_null(value$reference, list())
             session$userData$pending_group <- list(
                 grouping=value$grouping, group=value[['group']]
             )
@@ -1031,6 +1113,72 @@ $(function() {
                 shiny::updateSelectInput(session, 'term', selected=value$term)
             }
         }
+        # The form and options survive a page reload or server restart in
+        # session storage: the model, term, axes, fixed and reference values,
+        # composition, grouping, label, and the Options panel.
+        option_inputs <- c('n', 'level', 'interval', 'unconditional', 'x_ticks')
+        shiny::observe({
+            info <- tryCatch(term(), error=function(error) NULL)
+            axes <- if (is.null(info)) character() else names(info$axes)
+            chosen <- c(input$x_axis, if (identical(input$mode, 'surface')) input$y_axis)
+            fixed <- setdiff(axes, chosen)
+            references <- if (is.null(info)) character() else {
+                .cdrgam_cli_viz_reference_axes(info, chosen)
+            }
+            state <- list(
+                mode=input$mode, model_id=input$model, term=input$term, varying=chosen,
+                fixed=stats::setNames(lapply(fixed, function(name) {
+                    .cdrgam_cli_null(input[[.cdrgam_cli_viz_input_id(name)]], '')
+                }), fixed),
+                reference=if (isTRUE(input$use_reference)) stats::setNames(lapply(
+                    references, function(name) {
+                        .cdrgam_cli_null(input[[.cdrgam_cli_viz_reference_id(name)]], '')
+                    }
+                ), references),
+                composition=input$composition, grouping=input$grouping,
+                group=input$group, label=input$label,
+                options=stats::setNames(lapply(option_inputs, function(name) input[[name]]),
+                    option_inputs)
+            )
+            if (is.null(state$model_id)) return()
+            session$sendCustomMessage('cdrgam-form', as.character(jsonlite::toJSON(
+                state, auto_unbox=TRUE, null='null', digits=NA
+            )))
+        })
+        shiny::observeEvent(input$restore_form, {
+            state <- tryCatch(
+                jsonlite::fromJSON(input$restore_form, simplifyVector=FALSE),
+                error=function(error) NULL
+            )
+            if (!is.list(state) || is.null(state$model_id)) return()
+            options <- state$options
+            if (!is.null(options$n)) shiny::updateNumericInput(session, 'n', value=options$n)
+            if (!is.null(options$level)) {
+                shiny::updateNumericInput(session, 'level', value=options$level)
+            }
+            if (!is.null(options$interval)) {
+                shiny::updateRadioButtons(session, 'interval', selected=options$interval)
+            }
+            if (!is.null(options$unconditional)) shiny::updateCheckboxInput(
+                session, 'unconditional', value=isTRUE(options$unconditional)
+            )
+            if (!is.null(options$x_ticks)) {
+                shiny::updateTextInput(session, 'x_ticks', value=options$x_ticks)
+            }
+            if (!is.null(state$mode)) {
+                shiny::updateRadioButtons(session, 'mode', selected=state$mode)
+            }
+            if (!is.null(state$label)) shiny::updateTextInput(session, 'label', value=state$label)
+            state$varying <- as.character(unlist(state$varying))
+            text <- function(values) lapply(values, function(value) {
+                if (is.null(value)) '' else as.character(value)
+            })
+            state$fixed <- text(state$fixed)
+            if (!is.null(state$reference)) state$reference <- text(state$reference)
+            if (is.null(state$grouping)) state$grouping <- 'population'
+            restore(state)
+        }, once=TRUE)
+
         shiny::observeEvent(input$term, {
             session$userData$pending_varying <- NULL
             session$userData$pending_fixed <- NULL
@@ -1085,6 +1233,19 @@ $(function() {
             shiny::updateTextInput(session, 'label', value=match[[1L]]$label)
             restore(match[[1L]])
         })
+        # Move a line one place up (`step = -1`) or down (`step = 1`); its
+        # place sets its legend order and its color.
+        move_line <- function(id, step) {
+            values <- lines()
+            ids <- vapply(values, `[[`, character(1), 'id')
+            from <- match(id, ids)
+            to <- from + step
+            if (is.na(from) || to < 1L || to > length(values)) return()
+            values[c(from, to)] <- values[c(to, from)]
+            lines(values)
+        }
+        shiny::observeEvent(input$move_line_up, move_line(input$move_line_up, -1L))
+        shiny::observeEvent(input$move_line_down, move_line(input$move_line_down, 1L))
         shiny::observeEvent(input$clear_lines, {
             lines(list())
             editing(NULL)
@@ -1108,8 +1269,9 @@ $(function() {
                 seq_along(values), function(index) {
                 line <- values[[index]]
                 color <- colors[[index]]
-                action <- function(input_id, text) shiny::tags$a(
-                    href='#', class='ms-2 small', text,
+                action <- function(input_id, text, title=NULL, enabled=TRUE) shiny::tags$a(
+                    href='#', title=title, text,
+                    class=paste('ms-2 small', if (!enabled) 'invisible' else ''),
                     onclick=sprintf(
                         "Shiny.setInputValue('%s', '%s', {priority: 'event'}); return false;",
                         input_id, line$id
@@ -1128,6 +1290,8 @@ $(function() {
                         color
                     )),
                     shiny::span(class='flex-grow-1', line$label),
+                    action('move_line_up', '\u2191', 'Move up', index > 1L),
+                    action('move_line_down', '\u2193', 'Move down', index < length(values)),
                     action('edit_line', 'Edit'), action('remove_line', 'Remove')
                 )
             }))
@@ -1183,6 +1347,14 @@ $(function() {
             }
         })
 
+        shiny::observeEvent(input$x_ticks, {
+            message <- tryCatch({
+                .cdrgam_cli_viz_ticks(input$x_ticks)
+                NULL
+            }, error=conditionMessage)
+            if (!is.null(message)) shiny::showNotification(message, type='error')
+        }, ignoreInit=TRUE)
+
         output$plot <- plotly::renderPlotly({
             value <- plotted()
             shiny::validate(shiny::need(length(value$entries) > 0L, 'Nothing to plot.'))
@@ -1195,7 +1367,13 @@ $(function() {
                         value$entries[[1L]]$data, value$entries[[1L]]$spec,
                         settings=chosen
                     )
-                } else .cdrgam_cli_viz_line_plot(value$entries, settings=chosen)
+                } else {
+                    # Lines at chosen x values put a tick at each.
+                    if (length(options()$ticks) && is.null(chosen$spacing)) {
+                        chosen$spacing <- 'linear'
+                    }
+                    .cdrgam_cli_viz_line_plot(value$entries, settings=chosen)
+                }
             }, error=function(error) conditionMessage(error))
             shiny::validate(shiny::need(!is.character(plot), plot))
             plotly::config(plot, displaylogo=FALSE, toImageButtonOptions=list(

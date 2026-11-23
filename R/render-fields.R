@@ -3,7 +3,8 @@
 # table, so a field added here is checked everywhere it must be handled.
 #
 # Each entry has:
-#   kind        choice, mappings, palette, formats, positive, or text.
+#   kind        choice, mappings, palette, formats, positive, text, or flag
+#               (true or false).
 #   choices     for choice fields, the accepted values.
 #   requires    for choice fields, the geometries that some values need,
 #               as a named list from value to geometries.
@@ -25,6 +26,13 @@
 # fields with defaults must come after formats.
 
 .cdrgam_cli_line_geometries <- c('line', 'point', 'bar')
+
+# The native ggplot2 themes a render may name, each drawn with base size 10.
+# `paper` is bw and `slides` is minimal at base size 16.
+.cdrgam_cli_ggplot_theme_names <- c(
+    'grey', 'gray', 'bw', 'linedraw', 'light', 'dark', 'minimal', 'classic', 'void',
+    'test'
+)
 .cdrgam_cli_surface_geometries <- c('raster', 'contour', 'raster-contour')
 
 .cdrgam_cli_render_fields <- list(
@@ -51,8 +59,8 @@
         viewer='control', label='Intervals'
     ),
     theme=list(
-        kind='choice', choices=c('paper', 'minimal', 'slides'), default='paper',
-        viewer='control', label='Theme'
+        kind='choice', choices=c('paper', 'slides', .cdrgam_cli_ggplot_theme_names),
+        default='paper', viewer='control', label='Theme'
     ),
     formats=list(
         kind='formats', choices=c('pdf', 'png', 'svg'), default='pdf',
@@ -82,6 +90,10 @@
         kind='choice', choices=c('estimate', 'peak-lag'), omit='estimate',
         requires=list('peak-lag'=c('point', 'bar')),
         viewer='control', label='Statistic'
+    ),
+    y_zero=list(
+        kind='flag', omit=FALSE, geometries=.cdrgam_cli_line_geometries,
+        viewer='control', label='Include zero on the vertical axis'
     )
 )
 
@@ -152,7 +164,13 @@
             }
             value
         },
-        text=.cdrgam_cli_scalar_character(value, field)
+        text=.cdrgam_cli_scalar_character(value, field),
+        flag={
+            if (!is.logical(value) || length(value) != 1L || is.na(value)) {
+                .cdrgam_cli_abort(paste0(field, ' must be true or false'))
+            }
+            value
+        }
     )
 }
 

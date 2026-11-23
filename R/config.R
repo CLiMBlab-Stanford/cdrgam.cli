@@ -634,7 +634,7 @@
     .cdrgam_cli_check_keys(
         value, c(
             'schema', 'model', 'kind', 'predictions', 'pages',
-            'query', 'layers', 'render', 'preset', 'options'
+            'query', 'layers', 'lines', 'render', 'preset', 'options'
         ),
         path, c('schema', 'model')
     )
@@ -652,8 +652,14 @@
             !is.null(value$render))) {
         .cdrgam_cli_abort(paste0(path, ': booklet fields cannot be combined with query or render'))
     }
+    if (legacy && !is.null(value$lines)) {
+        .cdrgam_cli_abort(paste0(path, ': booklet fields cannot be combined with lines'))
+    }
+    if (!is.null(value$lines)) return(.cdrgam_cli_validate_lines_visualization(value, path))
     if (!legacy && (is.null(value$query) || is.null(value$render))) {
-        .cdrgam_cli_abort(paste0(path, ': effect visualizations require query and render'))
+        .cdrgam_cli_abort(paste0(
+            path, ': effect visualizations require render and either query or lines'
+        ))
     }
     if (!legacy && (!is.null(value$predictions) || !is.null(value$pages))) {
         .cdrgam_cli_abort(paste0(
@@ -744,6 +750,109 @@
             ))
         }
     }
+    attr(value, 'path') <- path
+    value
+}
+
+# The query fields a line may set, and that the definition's `query` may
+# set for every line to inherit.
+.cdrgam_cli_line_query_fields <- c(
+    'composition', 'grouping', 'groups', 'axes', 'reference', 'test', 'uncertainty', 'n'
+)
+
+# A line's query fields over the inherited defaults. A line's value replaces
+# the default for the same field, except that `axes` and `reference` are
+# merged per axis (axes.predictors per predictor) and `uncertainty` per
+# setting, so a line can change one axis and inherit the others.
+.cdrgam_cli_inherit_query <- function(defaults, line) {
+    merged <- defaults
+    per_key <- function(base, override) {
+        if (is.null(base)) return(override)
+        if (is.null(override)) return(base)
+        for (key in names(override)) base[[key]] <- override[[key]]
+        base
+    }
+    for (name in intersect(.cdrgam_cli_line_query_fields, names(line))) {
+        value <- line[[name]]
+        merged[[name]] <- switch(
+            name,
+            axes={
+                axes <- per_key(merged$axes, value[setdiff(names(value), 'predictors')])
+                if (!is.null(value$predictors)) {
+                    axes$predictors <- per_key(merged$axes$predictors, value$predictors)
+                }
+                axes
+            },
+            reference=, uncertainty=per_key(merged[[name]], value),
+            value
+        )
+    }
+    merged
+}
+
+# A visualization of `lines`: each line is one effect query for one term,
+# drawn on a shared plot. The definition's `model` and `query` give
+# defaults that every line inherits (see .cdrgam_cli_inherit_query()) and
+# may override. Each line has an optional `id` (default line1, line2, ...),
+# `label` (default its term, with its model when that differs from the
+# definition's), and `model`, and a required `term`, the exact term label.
+# `render.mappings` defaults to the line's horizontal axis, the estimate,
+# and color by line; the columns `line` and `.line_x` are available to
+# mappings. Layers are not used: each line sets its own composition and
+# grouping.
+.cdrgam_cli_validate_lines_visualization <- function(value, path) {
+    if (!is.null(value$layers)) .cdrgam_cli_abort(paste0(
+        path, ': lines set their own composition and grouping; remove layers'
+    ))
+    if (is.null(value$render)) .cdrgam_cli_abort(paste0(
+        path, ': effect visualizations require render and either query or lines'
+    ))
+    lines <- value$lines
+    if (!is.list(lines) || !length(lines) || !is.null(names(lines)) ||
+            any(!vapply(lines, is.list, logical(1)))) {
+        .cdrgam_cli_abort(paste0(path, ': lines must be a nonempty list of mappings'))
+    }
+    defaults <- .cdrgam_cli_null(value$query, list())
+    if (!is.list(defaults)) .cdrgam_cli_abort(paste0(path, ': query must be a mapping'))
+    defaults <- .cdrgam_cli_restore_yaml_keys(defaults, c('FALSE'='n'), paste0(path, ': query'))
+    if (!is.null(defaults$terms)) .cdrgam_cli_abort(paste0(
+        path, ': query.terms cannot be combined with lines; give each line its term'
+    ))
+    .cdrgam_cli_check_keys(defaults, .cdrgam_cli_line_query_fields, paste0(path, ': query'))
+    ids <- character(length(lines))
+    for (index in seq_along(lines)) {
+        field <- paste0(path, ': lines[[', index, ']]')
+        line <- .cdrgam_cli_restore_yaml_keys(lines[[index]], c('FALSE'='n'), field)
+        .cdrgam_cli_check_keys(
+            line, c('id', 'label', 'model', 'term', .cdrgam_cli_line_query_fields),
+            field, 'term'
+        )
+        term <- .cdrgam_cli_scalar_character(line$term, paste0(field, '.term'))
+        model <- .cdrgam_cli_name(
+            .cdrgam_cli_null(line$model, value$model), paste0(field, '.model')
+        )
+        id <- .cdrgam_cli_name(
+            .cdrgam_cli_null(line$id, paste0('line', index)), paste0(field, '.id')
+        )
+        label <- if (is.null(line$label)) {
+            if (identical(model, value$model)) term else paste0(model, ': ', term)
+        } else .cdrgam_cli_scalar_character(line$label, paste0(field, '.label'))
+        query <- .cdrgam_cli_inherit_query(defaults, line)
+        query$terms <- list(names=term, match='exact')
+        query <- .cdrgam_cli_validate_effect_query(query, paste0(field, ' query'))
+        lines[[index]] <- list(id=id, label=label, model=model, query=query)
+        ids[[index]] <- id
+    }
+    if (anyDuplicated(ids)) .cdrgam_cli_abort(paste0(path, ': line ids must be unique'))
+    value$query <- NULL
+    value$lines <- lines
+    if (is.list(value$render) && is.null(value$render$mappings)) {
+        value$render$mappings <- .cdrgam_cli_lines_mappings(value$render$statistic)
+    }
+    value$render <- .cdrgam_cli_validate_render(value$render, paste0(path, ': render'))
+    if (value$render$geometry %in% .cdrgam_cli_surface_geometries) .cdrgam_cli_abort(
+        paste0(path, ': lines are drawn with line, point, or bar geometry')
+    )
     attr(value, 'path') <- path
     value
 }
@@ -1002,9 +1111,6 @@
     if (value$n < 2L) .cdrgam_cli_abort(paste0(field, '.n must be at least two'))
     if (!is.null(.cdrgam_cli_pointwise_direction(value$axes$lag))) {
         lag <- if (is.list(value$axes$lag)) value$axes$lag$at else value$axes$lag
-        if (identical(value$uncertainty$kind, 'simultaneous')) .cdrgam_cli_abort(paste0(
-            field, '.axes.lag ', lag, ' needs uncertainty.kind pointwise'
-        ))
         if (isTRUE(value$test)) .cdrgam_cli_abort(paste0(
             field, '.axes.lag ', lag, ' cannot be combined with test'
         ))

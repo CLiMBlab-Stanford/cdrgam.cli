@@ -28,11 +28,14 @@
 # on the point estimates over that grid; estimates and standard errors are
 # then evaluated at the chosen (point, lag) pairs. With `draws` positive,
 # each posterior draw of the same grid gives its own peak lag at each point,
-# and the central `level` interval of those lags is stored. Returns the
+# and the central `level` interval of those lags is stored. With
+# `simultaneous = TRUE`, `lower` and `upper` of the effect become a
+# simultaneous band over each draw's effect at its own per-point peaks (see
+# .cdrgam_cli_draw_band()). Returns the
 # effect grid with attribute `pointwise_peaks`: one row per point, with its
 # group, axis values, direction, peak `lag`, and `lower` and `upper`.
 .cdrgam_cli_pointwise_effect <- function(
-        fit, arguments, direction, draws=0L, level=0.95, seed=1L
+        fit, arguments, direction, draws=0L, level=0.95, seed=1L, simultaneous=FALSE
 ) {
     if (!.cdrgam_cli_core_has_points()) .cdrgam_cli_abort(paste(
         'peak-pointwise needs a cdrgam release whose estimate_effect() accepts',
@@ -72,6 +75,14 @@
         lag=chosen$lag, lower=NA_real_, upper=NA_real_,
         stringsAsFactors=FALSE, check.names=FALSE
     )
+    if (simultaneous && draws < 2L) .cdrgam_cli_abort(paste(
+        'Simultaneous intervals at a peak need at least two draws;',
+        'raise uncertainty.peak_draws'
+    ))
+    if (simultaneous && !.cdrgam_cli_core_has_simulate_effect()) .cdrgam_cli_abort(paste(
+        'Simultaneous intervals at a peak need a cdrgam release with',
+        'simulate_effect(); update cdrgam'
+    ))
     if (draws > 0L && .cdrgam_cli_core_has_simulate_effect()) {
         if (as.numeric(nrow(surface)) * draws > 1e8) .cdrgam_cli_abort(paste0(
             'peak-pointwise intervals would draw ', nrow(surface), ' grid points ',
@@ -93,6 +104,21 @@
         }, numeric(2))
         peaks$lower <- bounds[1L, ]
         peaks$upper <- bounds[2L, ]
+        if (simultaneous) {
+            extreme <- if (identical(direction, 'neg')) min else max
+            effect <- t(vapply(rows, function(index) {
+                apply(simulated$draws[index, , drop=FALSE], 2L, extreme)
+            }, numeric(ncol(simulated$draws))))
+            value <- as.data.frame(value)
+            matched <- match(keys(value), order)
+            band <- .cdrgam_cli_draw_band(
+                value$estimate, effect[matched, , drop=FALSE],
+                .cdrgam_cli_band_groups(value), level
+            )
+            value$lower <- band$lower
+            value$upper <- band$upper
+            value$critical_value <- band$critical_value
+        }
     }
     attr(value, 'pointwise_peaks') <- peaks
     value

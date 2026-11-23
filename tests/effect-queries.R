@@ -168,9 +168,6 @@ bad <- base
 bad$reference <- list(lag='peak-pointwise')
 expect_error(validate(bad, 'query'), 'may only be the whole value of a fixed lag')
 bad <- pointwise
-bad$uncertainty <- list(kind='simultaneous')
-expect_error(validate(bad, 'query'), 'needs uncertainty.kind pointwise')
-bad <- pointwise
 bad$test <- TRUE
 expect_error(validate(bad, 'query'), 'cannot be combined with test')
 bad <- base
@@ -181,6 +178,12 @@ bad$uncertainty <- list(points=10L)
 expect_error(validate(bad, 'query'), 'requires kind simultaneous')
 bad$uncertainty <- list(kind='joint')
 expect_error(validate(bad, 'query'), 'pointwise or simultaneous')
+# A pointwise peak may take a simultaneous band.
+stopifnot(identical(
+    validate(modifyList(pointwise, list(uncertainty=list(kind='simultaneous'))),
+        'query')$uncertainty$kind,
+    'simultaneous'
+))
 
 # Presets expand into an ordinary query and render.
 visualization <- getFromNamespace('.cdrgam_cli_validate_visualization', 'cdrgam.cli')
@@ -436,5 +439,60 @@ peak_definition <- list(
 peak_plot <- plot_effect(summary, peak_definition)
 built <- ggplot2::ggplot_build(peak_plot)
 stopifnot(nrow(built$data[[1]]) == 3L, identical(peak_plot$labels$y, 'Peak lag'))
+
+# Lines inherit the definition's model and query and may override them:
+# a line's axes and reference merge per axis, its uncertainty per setting,
+# and other fields replace the default. Ids and labels have defaults.
+lines <- visualization(list(
+    schema=1L, model='main',
+    query=list(
+        n=9L, composition='total',
+        axes=list(lag=0.5, predictors=list(x=list(grid='fitted'), z='mean')),
+        uncertainty=list(level=0.9)
+    ),
+    lines=list(
+        list(term='x'),
+        list(term='x:z', model='other', label='Interaction', composition='term',
+            axes=list(predictors=list(z=1)), uncertainty=list(kind='simultaneous'))
+    ),
+    render=list(geometry='line')
+), 'lines.yml')
+first <- lines$lines[[1L]]
+second <- lines$lines[[2L]]
+stopifnot(
+    identical(vapply(lines$lines, `[[`, character(1), 'id'), c('line1', 'line2')),
+    identical(first$label, 'x'), identical(first$model, 'main'),
+    identical(second$label, 'Interaction'), identical(second$model, 'other'),
+    identical(first$query$terms, list(names='x', match='exact')),
+    identical(first$query$composition, 'total'),
+    identical(second$query$composition, 'term'),
+    identical(second$query$axes$lag, 0.5),
+    identical(second$query$axes$predictors$z, 1),
+    identical(second$query$axes$predictors$x, list(grid='fitted')),
+    identical(second$query$uncertainty$level, 0.9),
+    identical(second$query$uncertainty$kind, 'simultaneous'),
+    identical(first$query$uncertainty$kind, 'pointwise'),
+    is.null(lines$query),
+    identical(lines$render$mappings,
+        list(x='.line_x', y='estimate', color='line', group='line'))
+)
+lines_case <- function(...) {
+    value <- list(schema=1L, model='main', lines=list(list(term='x')),
+        render=list(geometry='line'))
+    changes <- list(...)
+    for (name in names(changes)) value[[name]] <- changes[[name]]
+    tryCatch(visualization(value, 'lines.yml'), error=conditionMessage)
+}
+stopifnot(
+    grepl('query.terms cannot be combined with lines',
+        lines_case(query=list(terms='x')), fixed=TRUE),
+    grepl('remove layers', lines_case(layers=list(list(id='a'))), fixed=TRUE),
+    grepl('missing required field: term', lines_case(lines=list(list(label='a'))),
+        fixed=TRUE),
+    grepl('line ids must be unique',
+        lines_case(lines=list(list(term='x', id='a'), list(term='y', id='a'))), fixed=TRUE),
+    grepl('line, point, or bar geometry', lines_case(render=list(geometry='raster',
+        mappings=list(x='x', y='lag', fill='estimate'), interval='none')), fixed=TRUE)
+)
 
 cat('Effect query tests passed\n')

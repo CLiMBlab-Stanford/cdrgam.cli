@@ -82,22 +82,29 @@ stopifnot(
     !tensor$grouped
 )
 
-axes <- internal('.cdrgam_cli_viz_axes')(
-    tensor, 'x', list(z=1, lag=NA), n=7L, ranges=list(x=c(1, -1))
-)
+line_query <- internal('.cdrgam_cli_viz_line_query')
+axes <- line_query(
+    tensor, list(varying='x', fixed=list(z=1, lag=NA), ranges=list(x=c(1, -1))),
+    list(n=7L)
+)$axes
 stopifnot(
-    identical(axes$z, list(at=1)),
-    identical(axes$lag, list(at=0)),
-    identical(axes$x$values, seq(-1, 1, length.out=7L))
+    identical(axes$predictors$z, 1),
+    identical(axes$lag, 0),
+    identical(axes$predictors$x$values, seq(-1, 1, length.out=7L))
 )
 # Unset axes default to lag 0 and training means; values may be expressions
-# in the axis's training summaries, and lag may name the term's peak.
-axes <- internal('.cdrgam_cli_viz_axes')(tensor, 'lag', list(x='mean + 2 * sd'))
+# in the axis's training summaries, kept as a definition writes them.
+axes <- line_query(tensor, list(varying='lag', fixed=list(x='mean + 2 * sd')))$axes
 stopifnot(
-    isTRUE(all.equal(axes$x$at, tensor$axes$x$mean + 2 * tensor$axes$x$sd)),
-    isTRUE(all.equal(axes$z$at, tensor$axes$z$mean))
+    identical(axes$predictors$x, 'mean + 2 * sd'),
+    identical(axes$predictors$z, 'mean'),
+    identical(axes$lag, list(grid='fitted', n=200L))
 )
-peak <- internal('.cdrgam_cli_viz_axes')(tensor, 'x', list(lag='peak'), fit=fit)$lag$at
+# Lag may name the term's peak, which the evaluation resolves.
+at_lag <- function(lag) unique(internal('.cdrgam_cli_viz_estimate')(
+    fit, tensor, list(varying='x', fixed=list(lag=lag)), list(n=21L)
+)$lag)
+peak <- at_lag('peak')
 stopifnot(
     peak >= tensor$axes$lag$min, peak <= tensor$axes$lag$max,
     identical(internal('.cdrgam_cli_viz_input_value')(' 2.5 ', 'x'), 2.5),
@@ -108,15 +115,10 @@ stopifnot(
 # its own peak, and an unknown label lists the lagged terms.
 lagged <- Filter(function(term) 'lag' %in% names(term$axes), terms)
 other <- lagged[[which(vapply(lagged, `[[`, character(1), 'label') != 'x:z')[[1L]]]]
-own <- internal('.cdrgam_cli_viz_axes')(tensor, 'x', list(lag='peak(x:z)'), fit=fit)$lag$at
-borrowed <- internal('.cdrgam_cli_viz_axes')(
-    tensor, 'x', list(lag=paste0('peak(', other$label, ')')), fit=fit
-)$lag$at
-expected <- internal('.cdrgam_cli_effect_peak')(fit, other$catalog, 'pos')
-unknown_peak <- tryCatch(
-    internal('.cdrgam_cli_viz_axes')(tensor, 'x', list(lag='peak(nope)'), fit=fit),
-    error=conditionMessage
-)
+own <- at_lag('peak(x:z)')
+borrowed <- at_lag(paste0('peak(', other$label, ')'))
+expected <- internal('.cdrgam_cli_effect_peak')(fit, other$catalog, 'pos', n=21L)
+unknown_peak <- tryCatch(at_lag('peak(nope)'), error=conditionMessage)
 stopifnot(
     identical(own, peak), identical(borrowed, expected),
     grepl('the fit has no term nope; terms with a lag axis:', unknown_peak, fixed=TRUE)
@@ -173,23 +175,19 @@ stopifnot(
 if ('simulate_effect' %in% getNamespaceExports('cdrgam')) stopifnot(
     all(pointwise$lower <= pointwise$lag & pointwise$lag <= pointwise$upper)
 )
-# peak-pointwise is a whole fixed-lag value only: not a reference, not part
-# of an expression, and not with simultaneous intervals.
+# peak-pointwise is a whole fixed-lag value only: not a reference and not
+# part of an expression.
 input_value <- internal('.cdrgam_cli_viz_input_value')
 pointwise_errors <- c(
     tryCatch(input_value('peak-pointwise', 'lag'), error=conditionMessage),
     tryCatch(input_value('peak-pointwise + 1', 'lag', pointwise=TRUE),
-        error=conditionMessage),
-    tryCatch(internal('.cdrgam_cli_viz_estimate')(
-        fit, tensor, pointwise_spec, list(n=5L, interval='simultaneous')
-    ), error=conditionMessage)
+        error=conditionMessage)
 )
 stopifnot(
     identical(input_value('peak-pointwise-neg', 'lag', pointwise=TRUE),
         'peak-pointwise-neg'),
     grepl('may only be the whole value of a fixed lag', pointwise_errors[[1L]], fixed=TRUE),
-    grepl('may only be the whole value of a fixed lag', pointwise_errors[[2L]], fixed=TRUE),
-    identical(pointwise_errors[[3L]], 'A pointwise peak lag needs pointwise intervals')
+    grepl('may only be the whole value of a fixed lag', pointwise_errors[[2L]], fixed=TRUE)
 )
 # A line held at a peak carries that peak, with posterior draws whose
 # central interval contains it. The static strip stacks under the main plot
@@ -207,11 +205,107 @@ if ('simulate_effect' %in% getNamespaceExports('cdrgam')) stopifnot(
     nrow(attr(line_peaks, 'draws')) == 1000L,
     all(attr(line_peaks, 'draws')$lag >= tensor$axes$lag$min)
 )
+# Simultaneous bands at a peak come from draws that each re-find the peak,
+# on the same coefficient draw as the line. They cover the line jointly, so
+# they are at least as wide as the pointwise intervals, and they report
+# their critical value. A peak-pointwise line takes each draw's effect at
+# its own per-point peak.
+if ('sample_effect_coefficients' %in% getNamespaceExports('cdrgam')) {
+    peak_spec <- list(term='x:z', varying='x', fixed=list(lag='peak', z='mean'))
+    at_peak <- internal('.cdrgam_cli_viz_estimate')(
+        fit, tensor, peak_spec, list(n=21L, interval='simultaneous')
+    )
+    stopifnot(
+        isTRUE(all.equal(at_peak$estimate, peak_line$estimate)),
+        all(is.finite(at_peak$critical_value)),
+        all(at_peak$critical_value > stats::qnorm(0.975)),
+        all(at_peak$lower <= at_peak$estimate & at_peak$estimate <= at_peak$upper),
+        !is.null(attr(at_peak, 'peaks'))
+    )
+    pointwise_band <- internal('.cdrgam_cli_viz_estimate')(
+        fit, tensor, pointwise_spec, list(n=15L, interval='simultaneous')
+    )
+    stopifnot(
+        isTRUE(all.equal(pointwise_band$estimate, pointwise_line$estimate)),
+        all(is.finite(pointwise_band$critical_value)),
+        all(pointwise_band$lower <= pointwise_band$upper)
+    )
+}
+# The draw band: with draws centered on the estimate, its critical value
+# exceeds the pointwise one and covers each group jointly.
+set.seed(2)
+band <- internal('.cdrgam_cli_draw_band')(
+    rep(0, 6), matrix(stats::rnorm(6 * 4000), 6), rep(c('a', 'b'), each=3), 0.95
+)
+stopifnot(
+    band$critical_value[[1L]] > 1.96, band$critical_value[[1L]] < 3,
+    all(band$lower < 0 & band$upper > 0)
+)
+# Definition YAML: the viewer's lines become a lines definition whose
+# validated queries are the queries the viewer evaluates. Shared settings
+# move to the top-level query, and defaults are left out.
+viewer_lines <- list(
+    list(model_id='proj/main', term='x:z', varying='x', fixed=list(lag='peak', z='mean'),
+        composition='total', grouping='population', label='at peak'),
+    list(model_id='proj/main', term='x:z', varying='lag', fixed=list(x=1, z='mean'),
+        reference=list(x=0), composition='total', grouping='population', label='x = 1')
+)
+viewer_options <- list(n=15L, level=0.9, interval='pointwise', unconditional=FALSE)
+definition_text <- internal('.cdrgam_cli_viz_definition_yaml')(
+    viewer_lines, function(id) terms, viewer_options, list(theme='classic')
+)
+definition <- yaml::yaml.load(definition_text)
+validated <- internal('.cdrgam_cli_validate_visualization')(definition, 'viewer.yml')
+canonical <- function(value) {
+    if (!is.list(value)) return(value)
+    if (!is.null(names(value))) value <- value[order(names(value))]
+    lapply(value, canonical)
+}
+stopifnot(
+    identical(definition$model, 'main'),
+    identical(definition$query$composition, 'total'),
+    identical(definition$query$n, 15L),
+    identical(definition$query$axes$predictors$z, 'mean'),
+    is.null(definition$lines[[1L]]$composition),
+    identical(definition$lines[[2L]]$reference, list(x=0L)) ||
+        identical(definition$lines[[2L]]$reference, list(x=0)),
+    identical(vapply(validated$lines, `[[`, character(1), 'label'), c('at peak', 'x = 1')),
+    identical(validated$render$theme, 'classic'),
+    isTRUE(all.equal(
+        canonical(lapply(validated$lines, `[[`, 'query')),
+        canonical(lapply(viewer_lines, function(line) {
+            internal('.cdrgam_cli_viz_line_query')(tensor, line, viewer_options)
+        }))
+    ))
+)
+mixed <- tryCatch(internal('.cdrgam_cli_viz_definition_yaml')(
+    list(viewer_lines[[1L]], modifyList(viewer_lines[[1L]], list(model_id='other/main'))),
+    function(id) terms, viewer_options, list()
+), error=conditionMessage)
+stopifnot(grepl('a visualization definition belongs to one project', mixed, fixed=TRUE))
+# X tick values: parsed, sorted and unique; a line is evaluated at them.
+ticks <- internal('.cdrgam_cli_viz_ticks')
+stopifnot(
+    is.null(ticks('  ')), identical(ticks('1, 0.5 0.5\t2'), c(0.5, 1, 2)),
+    grepl('must be numbers', tryCatch(ticks('1, a'), error=conditionMessage))
+)
+ticked <- internal('.cdrgam_cli_viz_estimate')(fit, tensor, list(
+    term='x:z', varying='x', fixed=list(lag=0, z='mean')
+), list(n=21L, ticks=c(-0.5, 0, 0.5)))
+stopifnot(identical(ticked$x, c(-0.5, 0, 0.5)))
+# The palette menu's swatches: up to eight colors, all of a shorter
+# palette, none for custom.
+swatches <- internal('.cdrgam_cli_viz_palette_swatches')(c('okabe-ito', 'viridis', 'custom'))
+stopifnot(
+    length(swatches[['okabe-ito']]) == 8L, length(swatches$viridis) == 8L,
+    length(swatches$custom) == 0L
+)
 show <- internal('.cdrgam_cli_show_peaks')
 two <- rbind(line_peaks, transform(line_peaks, term='irf(1)', source='irf(1)', lag=lag + 0.5))
 attr(two, 'draws') <- attr(line_peaks, 'draws')
 stopifnot(
     !show(NULL), !show(line_peaks), show(line_peaks, 'always'),
+    show(line_peaks, lines=TRUE), !show(line_peaks, 'never', lines=TRUE),
     show(two), !show(two, 'never'),
     identical(internal('.cdrgam_cli_peak_lanes')(transform(
         two, source=c('x:z', 'x:z'), direction=c('pos', 'neg')
@@ -241,7 +335,7 @@ bad_input <- tryCatch(
 )
 stopifnot(grepl('only lag values', bad_input, fixed=TRUE))
 unknown_axis <- tryCatch(
-    internal('.cdrgam_cli_viz_axes')(tensor, 'w'), error=conditionMessage
+    line_query(tensor, list(varying='w')), error=conditionMessage
 )
 stopifnot(grepl('has no axis w', unknown_axis, fixed=TRUE))
 
@@ -297,6 +391,11 @@ stopifnot(
     identical(
         internal('.cdrgam_cli_viz_reference_values')(list(lag=NA_real_, z=NA_real_)),
         list(z=NA_real_)
+    ),
+    # An empty field (NULL) keeps the fixed value: the axis leaves the reference.
+    is.null(internal('.cdrgam_cli_viz_reference_values')(list(lag=NULL, z=NULL))),
+    identical(
+        internal('.cdrgam_cli_viz_reference_values')(list(lag=NULL, z=0)), list(z=0)
     ),
     identical(
         internal('.cdrgam_cli_viz_reference_values')(list(lag='peak')), list(lag='peak')
@@ -374,7 +473,21 @@ if (all(vapply(c('shiny', 'plotly', 'bslib'), requireNamespace, logical(1), quie
     )
     stopifnot(
         identical(internal('.cdrgam_cli_viz_peak_strip')(strip_entries)$rows, c('a', 'b')),
-        is.null(internal('.cdrgam_cli_viz_peak_strip')(strip_entries[1L]))
+        # One line at a peak still gets its strip, and peaks = never hides it.
+        identical(internal('.cdrgam_cli_viz_peak_strip')(strip_entries[1L])$rows, 'a'),
+        is.null(internal('.cdrgam_cli_lines_strip_spec')(
+            strip_entries[1L],
+            internal('.cdrgam_cli_viz_line_spec')(strip_entries[1L],
+                settings=list(peaks='never'))
+        ))
+    )
+    # Every lane is labeled, with the line's legend label.
+    strip_axis <- plotly::plotly_build(
+        internal('.cdrgam_cli_viz_line_plot')(strip_entries)
+    )$x$layout$yaxis2
+    stopifnot(
+        identical(strip_axis$tickmode, 'array'),
+        setequal(unlist(strip_axis$ticktext), c('a', 'b'))
     )
     invisible(plotly::plotly_build(internal('.cdrgam_cli_viz_line_plot')(strip_entries)))
     # A line at peak-pointwise adds a panel of its peak lag over x, which
@@ -390,12 +503,37 @@ if (all(vapply(c('shiny', 'plotly', 'bslib'), requireNamespace, logical(1), quie
     ))$x$layout
     stopifnot(
         identical(title_text(with_panel$yaxis2$title), 'Peak lag'),
-        identical(with_panel$xaxis2$matches, 'x'),
+        identical(with_panel$xaxis$matches, 'x2'),
+        # The main panel repeats the panel below's axis, so it drops its
+        # title and tick labels, and the panels do not overlap.
+        isFALSE(with_panel$xaxis$showticklabels),
+        with_panel$yaxis2$domain[[2L]] < with_panel$yaxis$domain[[1L]],
         is.null(without_panel$yaxis2)
     )
     invisible(plotly::plotly_build(internal('.cdrgam_cli_viz_line_plot')(list(
         list(spec=list(id='a', label='a', varying='x'), data=line)
     ))))
+    # Two lines at different peaks over x: the strip has its own lag axis,
+    # so the main panel keeps its x title with a gap below it.
+    stacked <- plotly::plotly_build(
+        internal('.cdrgam_cli_viz_line_plot')(strip_entries)
+    )$x$layout
+    stopifnot(
+        is.null(stacked$xaxis$matches),
+        stacked$yaxis$domain[[1L]] - stacked$yaxis2$domain[[2L]] > 0.1
+    )
+    # y_zero keeps zero on the vertical axis; themes style the panel.
+    zeroed <- plotly::plotly_build(internal('.cdrgam_cli_viz_line_plot')(list(
+        list(spec=list(id='a', label='a', varying='x'), data=line)
+    ), settings=list(y_zero=TRUE, theme='grey')))$x$layout
+    stopifnot(
+        identical(zeroed$yaxis$rangemode, 'tozero'),
+        identical(zeroed$plot_bgcolor, '#EBEBEB')
+    )
+    # The default paper theme draws no outline around the panels.
+    stopifnot(!isTRUE(plotly::plotly_build(internal('.cdrgam_cli_viz_line_plot')(list(
+        list(spec=list(id='a', label='a', varying='x'), data=line)
+    )))$x$layout$xaxis$mirror))
     for (display in c('surface', 'heatmap', 'contour')) {
         invisible(plotly::plotly_build(internal('.cdrgam_cli_viz_surface_plot')(
             surface, list(varying=c('lag', 'z')), display=display, show_interval=TRUE
@@ -611,7 +749,7 @@ if (requireNamespace('plotly', quietly=TRUE)) {
         entry('b', 'second', synthetic('lag', 1, lag=0.7))
     )
     spec <- internal('.cdrgam_cli_viz_line_spec')(shared)
-    strip <- internal('.cdrgam_cli_viz_strip_spec')(shared, spec)
+    strip <- internal('.cdrgam_cli_lines_strip_spec')(shared, spec)
     stopifnot(
         identical(strip$lanes, c('first', 'second')),
         nrow(strip$draws) == 6L,
@@ -632,7 +770,8 @@ if (requireNamespace('plotly', quietly=TRUE)) {
 
     # Every render field with a viewer control has an input in the line
     # appearance panel, and setting it changes the viewer's render.
-    controls <- internal('.cdrgam_cli_viz_control_fields')()
+    # The peak timeline is the Show peak lags box under the plot instead.
+    controls <- setdiff(internal('.cdrgam_cli_viz_control_fields')(), 'peaks')
     html <- as.character(internal('.cdrgam_cli_viz_appearance')('line'))
     missing <- controls[!vapply(controls, function(name) {
         grepl(paste0('id="render_', name, '"'), html, fixed=TRUE)
@@ -682,7 +821,8 @@ if (requireNamespace('plotly', quietly=TRUE)) {
         length(markers) == 2L,
         identical(vapply(markers, function(trace) trace$marker$color[[1L]], character(1)),
             c('#000000', '#FF0000')),
-        all(abs(markers[[1L]]$x - (1:5 - 0.2)) < 1e-9),
+        # Two lines sit in adjacent columns one point wide around each tick.
+        all(abs(markers[[1L]]$x - (1:5 - 9 / (0.85 * 96 * 7) * 4 / 2)) < 1e-9),
         identical(unlist(plotly::plotly_build(internal('.cdrgam_cli_viz_line_plot')(
             peaked, settings=list(geometry='point', spacing='uniform', peaks='never')
         ))$x$layout$xaxis$ticktext), c('0', '0.25', '0.5', '0.75', '1'))

@@ -1611,7 +1611,7 @@ cdrgam_cli_run(
     projects='test-project', models='decay', visualizations='diagnostics'
 )
 stopifnot(file.exists(file.path(
-    project, 'results', 'models', 'decay', 'visualizations',
+    project, 'results', 'visualizations',
     'diagnostics', 'booklet.pdf'
 )))
 
@@ -1647,7 +1647,7 @@ stopifnot(
 cdrgam_cli_run(projects='test-project', visualizations='effects')
 effect_artifact <- effect_plan$path[effect_plan$kind == 'effect']
 visualization_artifact <- file.path(
-    project, 'results', 'models', 'decay', 'visualizations', 'effects'
+    project, 'results', 'visualizations', 'effects'
 )
 effect_grid <- readRDS(file.path(effect_artifact, 'effect-grid.rds'))
 stopifnot(
@@ -1717,7 +1717,7 @@ yaml::write_yaml(surface_definition, file.path(
 ))
 cdrgam_cli_run(projects='test-project', visualizations='effect-surface')
 surface_artifact <- file.path(
-    project, 'results', 'models', 'decay', 'visualizations', 'effect-surface'
+    project, 'results', 'visualizations', 'effect-surface'
 )
 stopifnot(
     file.exists(file.path(surface_artifact, 'visualization.pdf')),
@@ -1753,11 +1753,11 @@ stopifnot(
     nrow(predictor_grid) == 11L, length(unique(predictor_grid$lag)) == 1L,
     identical(predictor_grid$predictor_value, predictor_grid$x),
     file.exists(file.path(
-        project, 'results', 'models', 'decay', 'visualizations', 'irf-lag',
+        project, 'results', 'visualizations', 'irf-lag',
         'visualization.pdf'
     )),
     file.exists(file.path(
-        project, 'results', 'models', 'decay', 'visualizations', 'irf-predictor',
+        project, 'results', 'visualizations', 'irf-predictor',
         'visualization.pdf'
     ))
 )
@@ -1778,7 +1778,7 @@ stopifnot(
             file.exists(file.path(preset_effects[[2L]], 'effect-peak-draws.csv'))
     ),
     !file.exists(file.path(
-        project, 'results', 'models', 'decay', 'visualizations', 'irf-predictor',
+        project, 'results', 'visualizations', 'irf-predictor',
         'plot-peaks.rds'
     ))
 )
@@ -1805,7 +1805,7 @@ pointwise_effect <- pointwise_plan$path[pointwise_plan$kind == 'effect']
 pointwise_grid <- readRDS(file.path(pointwise_effect, 'effect-grid.rds'))
 pointwise_peaks <- readRDS(file.path(pointwise_effect, 'effect-pointwise-peaks.rds'))
 pointwise_output <- file.path(
-    project, 'results', 'models', 'decay', 'visualizations', 'pointwise'
+    project, 'results', 'visualizations', 'pointwise'
 )
 stopifnot(
     nrow(pointwise_grid) == 7L, nrow(pointwise_peaks) == 7L,
@@ -1849,7 +1849,7 @@ if ('sample_effect_coefficients' %in% getNamespaceExports('cdrgam')) {
         all(is.finite(posterior_grid$critical_value)),
         all(is.finite(posterior_grid$lower)),
         file.exists(file.path(
-            project, 'results', 'models', 'decay', 'visualizations', 'posterior',
+            project, 'results', 'visualizations', 'posterior',
             'visualization.pdf'
         ))
     )
@@ -1881,12 +1881,13 @@ stopifnot(
     sum(lines_plan$kind == 'visualization') == 2L
 )
 cdrgam_cli_run(projects='test-project', visualizations=c('lines', 'lines-one'))
-lines_output <- file.path(project, 'results', 'models', 'decay', 'visualizations', 'lines')
+lines_output <- file.path(project, 'results', 'visualizations', 'lines')
 lines_plot <- readRDS(file.path(lines_output, 'plot.rds'))
 stopifnot(
     file.exists(file.path(lines_output, 'visualization.pdf')),
     file.exists(file.path(lines_output, 'plot-peaks.rds')),
     identical(lines_plot$labels$x, 'x / lag'),
+    is.null(lines_plot$scales$get_scales('colour')$name),
     setequal(unique(as.character(unlist(lapply(lines_plot$layers, function(layer) {
         if (is.data.frame(layer$data)) layer$data$line
     })))), c('by-x', 'by-lag'))
@@ -2204,7 +2205,7 @@ visualization_preview <- cdrgam_cli_purge(
 )
 stopifnot(same_path(
     visualization_preview[!under_path(visualization_preview, work_root)],
-    file.path(project, 'results', 'models', 'decay', 'visualizations', 'diagnostics')
+    file.path(project, 'results', 'visualizations', 'diagnostics')
 ))
 comparison_preview <- cdrgam_cli_purge(
     projects='test-project', comparisons='alternatives', force=FALSE

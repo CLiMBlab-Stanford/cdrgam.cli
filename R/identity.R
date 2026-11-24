@@ -243,7 +243,7 @@
         definition=value, fit=fit, effect=effect, effects=effects,
         predictions=predictions,
         output=.cdrgam_cli_path(
-            definitions, 'visualization', value$model, dataset=name
+            definitions, 'visualization', name
         )
     )
 }

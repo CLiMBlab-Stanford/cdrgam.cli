@@ -15,6 +15,8 @@
     spec <- .cdrgam_cli_plot_spec(data, list(render=render))
     labels <- vapply(entries, function(entry) entry$spec$label, character(1))
     spec$color$labels <- labels[match(spec$color$levels, .cdrgam_cli_lines_ids(entries))]
+    # Line labels name themselves, so the legend needs no title.
+    spec$color$untitled <- TRUE
     spec$render <- render
     spec
 }

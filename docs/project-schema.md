@@ -438,7 +438,8 @@ presentation in `render`. The scheduler inserts an internal effect-grid work
 item between the fit and the rendered visualization. Identical queries share
 that work item even when their render settings differ. The effect-grid RDS and
 CSV live under `models/MODEL/effects/EFFECT-IDENTITY/`; rendered files live
-under `models/MODEL/visualizations/VISUALIZATION/`.
+under `visualizations/VISUALIZATION/`, beside `models/`, because a
+visualization may draw lines from several models.
 
 `terms` may be a list of exact fitted term labels or a selector mapping. A
 selector accepts `names`, `predictors`, `match` (`contains` or `exact`),

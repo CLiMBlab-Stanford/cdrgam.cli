@@ -1,5 +1,12 @@
 # cdrgam.cli (development version)
 
+- Rendered visualizations are written to `results/visualizations/NAME/`
+  instead of `results/models/MODEL/visualizations/NAME/`, because a
+  visualization with `lines` may draw from several models. Existing
+  visualizations re-render into the new location on the next run; their
+  effects are reused. The legend of a lines plot no longer shows a `line`
+  title.
+
 - Parallel jobs that share a work item, such as one effect used by several
   visualizations, no longer conflict. Claiming and publishing an item hold a
   per-item lock, and a new attempt is marked running at once, so another job

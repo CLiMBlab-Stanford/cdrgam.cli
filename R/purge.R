@@ -109,11 +109,7 @@ cdrgam_cli_purge <- function(
             }
             project_targets <- c(project_targets, vapply(
                 visualization_names, function(name) {
-                    value <- definitions$visualizations[[name]]
-                    .cdrgam_cli_path(
-                        definitions, 'visualization', value$model,
-                        dataset=name
-                    )
+                    .cdrgam_cli_path(definitions, 'visualization', name)
                 }, character(1)
             ))
         }
@@ -352,7 +348,7 @@ cdrgam_cli_purge <- function(
     for (name in names(definitions$visualizations)) {
         add(
             'visualization', name,
-            list('visualization', definitions$visualizations[[name]]$model, name)
+            list('visualization', name)
         )
     }
     for (name in names(definitions$comparisons)) {
@@ -395,7 +391,7 @@ cdrgam_cli_purge <- function(
                     definitions, 'prediction', artifact[[2L]], dataset=artifact[[3L]]
                 ),
                 visualization=.cdrgam_cli_path(
-                    definitions, 'visualization', artifact[[2L]], dataset=artifact[[3L]]
+                    definitions, 'visualization', artifact[[2L]]
                 ),
                 comparison=.cdrgam_cli_path(definitions, 'comparison', artifact[[2L]])
             )

@@ -351,11 +351,14 @@
 # color column.
 .cdrgam_cli_ggplot_color_scales <- function(color, aesthetics) {
     if (is.null(color) || !length(aesthetics)) return(list())
+    name <- if (isTRUE(color$untitled)) NULL else ggplot2::waiver()
     list(if (identical(color$kind, 'continuous')) {
-        ggplot2::scale_colour_gradientn(colours=color$stops, aesthetics=aesthetics)
+        ggplot2::scale_colour_gradientn(
+            name=name, colours=color$stops, aesthetics=aesthetics
+        )
     } else ggplot2::scale_colour_manual(
-        values=color$values, breaks=color$levels, labels=color$labels,
-        aesthetics=aesthetics
+        name=name, values=color$values, breaks=color$levels,
+        labels=color$labels, aesthetics=aesthetics
     ))
 }
 

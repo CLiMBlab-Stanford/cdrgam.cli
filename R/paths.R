@@ -11,7 +11,7 @@
     } else if (identical(kind, 'prediction')) {
         parts <- c(results, 'models', name, 'predictions', dataset)
     } else if (identical(kind, 'visualization')) {
-        parts <- c(results, 'models', name, 'visualizations', dataset)
+        parts <- c(results, 'visualizations', name)
     } else if (identical(kind, 'effect')) {
         parts <- c(results, 'models', name, 'effects', identity)
     } else if (kind %in% c('comparison', 'analysis')) {

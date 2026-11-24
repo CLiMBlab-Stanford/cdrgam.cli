@@ -274,7 +274,6 @@
                 })
             }),
             prediction=.cdrgam_cli_execute_prediction(item, stage),
-            effect=.cdrgam_cli_execute_effect(item, stage),
             visualization=.cdrgam_cli_execute_visualization(item, stage),
             comparison=.cdrgam_cli_execute_comparison(item, stage),
             .cdrgam_cli_abort(paste0('No executor for work kind ', item$kind))

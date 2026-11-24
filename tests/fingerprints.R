@@ -43,15 +43,18 @@ stopifnot(
 
 terminal_progress <- internal('.cdrgam_cli_progress_context')()
 terminal_progress$terminal <- TRUE
-terminal_progress$started <- Sys.time() - 4
+terminal_progress$started <- Sys.time() - 0.2
 terminal_stages <- paste(capture.output({
     internal('.cdrgam_cli_progress')(terminal_progress, 'first')
     internal('.cdrgam_cli_progress')(terminal_progress, 'second')
     internal('.cdrgam_cli_progress_finish')(terminal_progress)
 }, type='message'), collapse='')
-escape <- intToUtf8(27L)
+frame <- internal('.cdrgam_cli_progress_frame')
 stopifnot(
-    grepl(paste0(escape, '[38;5;49m'), terminal_stages, fixed=TRUE),
+    identical(frame(terminal_progress, terminal_progress$started), '\u280b'),
+    identical(frame(terminal_progress, terminal_progress$started + 0.17), '\u2839'),
+    identical(frame(terminal_progress, terminal_progress$started + 0.81), '\u280b'),
+    !grepl(intToUtf8(27L), gsub('\r\033\\[2K', '', terminal_stages)),
     grepl('cdrgam run: second', terminal_stages, fixed=TRUE)
 )
 

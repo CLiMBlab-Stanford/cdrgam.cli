@@ -217,9 +217,9 @@ stopifnot(remaining == 0L)
 # running, so a second allocation neither prunes it nor starts a duplicate,
 # and an explicit worker path leaves the other claim in place.
 shared <- list(
-    key='effect:project-registry-test:shared:race-identity',
-    project='example', kind='effect', name='shared', identity='race-identity',
-    output=file.path(project, '.cdrgam', 'work', 'effect_shared', 'cache', 'race-identity'),
+    key='prediction:project-registry-test:shared:race-identity',
+    project='example', kind='prediction', name='shared', identity='race-identity',
+    output=file.path(project, 'results', 'models', 'shared', 'predictions', 'race'),
     dependencies=character()
 )
 first <- internal('.cdrgam_cli_attempt_directory')(definitions, shared)$path
@@ -238,10 +238,10 @@ stopifnot(inherits(active, 'cdrgam_cli_attempt_active'))
 # A waiting job reuses the artifact once the running job publishes it.
 manifest_path <- internal('.cdrgam_cli_manifest_path')(shared$output)
 dir.create(dirname(manifest_path), recursive=TRUE, showWarnings=FALSE)
-saveRDS(1, file.path(shared$output, 'effect-grid.rds'))
+saveRDS(1, file.path(shared$output, 'predictions.rds'))
 internal('.cdrgam_cli_write_yaml')(list(
-    schema=1L, status='complete', kind='effect', identity=shared$identity,
-    outputs=internal('.cdrgam_cli_output_manifest')(shared$output, 'effect-grid.rds')
+    schema=1L, status='complete', kind='prediction', identity=shared$identity,
+    outputs=internal('.cdrgam_cli_output_manifest')(shared$output, 'predictions.rds')
 ), manifest_path)
 stopifnot(
     internal('.cdrgam_cli_complete_artifact')(shared$output, shared$identity),

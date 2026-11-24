@@ -100,7 +100,6 @@ cdrgam_cli_list <- function(projects=NULL, cdrgam_root=NULL) {
     if (!length(combined$targets)) {
         .cdrgam_cli_abort('No workloads matched the combined selectors')
     }
-    combined <- .cdrgam_cli_prune_intermediates(combined)
     .cdrgam_cli_progress(
         progress,
         paste0(
@@ -109,36 +108,6 @@ cdrgam_cli_list <- function(projects=NULL, cdrgam_root=NULL) {
         )
     )
     combined
-}
-
-# Drops intermediate work items, such as cached effect grids, that no
-# remaining item needs: every dependent is complete. A missing intermediate
-# therefore never dirties a fresh dependent, and a stale dependent still
-# rebuilds the intermediate it reads.
-.cdrgam_cli_prune_intermediates <- function(graph) {
-    keys <- names(graph$items)
-    intermediate <- keys[vapply(graph$items, function(item) {
-        isTRUE(item$intermediate)
-    }, logical(1)) & !(keys %in% graph$targets)]
-    if (!length(intermediate)) return(graph)
-    complete <- vapply(keys, function(key) {
-        item <- graph$items[[key]]
-        !isTRUE(item$intermediate) &&
-            .cdrgam_cli_complete_artifact(item$output, item$identity)
-    }, logical(1))
-    dropped <- intermediate[vapply(intermediate, function(key) {
-        dependents <- keys[vapply(graph$items, function(item) {
-            key %in% item$dependencies
-        }, logical(1))]
-        length(dependents) && all(complete[dependents])
-    }, logical(1))]
-    if (!length(dropped)) return(graph)
-    graph$items <- graph$items[setdiff(keys, dropped)]
-    graph$items <- lapply(graph$items, function(item) {
-        item$dependencies <- setdiff(item$dependencies, dropped)
-        item
-    })
-    graph
 }
 
 .cdrgam_cli_graph_order <- function(graph) {

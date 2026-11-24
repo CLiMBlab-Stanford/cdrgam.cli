@@ -195,7 +195,7 @@ expected <- list(
         unknown_field=paste0(
             'render contains unknown field: size. Allowed fields: geometry, mapping',
             's, interval, theme, formats, width, height, dpi, title, xlab, ylab, pa',
-            'lette, scales, peaks, spacing, statistic, y_zero'
+            'lette, scales, peaks, spacing, breaks, statistic, y_zero'
         ),
         bad_geometry=paste0(
             'render.geometry must be one of line, point, bar, raster, contour, rast',
@@ -245,6 +245,23 @@ expected <- list(
         not_mapping='render must be a mapping'
     )
 )
+
+# breaks puts ticks at given values on a continuous x-axis without changing
+# where the effect is evaluated; uniform spacing already ticks every value.
+broken <- internal('.cdrgam_cli_validate_render')(list(geometry='line',
+    mappings=list(x='lag', y='estimate'), breaks=list(10, 0, 5, 5)), 'render')
+stopifnot(identical(broken$breaks, c(0, 5, 10)))
+axis <- internal('.cdrgam_cli_x_axis')(seq(0, 10, length.out=200), broken)
+stopifnot(
+    identical(axis$kind, 'breaks'), identical(axis$breaks, c(0, 5, 10)),
+    length(axis$position) == 200L, identical(axis$labels, c('0', '5', '10'))
+)
+stopifnot(grepl('cannot be combined', tryCatch(
+    internal('.cdrgam_cli_validate_render')(list(geometry='line',
+        mappings=list(x='lag', y='estimate'), breaks=list(1), spacing='uniform'),
+        'render'),
+    error=conditionMessage
+)))
 
 # y_zero is a flag that keeps zero on the vertical axis of line geometries;
 # false is the same as leaving it out. Every native ggplot2 theme renders.

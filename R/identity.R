@@ -197,20 +197,16 @@
         )
     })
     lines <- value$lines
-    # Each line is its own effect, so lines shared between visualizations
-    # are evaluated once.
+    # Each line, or a single-effect visualization, is an effect request that
+    # the visualization evaluates from its fit when it runs.
     effects <- if (!is.null(lines)) lapply(lines, function(line) {
         line_fit <- if (identical(line$model, value$model)) fit else {
             .cdrgam_cli_fit_item(definitions, line$model, fingerprints)
         }
-        .cdrgam_cli_effect_item(
-            definitions, line$model, list(query=line$query), line_fit, fingerprints
-        )
+        .cdrgam_cli_effect_request(list(query=line$query), line_fit)
     })
     effect <- if (is.null(value$kind) && is.null(lines)) {
-        .cdrgam_cli_effect_item(
-            definitions, value$model, value, fit, fingerprints
-        )
+        .cdrgam_cli_effect_request(value, fit)
     } else NULL
     inputs <- if (!is.null(effects)) {
         list(effects=lapply(effects, function(item) item$resolved_identity$resolved))
@@ -236,10 +232,10 @@
         name=name, model_name=value$model, identity=identity$identity,
         resolved_identity=identity,
         dependencies=if (!is.null(effects)) {
-            unique(vapply(effects, `[[`, character(1), 'key'))
+            unique(vapply(effects, function(request) request$fit$key, character(1)))
         } else if (is.null(effect)) {
             c(fit$key, vapply(predictions, `[[`, character(1), 'key'))
-        } else effect$key,
+        } else fit$key,
         definition=value, fit=fit, effect=effect, effects=effects,
         predictions=predictions,
         output=.cdrgam_cli_path(
@@ -248,32 +244,18 @@
     )
 }
 
-.cdrgam_cli_effect_item <- function(
-        definitions, model_name, value, fit=NULL, fingerprints=NULL
-) {
-    fit <- .cdrgam_cli_null(
-        fit, .cdrgam_cli_fit_item(definitions, model_name, fingerprints)
-    )
+# An effect query against one fit. It is not a work item: the
+# visualization that holds it evaluates it from the fit on every run, so
+# its plot data cannot go stale. Its identity is part of the
+# visualization's identity.
+.cdrgam_cli_effect_request <- function(value, fit) {
     identity <- .cdrgam_cli_effect_identity(
         value$query, value$layers, fit$resolved_identity$resolved
     )
-    request_identity <- .cdrgam_cli_short_hash(list(
-        query=value$query, layers=value$layers
-    ))
-    name <- paste(model_name, request_identity, sep='_')
     list(
-        key=paste(
-            'effect', definitions$project$project$id, model_name,
-            identity$identity, sep=':'
-        ),
-        kind='effect', project=definitions$project$project$name,
-        name=name, intermediate=TRUE,
-        model_name=model_name, identity=identity$identity,
-        resolved_identity=identity, dependencies=fit$key,
-        query=value$query, layers=value$layers, fit=fit,
-        output=.cdrgam_cli_path(
-            definitions, 'effect', name, identity=identity$identity
-        )
+        model_name=fit$name, identity=identity$identity,
+        resolved_identity=identity, query=value$query, layers=value$layers,
+        fit=fit
     )
 }
 
@@ -319,12 +301,10 @@
     children <- switch(
         item$kind,
         prediction=list(item$fit),
-        effect=list(item$fit),
         visualization=if (!is.null(item$effects)) {
-            item$effects
-        } else if (is.null(item$effect)) {
-            c(list(item$fit), item$predictions)
-        } else list(item$effect),
+            fits <- lapply(item$effects, `[[`, 'fit')
+            fits[!duplicated(vapply(fits, `[[`, character(1), 'key'))]
+        } else c(list(item$fit), item$predictions),
         comparison=item$predictions,
         list()
     )

@@ -283,7 +283,8 @@ mixed <- tryCatch(internal('.cdrgam_cli_viz_definition_yaml')(
     function(id) terms, viewer_options, list()
 ), error=conditionMessage)
 stopifnot(grepl('a visualization definition belongs to one project', mixed, fixed=TRUE))
-# X tick values: parsed, sorted and unique; a line is evaluated at them.
+# X tick values: parsed, sorted and unique; points and bars are evaluated
+# at them.
 ticks <- internal('.cdrgam_cli_viz_ticks')
 stopifnot(
     is.null(ticks('  ')), identical(ticks('1, 0.5 0.5\t2'), c(0.5, 1, 2)),
@@ -806,6 +807,19 @@ if (requireNamespace('plotly', quietly=TRUE)) {
     stopifnot(
         identical(settings$geometry, 'bar'), is.null(settings$spacing),
         identical(settings$palette, c('#000000', 'rgb(255, 0, 0)', 'white'))
+    )
+    # Tick values label a line's axis and leave its grid alone; points and
+    # bars are evaluated at them instead.
+    line_ticks <- list(mode='line', render_geometry='line', x_ticks='0 5 10')
+    stopifnot(
+        identical(internal('.cdrgam_cli_viz_settings')(line_ticks)$breaks, c(0, 5, 10)),
+        !internal('.cdrgam_cli_viz_ticks_evaluated')(line_ticks),
+        internal('.cdrgam_cli_viz_ticks_evaluated')(
+            modifyList(line_ticks, list(render_geometry='point'))
+        ),
+        is.null(internal('.cdrgam_cli_viz_settings')(
+            modifyList(line_ticks, list(render_geometry='point'))
+        )$breaks)
     )
     # An interval that does not suit the geometry falls back to its default.
     stopifnot(identical(

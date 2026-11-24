@@ -434,13 +434,13 @@ render:
 ```
 
 A visualization separates statistical evaluation in `query` from ggplot2
-presentation in `render`. The scheduler inserts an internal effect-grid work
-item between the fit and the rendered visualization. Identical queries share
-that work item even when their render settings differ. The effect-grid RDS and
-CSV are a private cache under the project's `.cdrgam/work/` directory, not
-published results, and `cdrgam status` does not list them. A run rebuilds a
-missing grid only when a visualization that reads it is out of date, and a
-missing grid does not make a current visualization out of date. Rendered
+presentation in `render`. A visualization evaluates its query from the fit
+each time it renders; effect grids are not cached between runs. The plotted
+numbers are written beside the figure: `effect-grid.csv`, with
+`effect-peaks.csv`, `effect-peak-draws.csv`, `effect-pointwise-peaks.csv`,
+and `effect-tests.csv` when the query produces them. A visualization with
+`lines` writes the same files for each line, named `line-ID-grid.csv` and so
+on. Rendered
 files live under `visualizations/VISUALIZATION/`, beside `models/`, because
 a visualization may draw lines from several models.
 
@@ -666,6 +666,13 @@ value. `uniform` places the ticks equally far apart in sorted order and
 `linear` in proportion to their values. Bars over a numeric x use `uniform`
 unless `spacing` is set; lines and points otherwise keep a continuous x-axis.
 `spacing` has no effect on a categorical x and is not accepted for surfaces.
+
+`breaks` lists the x values to label on a continuous axis, such as
+`breaks: [0, 5, 10]`. It changes only the ticks, not where the effect is
+evaluated, and cannot be combined with `spacing: uniform`. The viewer's **X
+tick values** option sets it for lines. For points and bars, the viewer
+evaluates the effect at those values instead of the grid and hides **Grid
+points per axis**.
 
 `statistic: peak-lag` plots the peak lags that the query used instead of the
 effect estimates, with their posterior intervals as error bars. It requires

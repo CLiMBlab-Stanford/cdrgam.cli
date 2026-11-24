@@ -1,19 +1,30 @@
 # cdrgam.cli (development version)
 
-- Effect grids are a private cache under `.cdrgam/work/` instead of
-  published artifacts under `results/models/MODEL/effects/`, and
-  `cdrgam status` no longer lists them. A run skips an effect whose
-  visualizations are all current, even when its grid is missing, and
-  rebuilds it when a visualization that reads it must render again.
+- The `cdrgam run` progress line shows a braille spinner in place of the
+  color-cycling dot. It uses nro's frames and its 0.08-second frame interval.
+
+- `render.breaks` labels chosen x values on a continuous axis without
+  changing where the effect is evaluated. In `cdrgam viz`, **X tick values**
+  now sets it for lines, which stay on the evaluation grid instead of being
+  evaluated only at the ticks. Points and bars are still evaluated at the
+  tick values, and **Grid points per axis** is hidden while it has no effect.
+  An empty grid-points field uses the default of 200.
+
+- Effect grids are no longer separate work items or cached. A visualization
+  evaluates its effects from the fit each time it renders, so its figure
+  always reflects the installed `cdrgam`. The plotted numbers are written
+  beside the figure in `results/visualizations/NAME/`: `effect-grid.csv`
+  and its companions, or `line-ID-grid.csv` and its companions for each
+  line. Effect directories under `.cdrgam/work/` from earlier versions are
+  no longer read and can be deleted.
 
 - Rendered visualizations are written to `results/visualizations/NAME/`
   instead of `results/models/MODEL/visualizations/NAME/`, because a
   visualization with `lines` may draw from several models. Existing
-  visualizations re-render into the new location on the next run; their
-  effects are reused. The legend of a lines plot no longer shows a `line`
+  visualizations re-render into the new location on the next run. The legend of a lines plot no longer shows a `line`
   title.
 
-- Parallel jobs that share a work item, such as one effect used by several
+- Parallel jobs that share a work item, such as a fit used by several
   visualizations, no longer conflict. Claiming and publishing an item hold a
   per-item lock, and a new attempt is marked running at once, so another job
   no longer deletes it as stale. A job that reaches an item another job is

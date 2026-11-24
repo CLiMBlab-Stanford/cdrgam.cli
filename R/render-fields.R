@@ -86,6 +86,10 @@
         geometries=.cdrgam_cli_line_geometries,
         viewer='control', label='Tick spacing'
     ),
+    breaks=list(
+        kind='numbers', geometries=.cdrgam_cli_line_geometries,
+        viewer='derived', reason='set by the X tick values option'
+    ),
     statistic=list(
         kind='choice', choices=c('estimate', 'peak-lag'), omit='estimate',
         requires=list('peak-lag'=c('point', 'bar')),
@@ -165,6 +169,13 @@
             value
         },
         text=.cdrgam_cli_scalar_character(value, field),
+        numbers={
+            value <- unlist(value, use.names=FALSE)
+            if (!is.numeric(value) || !length(value) || any(!is.finite(value))) {
+                .cdrgam_cli_abort(paste0(field, ' must be a list of numbers'))
+            }
+            sort(unique(as.numeric(value)))
+        },
         flag={
             if (!is.logical(value) || length(value) != 1L || is.na(value)) {
                 .cdrgam_cli_abort(paste0(field, ' must be true or false'))
@@ -208,6 +219,12 @@
         } else NULL
         if (!is.null(needed) && !(value$geometry %in% needed)) .cdrgam_cli_abort(paste0(
             subfield, ' ', value[[name]], ' requires ', .cdrgam_cli_geometry_phrase(needed)
+        ))
+    }
+    if (!is.null(value$breaks) && identical(value$spacing, 'uniform')) {
+        .cdrgam_cli_abort(paste0(
+            field, '.breaks cannot be combined with spacing uniform, which ',
+            'places a tick at every value'
         ))
     }
     if (value$geometry %in% c('raster', 'raster-contour') && is.null(value$mappings$fill)) {

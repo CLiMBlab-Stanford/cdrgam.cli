@@ -13,10 +13,20 @@
     context
 }
 
-.cdrgam_cli_progress_color <- function(context, now=Sys.time()) {
+# Braille frames and per-frame interval match nro's terminal spinner. R has no
+# background thread to redraw the line, so the frame is chosen from elapsed
+# time at each update; the animation advances at nro's rate whenever updates
+# arrive.
+.cdrgam_cli_spinner_frames <- c(
+    '\u280b', '\u2819', '\u2839', '\u2838', '\u283c',
+    '\u2834', '\u2826', '\u2827', '\u2807', '\u280f'
+)
+.cdrgam_cli_spinner_interval <- 0.08
+
+.cdrgam_cli_progress_frame <- function(context, now=Sys.time()) {
     elapsed <- max(0, as.numeric(difftime(now, context$started, units='secs')))
-    palette <- c(15L, 157L, 121L, 85L, 49L, 85L, 121L, 157L)
-    palette[[(floor(elapsed) %% length(palette)) + 1L]]
+    frames <- .cdrgam_cli_spinner_frames
+    frames[[(floor(elapsed / .cdrgam_cli_spinner_interval) %% length(frames)) + 1L]]
 }
 
 .cdrgam_cli_progress <- function(context, stage, pulse=FALSE) {
@@ -27,9 +37,8 @@
         if (!isTRUE(pulse)) message('cdrgam run: ', stage)
         return(invisible(TRUE))
     }
-    color <- .cdrgam_cli_progress_color(context)
     cat(
-        '\r\u001b[2K\u001b[38;5;', color, 'm\u25cf\u001b[0m cdrgam run: ', stage,
+        '\r\u001b[2K', .cdrgam_cli_progress_frame(context), ' cdrgam run: ', stage,
         sep='', file=stderr()
     )
     flush(stderr())

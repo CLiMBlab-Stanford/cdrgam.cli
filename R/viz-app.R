@@ -129,7 +129,21 @@
     }
     # Show peak lags, under the plot, sets the peak timeline.
     values$peaks <- if (isFALSE(input$show_peaks)) 'never' else NULL
+    # Tick values label a line's axis; points and bars are evaluated at them.
+    if (!.cdrgam_cli_viz_ticks_evaluated(input) && !identical(input$mode, 'surface')) {
+        values$breaks <- tryCatch(
+            .cdrgam_cli_viz_ticks(input$x_ticks), error=function(error) NULL
+        )
+    }
     Filter(Negate(is.null), values)
+}
+
+# Whether the viewer evaluates lines at the typed tick values: for points
+# and bars, which are drawn only where they are evaluated. Lines are
+# evaluated on the grid and the tick values only label the axis.
+.cdrgam_cli_viz_ticks_evaluated <- function(input) {
+    .cdrgam_cli_null(input$render_geometry, 'line') %in% c('point', 'bar') &&
+        nzchar(trimws(.cdrgam_cli_null(input$x_ticks, '')))
 }
 
 # The x values typed into the viewer's tick field, sorted and unique, or
@@ -428,9 +442,11 @@
 # default palette differs from a definition's.
 .cdrgam_cli_viz_render_values <- function(settings, mode='line') {
     surface <- identical(mode, 'surface')
-    fields <- .cdrgam_cli_viz_control_fields()
+    fields <- c(.cdrgam_cli_viz_control_fields(), 'breaks')
     if (surface) {
-        fields <- setdiff(fields, c('palette', 'spacing', 'statistic', 'peaks', 'y_zero'))
+        fields <- setdiff(
+            fields, c('palette', 'spacing', 'statistic', 'peaks', 'y_zero', 'breaks')
+        )
     }
     values <- settings[intersect(fields, names(settings))]
     if (!surface) {
@@ -443,6 +459,7 @@
 .cdrgam_cli_viz_render_yaml <- function(settings, mode='line') {
     surface <- identical(mode, 'surface')
     fields <- .cdrgam_cli_viz_control_fields()
+    fields <- c(fields, 'breaks')
     values <- .cdrgam_cli_viz_render_values(settings, mode)
     three_d <- surface && identical(.cdrgam_cli_null(values$geometry, 'surface'), 'surface')
     if (three_d) values$geometry <- NULL
@@ -617,17 +634,27 @@ $(function() {
                 ),
                 bslib::accordion_panel(
                     'Options',
-                    shiny::numericInput('n', 'Grid points per axis', 200, min=2, max=2000),
+                    # Points and bars at typed tick values have no grid.
+                    shiny::conditionalPanel(
+                        paste(
+                            "!(input.mode == 'line' && (input.x_ticks || '').trim() &&",
+                            "['point', 'bar'].includes(input.render_geometry))"
+                        ),
+                        shiny::numericInput(
+                            'n', 'Grid points per axis', 200, min=2, max=2000
+                        )
+                    ),
                     shiny::conditionalPanel(
                         "input.mode == 'line'",
                         shiny::textInput(
-                            'x_ticks', 'X tick values', placeholder='Grid points'
+                            'x_ticks', 'X tick values', placeholder='Automatic'
                         ),
                         shiny::div(
                             class='form-text mt-n2 mb-2',
                             paste(
-                                'Numbers separated by commas or spaces. Lines are',
-                                'evaluated at these values, with a tick at each.'
+                                'Numbers separated by commas or spaces. Lines get',
+                                'a tick at each; points and bars are evaluated at',
+                                'these values instead of the grid.'
                             )
                         )
                     ),
@@ -1069,11 +1096,15 @@ $(function() {
         }
 
         options <- shiny::reactive(list(
-            n=max(2L, as.integer(.cdrgam_cli_null(input$n, 200L))),
+            n={
+                n <- suppressWarnings(as.integer(.cdrgam_cli_null(input$n, NA)))
+                if (length(n) != 1L || is.na(n)) 200L else max(2L, n)
+            },
             level=.cdrgam_cli_null(input$level, 0.95),
             unconditional=isTRUE(input$unconditional),
             interval=.cdrgam_cli_null(input$interval, 'pointwise'),
-            ticks=if (!identical(input$mode, 'surface')) {
+            ticks=if (!identical(input$mode, 'surface') &&
+                    .cdrgam_cli_viz_ticks_evaluated(input)) {
                 tryCatch(.cdrgam_cli_viz_ticks(input$x_ticks), error=function(error) NULL)
             }
         ))
@@ -1368,7 +1399,7 @@ $(function() {
                         settings=chosen
                     )
                 } else {
-                    # Lines at chosen x values put a tick at each.
+                    # Points and bars at chosen x values put a tick at each.
                     if (length(options()$ticks) && is.null(chosen$spacing)) {
                         chosen$spacing <- 'linear'
                     }

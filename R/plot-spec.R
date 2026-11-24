@@ -224,7 +224,7 @@
 # in sorted order and `linear` spacing at the values themselves. Bars over a
 # numeric x use uniform spacing unless `render.spacing` is set. A categorical
 # x has one tick per level, as ggplot2's discrete scales do. Otherwise x is a
-# continuous range with automatic breaks.
+# continuous range with automatic breaks, or with ticks at `render.breaks`.
 .cdrgam_cli_x_axis <- function(values, render) {
     if (!is.numeric(values)) {
         levels <- if (is.factor(values)) levels(droplevels(values)) else {
@@ -236,6 +236,12 @@
         ))
     }
     spacing <- render$spacing
+    if (!is.null(render$breaks) && !identical(spacing, 'uniform')) {
+        return(list(
+            kind='breaks', position=values, breaks=render$breaks,
+            labels=format(signif(render$breaks, 4L), trim=TRUE, drop0trailing=TRUE)
+        ))
+    }
     if (is.null(spacing) && identical(render$geometry, 'bar')) spacing <- 'uniform'
     if (is.null(spacing)) return(list(kind='continuous', position=values))
     ticks <- sort(unique(values[is.finite(values)]))

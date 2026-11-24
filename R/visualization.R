@@ -185,45 +185,55 @@
     output
 }
 
-.cdrgam_cli_execute_effect <- function(item, stage) {
-    fit <- readRDS(file.path(item$fit$output, 'fit.rds'))
-    training <- .cdrgam_cli_effect_training(fit, item$fit$dataset)
-    query <- item$query
-    output <- .cdrgam_cli_compute_effect(fit, query, item$layers, training)
-    pointwise <- attr(output, 'pointwise_peaks')
-    tests <- attr(output, 'tests')
-    peaks <- attr(output, 'peaks')
-    for (name in c('pointwise_peaks', 'tests', 'peaks')) attr(output, name) <- NULL
+# Evaluate each effect request of a visualization from its fit. Fits are
+# read once each. The plot data is recomputed on every run rather than
+# cached, so it always reflects the installed engine.
+.cdrgam_cli_evaluate_effects <- function(requests) {
+    fits <- list()
+    lapply(requests, function(request) {
+        key <- request$fit$key
+        if (is.null(fits[[key]])) {
+            fit <- readRDS(file.path(request$fit$output, 'fit.rds'))
+            fits[[key]] <<- list(
+                fit=fit,
+                training=.cdrgam_cli_effect_training(fit, request$fit$dataset)
+            )
+        }
+        .cdrgam_cli_compute_effect(
+            fits[[key]]$fit, request$query, request$layers, fits[[key]]$training
+        )
+    })
+}
+
+# Write an evaluated effect next to the figure drawn from it, as a record
+# of the plotted numbers. `prefix` distinguishes the lines of one figure.
+.cdrgam_cli_write_effect_data <- function(data, request, stage, prefix='effect') {
+    path <- function(suffix) file.path(stage, paste0(prefix, '-', suffix))
+    grid <- data
+    for (name in c('pointwise_peaks', 'tests', 'peaks')) attr(grid, name) <- NULL
+    utils::write.csv(grid, path('grid.csv'), row.names=FALSE)
+    pointwise <- attr(data, 'pointwise_peaks')
     if (!is.null(pointwise)) {
-        saveRDS(pointwise, file.path(stage, 'effect-pointwise-peaks.rds'), version=3)
-        utils::write.csv(
-            pointwise, file.path(stage, 'effect-pointwise-peaks.csv'), row.names=FALSE
-        )
+        utils::write.csv(pointwise, path('pointwise-peaks.csv'), row.names=FALSE)
     }
-    if (isTRUE(query$test)) {
-        utils::write.csv(tests, file.path(stage, 'effect-tests.csv'), row.names=FALSE)
+    if (isTRUE(request$query$test)) {
+        utils::write.csv(attr(data, 'tests'), path('tests.csv'), row.names=FALSE)
     }
+    peaks <- attr(data, 'peaks')
     if (!is.null(peaks)) {
-        saveRDS(peaks, file.path(stage, 'effect-peaks.rds'), version=3)
-        utils::write.csv(
-            peaks, file.path(stage, 'effect-peaks.csv'), row.names=FALSE
-        )
+        utils::write.csv(peaks, path('peaks.csv'), row.names=FALSE)
         if (!is.null(attr(peaks, 'draws'))) utils::write.csv(
-            attr(peaks, 'draws'), file.path(stage, 'effect-peak-draws.csv'),
-            row.names=FALSE
+            attr(peaks, 'draws'), path('peak-draws.csv'), row.names=FALSE
         )
     }
-    saveRDS(output, file.path(stage, 'effect-grid.rds'), version=3)
-    utils::write.csv(output, file.path(stage, 'effect-grid.csv'), row.names=FALSE)
     .cdrgam_cli_write_yaml(
-        list(query=query, layers=.cdrgam_cli_effect_layers(query, item$layers)),
-        file.path(stage, 'request.yml')
+        list(
+            query=request$query,
+            layers=.cdrgam_cli_effect_layers(request$query, request$layers)
+        ),
+        path('request.yml')
     )
-    list(
-        rows=nrow(output), terms=length(unique(output$term_id)),
-        layers=length(unique(output$layer)), scale='linear-predictor',
-        interval=query$uncertainty$kind, level=query$uncertainty$level
-    )
+    invisible(grid)
 }
 
 # The ggplot2 renderer of plot specifications from R/plot-spec.R.
@@ -619,21 +629,17 @@
     varying
 }
 
-# Render a visualization of lines from each line's effect artifact, with
+# Render a visualization of lines, evaluating each line's effect, with
 # the figure the viewer draws for the same lines.
 .cdrgam_cli_render_lines <- function(item, stage) {
     definition <- item$definition
+    evaluated <- .cdrgam_cli_evaluate_effects(item$effects)
     entries <- lapply(seq_along(definition$lines), function(index) {
         line <- definition$lines[[index]]
-        output <- item$effects[[index]]$output
-        data <- readRDS(file.path(output, 'effect-grid.rds'))
-        for (name in c('peaks', 'pointwise_peaks')) {
-            path <- file.path(output, paste0(
-                'effect-', if (identical(name, 'peaks')) 'peaks' else 'pointwise-peaks',
-                '.rds'
-            ))
-            if (file.exists(path)) attr(data, name) <- readRDS(path)
-        }
+        data <- evaluated[[index]]
+        .cdrgam_cli_write_effect_data(
+            data, item$effects[[index]], stage, prefix=paste0('line-', line$id)
+        )
         list(spec=list(
             id=line$id, label=line$label, varying=.cdrgam_cli_line_axis(data, line)
         ), data=data)
@@ -665,11 +671,10 @@
 
 .cdrgam_cli_render_effect <- function(item, stage) {
     if (!is.null(item$effects)) return(.cdrgam_cli_render_lines(item, stage))
-    data <- readRDS(file.path(item$effect$output, 'effect-grid.rds'))
-    peaks_path <- file.path(item$effect$output, 'effect-peaks.rds')
-    peaks <- if (file.exists(peaks_path)) readRDS(peaks_path) else NULL
-    pointwise_path <- file.path(item$effect$output, 'effect-pointwise-peaks.rds')
-    pointwise <- if (file.exists(pointwise_path)) readRDS(pointwise_path) else NULL
+    data <- .cdrgam_cli_evaluate_effects(list(item$effect))[[1L]]
+    peaks <- attr(data, 'peaks')
+    pointwise <- attr(data, 'pointwise_peaks')
+    data <- .cdrgam_cli_write_effect_data(data, item$effect, stage)
     if (identical(item$definition$render$statistic, 'peak-lag')) {
         data <- .cdrgam_cli_peak_data(peaks)
     }

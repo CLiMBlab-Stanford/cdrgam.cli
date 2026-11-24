@@ -72,6 +72,78 @@ stopifnot(
 fit <- readRDS(models$fit)
 terms <- internal('.cdrgam_cli_viz_terms')(fit)
 labels <- vapply(terms, `[[`, character(1), 'label')
+
+# peak-pointwise(LABEL) holds each point of x:z at the peak lag of x at
+# that point's x value, so points that share x share a lag.
+if (internal('.cdrgam_cli_core_has_points')()) {
+    yaml::write_yaml(list(
+        schema=1L, datasets=list(train='training'), window=c(0, 1.5), k_l=4L,
+        formula='response ~ irf(x) + irf(x, z, k_p=list(3, 3))',
+        fit=list(family='gaussian', link='identity', method='REML',
+            backend='mgcv', engine='gam')
+    ), file.path(project, 'definitions', 'models', 'nested.yml'))
+    cdrgam_cli_run(projects='viz-test', models='nested')
+    nested <- readRDS(file.path(project, 'results', 'models', 'nested', 'fit.rds'))
+    nested_labels <- internal('.cdrgam_cli_core_effect_catalog')(nested)$label
+    stopifnot(all(c('x', 'x:z') %in% nested_labels))
+    fit_saved <- fit
+    fit <- nested
+    compute <- internal('.cdrgam_cli_compute_effect')
+    training <- internal('.cdrgam_cli_effect_training')(fit, NULL)
+    borrowed_query <- function(lag) list(
+        terms='x:z', n=25L, composition='term', grouping='population',
+        uncertainty=list(kind='pointwise', level=0.95, peak_draws=20L, unconditional=FALSE),
+        axes=list(lag=lag, predictors=list(
+            x=list(values=c('mean - sd', 'mean + sd')),
+            z=list(values=c('mean - sd', 'mean', 'mean + sd'))
+        ))
+    )
+    borrowed <- compute(fit, borrowed_query('peak-pointwise(x)'), training=training)
+    peaks <- attr(borrowed, 'pointwise_peaks')
+    by_x <- tapply(peaks$lag, peaks$x, function(value) length(unique(value)))
+    own <- attr(compute(fit, list(
+        terms='x', n=25L, composition='term', grouping='population',
+        uncertainty=list(kind='pointwise', level=0.95, peak_draws=20L, unconditional=FALSE),
+        axes=list(lag='peak-pointwise', predictors=list(
+            x=list(values=c('mean - sd', 'mean + sd'))
+        ))
+    ), training=training), 'pointwise_peaks')
+    stopifnot(
+        nrow(borrowed) == 6L, all(peaks$source == 'x'), all(by_x == 1L),
+        isTRUE(all.equal(
+            unname(peaks$lag[match(own$x, peaks$x)]), own$lag
+        )),
+        all(is.finite(borrowed$se))
+    )
+    unmatched <- tryCatch(
+        compute(fit, list(
+            terms='x', n=25L, composition='term', grouping='population',
+            uncertainty=list(kind='pointwise', level=0.95, peak_draws=0L, unconditional=FALSE),
+            axes=list(lag='peak-pointwise(x:z)')
+        ), training=training),
+        error=conditionMessage
+    )
+    stopifnot(is.character(unmatched), grepl('z is not a predictor of x', unmatched))
+    # A simultaneous band re-finds x's peak lags in each draw and reads x:z
+    # at them, with the same coefficient draws for both terms.
+    if (internal('.cdrgam_cli_core_has_shared_draws')()) {
+        joint_query <- borrowed_query('peak-pointwise(x)')
+        joint_query$uncertainty$kind <- 'simultaneous'
+        joint_query$uncertainty$peak_draws <- 50L
+        joint <- compute(fit, joint_query, training=training)
+        stopifnot(
+            isTRUE(all.equal(joint$estimate, borrowed$estimate)),
+            all(is.finite(joint$critical_value)),
+            all(joint$lower <= joint$estimate & joint$estimate <= joint$upper),
+            isTRUE(all.equal(
+                attr(joint, 'pointwise_peaks')$lag, peaks$lag
+            ))
+        )
+    }
+    message('peak-pointwise(LABEL) checks ran')
+    fit <- fit_saved
+    unlink(file.path(project, 'definitions', 'models', 'nested.yml'))
+}
 tensor <- terms[[match('x:z', labels)]]
 stopifnot(
     setequal(names(tensor$axes), c('lag', 'x', 'z')),
@@ -821,6 +893,42 @@ if (requireNamespace('plotly', quietly=TRUE)) {
             modifyList(line_ticks, list(render_geometry='point'))
         )$breaks)
     )
+    # Tick labels follow the typed tick values, which are sorted, and are
+    # kept for points evaluated at the ticks.
+    tick_labels <- internal('.cdrgam_cli_viz_tick_labels')
+    stopifnot(
+        identical(tick_labels('ten, zero, five', '10 0 5'), c('zero', 'five', 'ten')),
+        identical(tick_labels('a,,c', '1 2 3'), c('a', '', 'c')),
+        is.null(tick_labels('', '1 2')),
+        grepl('2 labels for 3', tryCatch(tick_labels('a, b', '1 2 3'),
+            error=conditionMessage)),
+        identical(internal('.cdrgam_cli_viz_settings')(modifyList(line_ticks, list(
+            x_tick_labels='start, middle, end'
+        )))$tick_labels, c('start', 'middle', 'end')),
+        identical(internal('.cdrgam_cli_viz_settings')(modifyList(line_ticks, list(
+            render_geometry='point', x_tick_labels='start, middle, end'
+        )))$tick_labels, c('start', 'middle', 'end'))
+    )
+    # Reversing the palette assigns the same colors to the lines in reverse
+    # order, in the plot and in the line list.
+    forward <- viz_render(peaked, settings=list())
+    reversed <- viz_render(peaked, settings=list(reverse_palette=TRUE))
+    forward_colors <- internal('.cdrgam_cli_lines_spec')(peaked, forward)$color$values
+    reversed_colors <- internal('.cdrgam_cli_lines_spec')(peaked, reversed)$color$values
+    stopifnot(
+        isTRUE(reversed$reverse_palette), is.null(forward$reverse_palette),
+        identical(unname(reversed_colors), rev(unname(forward_colors))),
+        identical(unname(internal('.cdrgam_cli_viz_line_colors')(c('a', 'b'), reverse=TRUE)),
+            rev(unname(internal('.cdrgam_cli_viz_line_colors')(c('a', 'b')))))
+    )
+    # Typed tick values and labels reach the viewer's plot.
+    labelled_axis <- plotly::plotly_build(internal('.cdrgam_cli_viz_line_plot')(
+        peaked, settings=internal('.cdrgam_cli_viz_settings')(list(
+            mode='line', render_geometry='line', x_ticks='0 0.5 1',
+            x_tick_labels='start, middle, end'
+        ))
+    ))$x$layout$xaxis
+    stopifnot(identical(unlist(labelled_axis$ticktext), c('start', 'middle', 'end')))
     # An interval that does not suit the geometry falls back to its default.
     stopifnot(identical(
         viz_render(peaked, settings=list(geometry='bar', interval='ribbon'))$interval,
@@ -841,6 +949,34 @@ if (requireNamespace('plotly', quietly=TRUE)) {
             peaked, settings=list(geometry='point', spacing='uniform', peaks='never')
         ))$x$layout$xaxis$ticktext), c('0', '0.25', '0.5', '0.75', '1'))
     )
+    # Connected points add one thin line per series through its dodged
+    # points, in x order, with no band; the ggplot2 renderer draws the same.
+    connected_settings <- list(
+        geometry='connected-point', spacing='uniform', peaks='never'
+    )
+    connected <- plotly::plotly_build(internal('.cdrgam_cli_viz_line_plot')(
+        peaked, settings=connected_settings
+    ))$x$data
+    # Error bars are also line traces, broken by NA between whiskers.
+    joined <- Filter(function(trace) {
+        identical(trace$mode, 'lines') && !anyNA(trace$x)
+    }, connected)
+    stopifnot(
+        length(Filter(function(trace) identical(trace$mode, 'markers'), connected)) == 2L,
+        length(joined) == 2L, !any(vapply(connected, function(trace) {
+            identical(trace$fill, 'toself') || identical(trace$fill, 'tonexty')
+        }, logical(1))),
+        all(diff(joined[[1L]]$x) > 0),
+        isTRUE(all.equal(joined[[1L]]$x, markers[[1L]]$x)),
+        identical(viz_render(peaked, settings=connected_settings)$interval, 'errorbar')
+    )
+    connected_figure <- internal('.cdrgam_cli_lines_figure')(
+        peaked, viz_render(peaked, settings=connected_settings)
+    )
+    connected_ggplot <- internal('.cdrgam_cli_ggplot_plot')(connected_figure$spec)
+    geoms <- vapply(connected_ggplot$layers, function(layer) class(layer$geom)[[1L]],
+        character(1))
+    stopifnot('GeomLine' %in% geoms, 'GeomPoint' %in% geoms, !('GeomRibbon' %in% geoms))
     # Peak lags as bars: one per line, labeled by lane, with error bars.
     bars <- plotly::plotly_build(internal('.cdrgam_cli_viz_line_plot')(
         peaked, settings=list(geometry='bar', statistic='peak-lag')

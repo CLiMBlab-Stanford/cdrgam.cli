@@ -195,11 +195,12 @@ expected <- list(
         unknown_field=paste0(
             'render contains unknown field: size. Allowed fields: geometry, mapping',
             's, interval, theme, formats, width, height, dpi, title, xlab, ylab, pa',
-            'lette, scales, peaks, spacing, breaks, statistic, y_zero'
+            'lette, scales, peaks, spacing, breaks, tick_labels, statistic, y_zero, re',
+            'verse_palette'
         ),
         bad_geometry=paste0(
-            'render.geometry must be one of line, point, bar, raster, contour, rast',
-            'er-contour'
+            'render.geometry must be one of line, point, connected-point, bar, ',
+            'raster, contour, raster-contour'
         ),
         mappings_unnamed='render.mappings must be a named mapping',
         mapping_unknown=paste0(
@@ -211,13 +212,21 @@ expected <- list(
         mapping_not_scalar='render.mappings value must be a character scalar',
         line_companion='render.interval companion requires a surface geometry',
         surface_ribbon='render.interval ribbon requires line geometry',
-        line_errorbar='render.interval errorbar requires point or bar geometry',
+        line_errorbar=paste0(
+            'render.interval errorbar requires point, connected-point, or bar ',
+            'geometry'
+        ),
         bar_companion='render.interval companion requires a surface geometry',
         raster_fill='render.mappings.fill is required for raster geometry',
         bad_spacing='render.spacing must be one of uniform, linear',
-        surface_spacing='render.spacing requires line, point, or bar geometry',
+        surface_spacing=paste0(
+            'render.spacing requires line, point, connected-point, or bar geometry'
+        ),
         bad_statistic='render.statistic must be one of estimate, peak-lag',
-        line_peak='render.statistic peak-lag requires point or bar geometry',
+        line_peak=paste0(
+            'render.statistic peak-lag requires point, connected-point, or bar ',
+            'geometry'
+        ),
         bad_theme=paste0(
             'render.theme must be one of paper, slides, grey, gray, bw, linedraw, ',
             'light, dark, minimal, classic, void, test'
@@ -260,6 +269,32 @@ stopifnot(grepl('cannot be combined', tryCatch(
     internal('.cdrgam_cli_validate_render')(list(geometry='line',
         mappings=list(x='lag', y='estimate'), breaks=list(1), spacing='uniform'),
         'render'),
+    error=conditionMessage
+)))
+
+# tick_labels name the breaks in the order written, and otherwise each
+# distinct x value in sorted order; a mismatch in number is an error.
+labelled <- internal('.cdrgam_cli_validate_render')(list(geometry='line',
+    mappings=list(x='lag', y='estimate'), breaks=list(10, 0, 5),
+    tick_labels=list('late', 'onset', 'mid')), 'render')
+stopifnot(identical(labelled$tick_labels, c('onset', 'mid', 'late')))
+axis <- internal('.cdrgam_cli_x_axis')(seq(0, 10, length.out=200), labelled)
+stopifnot(identical(axis$labels, c('onset', 'mid', 'late')))
+stopifnot(grepl('3 labels for 2 breaks', tryCatch(
+    internal('.cdrgam_cli_validate_render')(list(geometry='line',
+        mappings=list(x='lag', y='estimate'), breaks=list(0, 5),
+        tick_labels=list('a', 'b', 'c')), 'render'),
+    error=conditionMessage
+)))
+points_labelled <- internal('.cdrgam_cli_validate_render')(list(geometry='point',
+    mappings=list(x='lag', y='estimate'), tick_labels=list('low', 'high')), 'render')
+axis <- internal('.cdrgam_cli_x_axis')(c(2, 1, 2, 1), points_labelled)
+stopifnot(
+    identical(axis$kind, 'ticks'), identical(axis$breaks, c(1, 2)),
+    identical(axis$labels, c('low', 'high'))
+)
+stopifnot(grepl('2 labels for 3 x values', tryCatch(
+    internal('.cdrgam_cli_x_axis')(c(1, 2, 3), points_labelled),
     error=conditionMessage
 )))
 

@@ -119,7 +119,7 @@
 # lag at linear spacing. `spec` is the lines' plot specification.
 .cdrgam_cli_lines_strip_spec <- function(entries, spec) {
     render <- spec$render
-    if (!(render$geometry %in% c('line', 'point')) ||
+    if (!(render$geometry %in% c('line', .cdrgam_cli_point_geometries)) ||
             identical(render$statistic, 'peak-lag')) return(NULL)
     table <- .cdrgam_cli_lines_peaks(entries)
     if (!.cdrgam_cli_show_peaks(table, render$peaks, lines=TRUE)) return(NULL)
@@ -155,7 +155,7 @@
 # render.peaks is never. `spec` is the lines' plot specification.
 .cdrgam_cli_lines_pointwise_spec <- function(entries, spec) {
     render <- spec$render
-    if (!(render$geometry %in% c('line', 'point')) ||
+    if (!(render$geometry %in% c('line', .cdrgam_cli_point_geometries)) ||
             identical(render$statistic, 'peak-lag') ||
             identical(render$peaks, 'never')) return(NULL)
     .cdrgam_cli_pointwise_spec(.cdrgam_cli_lines_pointwise(entries), spec, render)

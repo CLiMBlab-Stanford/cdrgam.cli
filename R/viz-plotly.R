@@ -111,6 +111,14 @@
     if (errorbars) plot <- .cdrgam_cli_plotly_errorbars(
         plot, rows, color[[1L]], width * 0.7, style$alpha, group
     )
+    if (identical(spec$geometry, 'connected-point')) {
+        ordered <- order(rows$.cdrgam_x)
+        plot <- plotly::add_lines(
+            plot, x=rows$.cdrgam_x[ordered], y=rows[[spec$columns$y]][ordered],
+            name=name, legendgroup=group, showlegend=FALSE, opacity=style$alpha,
+            line=list(color=color[[1L]], width=width * 0.5), hoverinfo='skip'
+        )
+    }
     plotly::add_markers(
         plot, x=rows$.cdrgam_x, y=rows[[spec$columns$y]], name=name,
         marker=list(

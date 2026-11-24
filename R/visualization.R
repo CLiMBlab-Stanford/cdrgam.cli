@@ -47,13 +47,31 @@
         unconditional=query$uncertainty$unconditional,
         n=query$n
     ), reference)
-    direction <- .cdrgam_cli_pointwise_direction(query$axes$lag)
-    if (!is.null(direction)) {
+    pointwise_lag <- .cdrgam_cli_pointwise_lag(query$axes$lag)
+    if (!is.null(pointwise_lag)) {
+        source <- if (!is.null(pointwise_lag$label) &&
+                !identical(pointwise_lag$label, term$label)) {
+            catalog <- training$catalog
+            if (is.null(catalog)) {
+                catalog <- .cdrgam_cli_core_effect_catalog(
+                    fit, training$impulses, training$responses
+                )
+            }
+            index <- match(pointwise_lag$label, catalog$label)
+            if (is.na(index)) .cdrgam_cli_abort(paste0(
+                'peak-pointwise(', pointwise_lag$label, '): the fit has no term ',
+                pointwise_lag$label
+            ))
+            .cdrgam_cli_pointwise_source(
+                arguments[-1L], term, .cdrgam_cli_catalog_row(catalog, index)
+            )
+        }
         value <- .cdrgam_cli_pointwise_effect(
-            fit, arguments[-1L], direction,
+            fit, arguments[-1L], pointwise_lag$direction,
             draws=.cdrgam_cli_null(query$uncertainty$peak_draws, .cdrgam_cli_peak_draws),
             level=query$uncertainty$level,
-            simultaneous=identical(query$uncertainty$kind, 'simultaneous')
+            simultaneous=identical(query$uncertainty$kind, 'simultaneous'),
+            source=source
         )
         pointwise <- attr(value, 'pointwise_peaks')
         pointwise$layer <- layer$id
@@ -343,6 +361,16 @@
             ),
             alpha=style$alpha, linewidth=style$linewidth * 0.7, inherit.aes=FALSE
         ), list(colour=if (bar) 'grey20' else style$color))))
+    }
+    if (identical(spec$geometry, 'connected-point')) {
+        # geom_line joins points in x order within each group.
+        layers <- c(layers, list(.cdrgam_cli_ggplot_geom(ggplot2::geom_line, list(
+            data=rows, mapping=.cdrgam_cli_ggplot_aes(
+                x='.cdrgam_x', y=columns$y, colour=colour,
+                linetype=columns$linetype, group=spec$group
+            ),
+            alpha=style$alpha, linewidth=style$linewidth * 0.5, inherit.aes=FALSE
+        ), list(colour=style$color))))
     }
     if (!bar) {
         layers <- c(layers, list(.cdrgam_cli_ggplot_geom(ggplot2::geom_point, list(

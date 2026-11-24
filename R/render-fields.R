@@ -25,7 +25,10 @@
 # filled in table order; field order is part of a render's identity, so new
 # fields with defaults must come after formats.
 
-.cdrgam_cli_line_geometries <- c('line', 'point', 'bar')
+# `connected-point` is `point` with a thin line joining each series'
+# points in x order, without an interval band.
+.cdrgam_cli_point_geometries <- c('point', 'connected-point')
+.cdrgam_cli_line_geometries <- c('line', .cdrgam_cli_point_geometries, 'bar')
 
 # The native ggplot2 themes a render may name, each drawn with base size 10.
 # `paper` is bw and `slides` is minimal at base size 16.
@@ -48,13 +51,16 @@
     interval=list(
         kind='choice', choices=c('ribbon', 'lines', 'errorbar', 'companion', 'none'),
         requires=list(
-            ribbon='line', lines='line', errorbar=c('point', 'bar'),
+            ribbon='line', lines='line',
+            errorbar=c(.cdrgam_cli_point_geometries, 'bar'),
             companion=.cdrgam_cli_surface_geometries
         ),
         # Surfaces keep the historical ribbon default, which they reject, so
         # that a surface must state its interval.
         default=function(render) {
-            if (render$geometry %in% c('point', 'bar')) 'errorbar' else 'ribbon'
+            if (render$geometry %in% c(.cdrgam_cli_point_geometries, 'bar')) {
+                'errorbar'
+            } else 'ribbon'
         },
         viewer='control', label='Intervals'
     ),
@@ -90,14 +96,22 @@
         kind='numbers', geometries=.cdrgam_cli_line_geometries,
         viewer='derived', reason='set by the X tick values option'
     ),
+    tick_labels=list(
+        kind='labels', geometries=.cdrgam_cli_line_geometries,
+        viewer='derived', reason='set by the X tick labels option'
+    ),
     statistic=list(
         kind='choice', choices=c('estimate', 'peak-lag'), omit='estimate',
-        requires=list('peak-lag'=c('point', 'bar')),
+        requires=list('peak-lag'=c(.cdrgam_cli_point_geometries, 'bar')),
         viewer='control', label='Statistic'
     ),
     y_zero=list(
         kind='flag', omit=FALSE, geometries=.cdrgam_cli_line_geometries,
         viewer='control', label='Include zero on the vertical axis'
+    ),
+    reverse_palette=list(
+        kind='flag', omit=FALSE, geometries=.cdrgam_cli_line_geometries,
+        viewer='control', label='Reverse palette order'
     )
 )
 
@@ -169,6 +183,14 @@
             value
         },
         text=.cdrgam_cli_scalar_character(value, field),
+        labels={
+            value <- unlist(value, use.names=FALSE)
+            if (!length(value) || anyNA(value) ||
+                    !(is.character(value) || is.numeric(value))) {
+                .cdrgam_cli_abort(paste0(field, ' must be a list of labels'))
+            }
+            as.character(value)
+        },
         numbers={
             value <- unlist(value, use.names=FALSE)
             if (!is.numeric(value) || !length(value) || any(!is.finite(value))) {
@@ -190,6 +212,9 @@
     fields <- .cdrgam_cli_render_fields
     required <- names(fields)[vapply(fields, function(spec) isTRUE(spec$required), logical(1))]
     .cdrgam_cli_check_keys(value, names(fields), field, required)
+    # Tick labels pair with breaks in the order written, before breaks are
+    # sorted.
+    written_breaks <- unlist(value$breaks, use.names=FALSE)
     # Geometry first: other fields' defaults and constraints depend on it.
     value$geometry <- .cdrgam_cli_validate_render_field(
         fields$geometry, value$geometry, paste0(field, '.geometry')
@@ -226,6 +251,18 @@
             field, '.breaks cannot be combined with spacing uniform, which ',
             'places a tick at every value'
         ))
+    }
+    if (!is.null(value$tick_labels) && !is.null(value$breaks)) {
+        if (anyDuplicated(written_breaks)) .cdrgam_cli_abort(paste0(
+            field, '.breaks must not repeat a value when tick_labels is set'
+        ))
+        if (length(value$tick_labels) != length(written_breaks)) {
+            .cdrgam_cli_abort(paste0(
+                field, '.tick_labels has ', length(value$tick_labels),
+                ' labels for ', length(written_breaks), ' breaks'
+            ))
+        }
+        value$tick_labels <- value$tick_labels[order(written_breaks)]
     }
     if (value$geometry %in% c('raster', 'raster-contour') && is.null(value$mappings$fill)) {
         .cdrgam_cli_abort(paste0(field, '.mappings.fill is required for raster geometry'))

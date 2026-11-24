@@ -149,7 +149,14 @@
 # peak strip color the same level alike. A gradient places the levels at
 # equal steps along the listed colors, from the first color to the last.
 # NULL or `default` gives ggplot2's hue colors.
-.cdrgam_cli_palette_colors <- function(palette, levels) {
+# `reverse = TRUE` assigns the same colors to the levels in reverse order.
+.cdrgam_cli_palette_colors <- function(palette, levels, reverse=FALSE) {
+    colors <- .cdrgam_cli_palette_level_colors(palette, levels)
+    if (isTRUE(reverse)) colors <- stats::setNames(rev(unname(colors)), names(colors))
+    colors
+}
+
+.cdrgam_cli_palette_level_colors <- function(palette, levels) {
     count <- length(levels)
     if (is.null(palette)) palette <- 'default'
     colors <- if (.cdrgam_cli_gradient_palette(palette)) {
@@ -184,7 +191,12 @@
 
 # The colors a numeric mapping interpolates between, from the lowest value
 # to the highest. These reproduce each palette's ggplot2 continuous scale.
-.cdrgam_cli_palette_stops <- function(palette) {
+.cdrgam_cli_palette_stops <- function(palette, reverse=FALSE) {
+    stops <- .cdrgam_cli_palette_gradient_stops(palette)
+    if (isTRUE(reverse)) rev(stops) else stops
+}
+
+.cdrgam_cli_palette_gradient_stops <- function(palette) {
     if (is.null(palette)) palette <- 'default'
     if (.cdrgam_cli_gradient_palette(palette)) return(palette)
     switch(
@@ -203,11 +215,12 @@
 # The colors of one mapped column: discrete level colors with their legend
 # labels, or continuous stops over the column's range. NULL when no column is
 # given.
-.cdrgam_cli_color_spec <- function(data, column, palette) {
+.cdrgam_cli_color_spec <- function(data, column, palette, reverse=FALSE) {
     if (is.null(column)) return(NULL)
     values <- data[[column]]
     if (is.numeric(values)) return(list(
-        column=column, kind='continuous', stops=.cdrgam_cli_palette_stops(palette),
+        column=column, kind='continuous',
+        stops=.cdrgam_cli_palette_stops(palette, reverse),
         limits=range(values, na.rm=TRUE)
     ))
     levels <- if (is.factor(values)) levels(droplevels(values)) else {
@@ -215,7 +228,7 @@
     }
     list(
         column=column, kind='discrete', levels=levels, labels=levels,
-        values=.cdrgam_cli_palette_colors(palette, levels)
+        values=.cdrgam_cli_palette_colors(palette, levels, reverse)
     )
 }
 
@@ -226,29 +239,48 @@
 # x has one tick per level, as ggplot2's discrete scales do. Otherwise x is a
 # continuous range with automatic breaks, or with ticks at `render.breaks`.
 .cdrgam_cli_x_axis <- function(values, render) {
+    # render.tick_labels replaces the labels of the axis's ticks: the breaks
+    # when given (validation has paired them), and otherwise each distinct
+    # x value in order, which must then match the labels in number.
+    labelled <- function(labels) {
+        given <- render$tick_labels
+        if (is.null(given)) return(labels)
+        if (length(given) != length(labels)) .cdrgam_cli_abort(paste0(
+            'render.tick_labels has ', length(given), ' labels for ', length(labels),
+            if (is.null(render$breaks)) ' x values' else ' breaks'
+        ))
+        given
+    }
     if (!is.numeric(values)) {
         levels <- if (is.factor(values)) levels(droplevels(values)) else {
             sort(unique(as.character(values[!is.na(values)])))
         }
         return(list(
             kind='discrete', position=match(as.character(values), levels),
-            breaks=seq_along(levels), labels=levels
+            breaks=seq_along(levels), labels=labelled(levels)
         ))
     }
     spacing <- render$spacing
     if (!is.null(render$breaks) && !identical(spacing, 'uniform')) {
         return(list(
             kind='breaks', position=values, breaks=render$breaks,
-            labels=format(signif(render$breaks, 4L), trim=TRUE, drop0trailing=TRUE)
+            labels=labelled(
+                format(signif(render$breaks, 4L), trim=TRUE, drop0trailing=TRUE)
+            )
         ))
     }
-    if (is.null(spacing) && identical(render$geometry, 'bar')) spacing <- 'uniform'
+    if (is.null(spacing) && (identical(render$geometry, 'bar') ||
+            !is.null(render$tick_labels))) {
+        # Labels name ticks, so a labelled axis without breaks gets one tick
+        # per value: evenly spaced for bars, at the values otherwise.
+        spacing <- if (identical(render$geometry, 'bar')) 'uniform' else 'linear'
+    }
     if (is.null(spacing)) return(list(kind='continuous', position=values))
     ticks <- sort(unique(values[is.finite(values)]))
     breaks <- if (identical(spacing, 'uniform')) seq_along(ticks) else ticks
     list(
         kind='ticks', position=breaks[match(values, ticks)], breaks=breaks,
-        labels=format(signif(ticks, 4L), trim=TRUE, drop0trailing=TRUE)
+        labels=labelled(format(signif(ticks, 4L), trim=TRUE, drop0trailing=TRUE))
     )
 }
 
@@ -359,14 +391,14 @@
         list(drop=TRUE, lex.order=TRUE)
     ))
     group <- .cdrgam_cli_null(columns$group, '.cdrgam_series')
-    if (geometry %in% c('point', 'bar')) {
+    if (geometry %in% c(.cdrgam_cli_point_geometries, 'bar')) {
         width <- .cdrgam_cli_x_width(data$.cdrgam_x)
         key <- paste(
             data$layer, if (is.null(facet)) '' else as.character(data[[facet$column]]),
             sep='\r'
         )
         series <- as.integer(interaction(data[[group]], drop=TRUE))
-        if (identical(geometry, 'point')) {
+        if (geometry %in% .cdrgam_cli_point_geometries) {
             width <- .cdrgam_cli_point_cluster_width(
                 data$.cdrgam_x, series, key, width, render$width
             )
@@ -389,7 +421,8 @@
     # Bars are filled by the color mapping, so fill follows color unless
     # fill is mapped to another column.
     spec$color <- .cdrgam_cli_color_spec(
-        data, .cdrgam_cli_null(columns$color, columns$fill), render$palette
+        data, .cdrgam_cli_null(columns$color, columns$fill), render$palette,
+        render$reverse_palette
     )
     spec$fill_follows_color <- is.null(columns$fill) ||
         (is.null(columns$color) && !is.null(columns$fill))
@@ -476,7 +509,7 @@
 # uniformly spaced; its lanes take the main plot's colors when color maps to
 # term.
 .cdrgam_cli_figure_peaks <- function(data, peaks, render) {
-    if (!(render$geometry %in% c('line', 'point')) ||
+    if (!(render$geometry %in% c('line', .cdrgam_cli_point_geometries)) ||
             identical(render$statistic, 'peak-lag') ||
             !.cdrgam_cli_show_peaks(peaks, render$peaks)) return(NULL)
     mappings <- render$mappings
@@ -487,7 +520,7 @@
         .cdrgam_cli_mapping_column(.cdrgam_cli_null(mappings$color, '')), 'term'
     )
     colors <- if (by_term) .cdrgam_cli_palette_colors(
-        render$palette, sort(unique(as.character(data$term)))
+        render$palette, sort(unique(as.character(data$term))), render$reverse_palette
     )
     .cdrgam_cli_peak_strip_spec(
         peaks, colors,
@@ -537,7 +570,8 @@
 # render.peaks is never.
 .cdrgam_cli_figure_pointwise <- function(data, pointwise, definition) {
     render <- definition$render
-    if (is.null(pointwise) || !(render$geometry %in% c('line', 'point')) ||
+    if (is.null(pointwise) ||
+            !(render$geometry %in% c('line', .cdrgam_cli_point_geometries)) ||
             identical(render$statistic, 'peak-lag') ||
             identical(render$peaks, 'never')) return(NULL)
     .cdrgam_cli_pointwise_spec(

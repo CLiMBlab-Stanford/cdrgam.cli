@@ -82,7 +82,10 @@
 # The geometries the viewer offers in each mode. `surface` is a 3D surface,
 # which only the viewer draws.
 .cdrgam_cli_viz_geometries <- list(
-    line=c('Lines'='line', 'Points'='point', 'Bars'='bar'),
+    line=c(
+        'Lines'='line', 'Points'='point', 'Connected points'='connected-point',
+        'Bars'='bar'
+    ),
     surface=c(
         '3D surface'='surface', 'Heatmap'='raster', 'Contour lines'='contour',
         'Heatmap with contours'='raster-contour'
@@ -135,6 +138,13 @@
             .cdrgam_cli_viz_ticks(input$x_ticks), error=function(error) NULL
         )
     }
+    # Tick labels name the typed tick values in order, so they need them.
+    if (!identical(input$mode, 'surface') &&
+            nzchar(trimws(.cdrgam_cli_null(input$x_ticks, '')))) {
+        values$tick_labels <- tryCatch(.cdrgam_cli_viz_tick_labels(
+            input$x_tick_labels, input$x_ticks
+        ), error=function(error) NULL)
+    }
     Filter(Negate(is.null), values)
 }
 
@@ -142,7 +152,8 @@
 # and bars, which are drawn only where they are evaluated. Lines are
 # evaluated on the grid and the tick values only label the axis.
 .cdrgam_cli_viz_ticks_evaluated <- function(input) {
-    .cdrgam_cli_null(input$render_geometry, 'line') %in% c('point', 'bar') &&
+    .cdrgam_cli_null(input$render_geometry, 'line') %in%
+        c(.cdrgam_cli_point_geometries, 'bar') &&
         nzchar(trimws(.cdrgam_cli_null(input$x_ticks, '')))
 }
 
@@ -159,6 +170,26 @@
         text, '"'
     ))
     sort(unique(values))
+}
+
+# The typed X tick labels, separated by commas, or NULL when empty, in the
+# sorted order of the tick values `ticks` that they label as typed. Spaces
+# within a label are kept; an empty entry, as in "a,,c", leaves that tick
+# unlabelled. A repeated tick value keeps its first label.
+.cdrgam_cli_viz_tick_labels <- function(text, ticks) {
+    text <- .cdrgam_cli_null(text, '')
+    if (!nzchar(trimws(text))) return(NULL)
+    labels <- trimws(strsplit(text, ',', fixed=TRUE)[[1L]])
+    if (grepl(',\\s*$', text)) labels <- c(labels, '')
+    .cdrgam_cli_viz_ticks(ticks)
+    parts <- strsplit(trimws(ticks), '[,[:space:]]+')[[1L]]
+    written <- as.numeric(parts[nzchar(parts)])
+    if (length(labels) != length(written)) .cdrgam_cli_abort(paste0(
+        'X tick labels has ', length(labels), ' labels for ', length(written),
+        ' tick values'
+    ))
+    keep <- !duplicated(written)
+    labels[keep][order(written[keep])]
 }
 
 # Up to eight colors of each named palette, for the palette menu, as a list
@@ -195,9 +226,9 @@
 
 # Line colors named by line id, in the order the lines were added, under a
 # chosen palette; okabe-ito switches as .cdrgam_cli_viz_palette() says.
-.cdrgam_cli_viz_line_colors <- function(ids, palette='okabe-ito') {
+.cdrgam_cli_viz_line_colors <- function(ids, palette='okabe-ito', reverse=FALSE) {
     if (identical(palette, 'okabe-ito')) palette <- .cdrgam_cli_viz_palette(length(ids))
-    .cdrgam_cli_palette_colors(palette, ids)
+    .cdrgam_cli_palette_colors(palette, ids, reverse)
 }
 
 # The render the viewer draws its lines with, validated like a definition's.
@@ -221,7 +252,10 @@
         xlab=.cdrgam_cli_null(settings$xlab, if (peak) 'Peak' else paste(axes, collapse=' / ')),
         ylab=.cdrgam_cli_null(settings$ylab, if (peak) 'Peak lag' else 'Effect (linear predictor)')
     )
-    for (name in c('title', 'theme', 'peaks', 'spacing', 'statistic', 'y_zero')) {
+    for (name in c(
+        'title', 'theme', 'peaks', 'spacing', 'statistic', 'y_zero', 'reverse_palette',
+        'breaks', 'tick_labels'
+    )) {
         render[[name]] <- settings[[name]]
     }
     render$theme <- .cdrgam_cli_null(render$theme, 'classic')
@@ -387,6 +421,10 @@
         theme=choose('theme', fields$theme$choices, 'classic'),
         y_zero=if (identical(mode, 'line')) shiny::checkboxInput(
             'render_y_zero', fields$y_zero$label, isTRUE(values$y_zero)
+        ),
+        reverse_palette=if (identical(mode, 'line')) shiny::checkboxInput(
+            'render_reverse_palette', fields$reverse_palette$label,
+            isTRUE(values$reverse_palette)
         )
     )
     shiny::tagList(
@@ -442,11 +480,12 @@
 # default palette differs from a definition's.
 .cdrgam_cli_viz_render_values <- function(settings, mode='line') {
     surface <- identical(mode, 'surface')
-    fields <- c(.cdrgam_cli_viz_control_fields(), 'breaks')
+    fields <- c(.cdrgam_cli_viz_control_fields(), 'breaks', 'tick_labels')
     if (surface) {
-        fields <- setdiff(
-            fields, c('palette', 'spacing', 'statistic', 'peaks', 'y_zero', 'breaks')
-        )
+        fields <- setdiff(fields, c(
+            'palette', 'spacing', 'statistic', 'peaks', 'y_zero', 'reverse_palette',
+            'breaks', 'tick_labels'
+        ))
     }
     values <- settings[intersect(fields, names(settings))]
     if (!surface) {
@@ -459,7 +498,7 @@
 .cdrgam_cli_viz_render_yaml <- function(settings, mode='line') {
     surface <- identical(mode, 'surface')
     fields <- .cdrgam_cli_viz_control_fields()
-    fields <- c(fields, 'breaks')
+    fields <- c(fields, 'breaks', 'tick_labels')
     values <- .cdrgam_cli_viz_render_values(settings, mode)
     three_d <- surface && identical(.cdrgam_cli_null(values$geometry, 'surface'), 'surface')
     if (three_d) values$geometry <- NULL
@@ -638,7 +677,8 @@ $(function() {
                     shiny::conditionalPanel(
                         paste(
                             "!(input.mode == 'line' && (input.x_ticks || '').trim() &&",
-                            "['point', 'bar'].includes(input.render_geometry))"
+                            "['point', 'connected-point', 'bar']",
+                            ".includes(input.render_geometry))"
                         ),
                         shiny::numericInput(
                             'n', 'Grid points per axis', 200, min=2, max=2000
@@ -655,6 +695,19 @@ $(function() {
                                 'Numbers separated by commas or spaces. Lines get',
                                 'a tick at each; points and bars are evaluated at',
                                 'these values instead of the grid.'
+                            )
+                        ),
+                        shiny::conditionalPanel(
+                            "(input.x_ticks || '').trim()",
+                            shiny::textInput(
+                                'x_tick_labels', 'X tick labels', placeholder='The values'
+                            ),
+                            shiny::div(
+                                class='form-text mt-n2 mb-2',
+                                paste(
+                                    'One label per tick value, in order, separated',
+                                    'by commas.'
+                                )
                             )
                         )
                     ),
@@ -1008,7 +1061,9 @@ $(function() {
                         'Add a term label, as in peak(irf(1)), to use that',
                         'term\'s peak instead. peak-pointwise (or',
                         'peak-pointwise-neg) holds each point at its own peak',
-                        'lag for this line\'s contrast, shown in a panel below.'
+                        'lag for this line\'s contrast, shown in a panel below.',
+                        'peak-pointwise(x) uses the peak of term x at each',
+                        'point\'s values of x\'s predictors instead.'
                     )
                 )
             )
@@ -1147,7 +1202,9 @@ $(function() {
         # The form and options survive a page reload or server restart in
         # session storage: the model, term, axes, fixed and reference values,
         # composition, grouping, label, and the Options panel.
-        option_inputs <- c('n', 'level', 'interval', 'unconditional', 'x_ticks')
+        option_inputs <- c(
+            'n', 'level', 'interval', 'unconditional', 'x_ticks', 'x_tick_labels'
+        )
         shiny::observe({
             info <- tryCatch(term(), error=function(error) NULL)
             axes <- if (is.null(info)) character() else names(info$axes)
@@ -1196,6 +1253,9 @@ $(function() {
             if (!is.null(options$x_ticks)) {
                 shiny::updateTextInput(session, 'x_ticks', value=options$x_ticks)
             }
+            if (!is.null(options$x_tick_labels)) shiny::updateTextInput(
+                session, 'x_tick_labels', value=options$x_tick_labels
+            )
             if (!is.null(state$mode)) {
                 shiny::updateRadioButtons(session, 'mode', selected=state$mode)
             }
@@ -1289,10 +1349,11 @@ $(function() {
                 'Choose a term and fixed values, then press Add line.'
             ))
             ids <- vapply(values, `[[`, character(1), 'id')
+            chosen <- tryCatch(settings(), error=function(error) list())
             colors <- tryCatch(
                 .cdrgam_cli_viz_line_colors(
-                    ids, .cdrgam_cli_null(tryCatch(settings()$palette, error=function(e) NULL),
-                        'okabe-ito')
+                    ids, .cdrgam_cli_null(chosen$palette, 'okabe-ito'),
+                    isTRUE(chosen$reverse_palette)
                 ),
                 error=function(error) .cdrgam_cli_viz_line_colors(ids)
             )
@@ -1377,6 +1438,14 @@ $(function() {
                 list(mode='line', entries=Filter(Negate(is.null), entries))
             }
         })
+
+        shiny::observeEvent(input$x_tick_labels, {
+            message <- tryCatch({
+                .cdrgam_cli_viz_tick_labels(input$x_tick_labels, input$x_ticks)
+                NULL
+            }, error=conditionMessage)
+            if (!is.null(message)) shiny::showNotification(message, type='error')
+        }, ignoreInit=TRUE)
 
         shiny::observeEvent(input$x_ticks, {
             message <- tryCatch({

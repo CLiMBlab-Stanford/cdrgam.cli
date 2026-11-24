@@ -527,6 +527,20 @@ a range or list of values, or in a reference, and it requires
 `uncertainty.kind: pointwise` and no `test`. It needs a cdrgam release whose
 `estimate_effect()` accepts `points`.
 
+`peak-pointwise(LABEL)` and `peak-pointwise-neg(LABEL)` take each point's lag
+from another term instead. For each plotted point, the named term is evaluated
+over lag at that point's values of its own predictors, with the query's
+`reference` for those predictors, and the point is held at that term's peak
+lag. Plotting `surp:rep` with `lag: peak-pointwise(surp)` reads the
+interaction at the lag where the `surp` main effect peaks for each `surp`
+value; points that share a `surp` value share a lag. The named term must have
+a lag axis and at least one predictor, and its predictors must all be
+predictors of the plotted term. Peak intervals come from posterior draws of
+the named term. Under `uncertainty.kind: simultaneous`, both terms use the same
+coefficient draws: each draw re-finds the named term's peak lags and evaluates
+the plotted term at them, and the band covers those draws jointly. This needs
+a cdrgam release with `sample_effect_coefficients()`.
+
 `reference` subtracts the same effect evaluated at reference values of some
 axes. Axes not named in `reference` keep their evaluated values. Each entry
 uses the axis-request syntax and must resolve to one value, or is `default`
@@ -641,7 +655,10 @@ render:
 ```
 
 `geometry: point` draws each estimate as a point with an error bar, and
-`geometry: bar` as a bar from zero with an error bar. Their `interval` is
+`geometry: bar` as a bar from zero with an error bar. `geometry:
+connected-point` draws points as `point` does and joins each series' points
+in x order with a thin line, which has no interval band of its own. Their
+`interval` is
 `errorbar` (default) or `none`. Series that share an x position, such as
 several terms at one lag, are placed side by side. Bars suit estimates at a
 few values: an x mapping to a categorical column such as `term` or `group`,
@@ -674,9 +691,27 @@ tick values** option sets it for lines. For points and bars, the viewer
 evaluates the effect at those values instead of the grid and hides **Grid
 points per axis**.
 
+`tick_labels` replaces the tick labels with text. With `breaks`, it gives one
+label per break, in the order the breaks are written:
+
+```yaml
+render:
+  geometry: line
+  breaks: [0, 0.25, 0.5]
+  tick_labels: [onset, 250 ms, 500 ms]
+```
+
+Without `breaks`, it labels each distinct x value in increasing order, and
+the number of labels must match the number of values. An x-axis that would
+otherwise be continuous then gets a tick at each value. An empty label
+leaves its tick unlabelled. In the viewer, **X tick labels** appears once X
+tick values are typed and takes one label per value, in the order typed,
+separated by commas.
+
 `statistic: peak-lag` plots the peak lags that the query used instead of the
 effect estimates, with their posterior intervals as error bars. It requires
-point or bar geometry and a query whose lag values use a peak. The plotted
+point, connected-point, or bar geometry and a query whose lag values use a
+peak. The plotted
 rows have the columns `term`, `source`, `direction`, `peak` (the label the
 peak timeline uses), `estimate` (the peak lag), `lower`, and `upper`:
 
@@ -718,7 +753,7 @@ fail past a palette's last color. Its 3D surface has no render geometry.
 
 Line renderings support ribbon, boundary-line, or no interval display.
 Layer `interval` settings must suit the geometry: `errorbar` or `none` for
-points and bars, and `ribbon`, `lines`, or `none` for lines. Raster,
+points, connected points, and bars, and `ribbon`, `lines`, or `none` for lines. Raster,
 contour, and combined raster-contour geometries support predictor-by-lag,
 time-by-lag, and predictor-by-predictor surfaces. For example:
 
@@ -736,7 +771,9 @@ fields are `x`, `y`, `color`, `fill`, `linetype`, `group`, and `facet`. Themes a
 `paper` (ggplot2's bw), `slides` (minimal at a larger base size), and the native
 ggplot2 themes `grey`, `gray`, `bw`, `linedraw`, `light`, `dark`, `minimal`,
 `classic`, `void`, and `test`. `y_zero: true` extends the vertical axis of a
-line, point, or bar plot to include zero.
+line, point, or bar plot to include zero. `reverse_palette: true` assigns the
+palette's colors to the color levels in reverse order, or reverses a
+continuous color gradient; the viewer's **Reverse palette order** box sets it.
 
 Multiple layers can superimpose related estimands without repeating the axis
 query. Each layer has an `id` and may override `composition`, `grouping`,

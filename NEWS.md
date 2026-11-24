@@ -1,5 +1,28 @@
 # cdrgam.cli (development version)
 
+- `render.reverse_palette`, **Reverse palette order** in `cdrgam viz`,
+  assigns the palette's colors to lines or terms in reverse order. The
+  viewer's line list shows the reversed colors too.
+
+- In `cdrgam viz`, X tick values typed for lines now set the plot's ticks.
+  They had reached the exported render YAML but not the plot itself.
+
+- `render.tick_labels` sets the text of the x tick labels: one per break in
+  the order written, or one per distinct x value when there are no breaks.
+  In `cdrgam viz`, **X tick labels** sets it for typed X tick values.
+
+- `render.geometry: connected-point`, **Connected points** in `cdrgam viz`,
+  draws points with their error bars and joins each series' points in x
+  order with a thin line, without an interval band, to show trends.
+
+- `lag: peak-pointwise(LABEL)` and `peak-pointwise-neg(LABEL)` hold each
+  point at the peak lag of another term, found at that point's values of the
+  named term's predictors. For example, an interaction can be read at the
+  lag where one of its main effects peaks. The named term's predictors must
+  be predictors of the plotted term. Simultaneous bands draw both terms
+  from the same coefficient sample, so they include the uncertainty in the
+  borrowed peak lags.
+
 - The `cdrgam run` progress line shows a braille spinner in place of the
   color-cycling dot. It uses nro's frames and its 0.08-second frame interval.
 

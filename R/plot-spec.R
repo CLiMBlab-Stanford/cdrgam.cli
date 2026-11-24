@@ -631,7 +631,9 @@
     covers <- function(rows) {
         limits <- .cdrgam_cli_spec_ylim(c(spec[setdiff(names(spec), 'rows')], list(rows=rows)))
         if (is.null(limits)) {
-            values <- c(rows[[spec$columns$y]], rows$lower, rows$upper)
+            # y_zero extends the axis to zero, as the renderers do.
+            values <- c(rows[[spec$columns$y]], rows$lower, rows$upper,
+                if (isTRUE(spec$y_zero)) 0)
             values <- values[is.finite(values)]
             if (!length(values)) return(FALSE)
             # The drawn axis: ggplot2 pads a continuous range by 5% of its

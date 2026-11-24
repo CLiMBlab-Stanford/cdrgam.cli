@@ -393,7 +393,9 @@ stopifnot(
     has_hline(zero_spec(c(1, 2, 3), list(ylim=list(-1, 4)))),
     # Zero inside the padded axis but below the data still gets the line.
     has_hline(zero_spec(c(0.15, 2, 3))),
-    !has_hline(zero_spec(c(0.5, 2, 3)))
+    !has_hline(zero_spec(c(0.5, 2, 3))),
+    # y_zero brings zero onto the axis, so the line follows.
+    has_hline(zero_spec(c(0.5, 2, 3), list(y_zero=TRUE)))
 )
 
 # y_zero is a flag that keeps zero on the vertical axis of line geometries;

@@ -1,8 +1,47 @@
 # cdrgam.cli (development version)
 
+- Simultaneous bands read the effect covariance from one core evaluation
+  when `cdrgam` provides `estimate_effect(covariance = TRUE)`, instead of
+  one evaluation per point. A line of `spr-main` with 40 band points takes
+  about 3 seconds instead of 70. Older cores use the previous method.
+
+- `cdrgam def edit` accepts `*` globs and `re:` regular expressions, as
+  `def ls`, `def val`, and `def rm` do, and opens each existing match in
+  turn: `cdrgam def edit -P rep -v '*-wlen'`. Literal names still create
+  missing definitions; patterns cannot be combined with `--source`.
+
+- Line and point plots draw a thin line at zero effect in each panel whose
+  vertical range includes zero. `render.zero_line: false`, or clearing
+  **Line at zero** in `cdrgam viz`, turns it off. Existing visualizations
+  keep their identities and draw the line when they next render.
+
+- `render.panel_width` and `render.panel_height` fix the size of the plot
+  panel in inches, and the rendered file grows to fit the axes, titles, and
+  legend. Figures with different legends then have identical panels. They
+  cannot be combined with `width` or `height`. `cdrgam.cli` now requires
+  ggplot2 4.0.0 or later.
+
+- Each line in the `cdrgam viz` line list has **Duplicate**, which adds a
+  copy below it labeled "(copy)". The line being edited is marked with a
+  tinted background and a bar on its left instead of a blue fill, so its
+  links stay readable.
+
+- `render.ylim: [low, high]` sets the vertical display range of line, point,
+  and bar plots without dropping rows; either end may be `null`. In
+  `cdrgam viz`, **Vertical axis range** sets it, and **X range** under
+  **Options** sets where lines are evaluated, as numbers or expressions such
+  as `mean - 2 * sd`.
+
+- `cdrgam purge` selectors also match names that no longer have a
+  definition, such as a visualization removed with `cdrgam def rm`. Their
+  results, work directories, logs, and registry records can be purged by
+  name, as `cdrgam status` already lists them.
+
 - `render.reverse_palette`, **Reverse palette order** in `cdrgam viz`,
-  assigns the palette's colors to lines or terms in reverse order. The
-  viewer's line list shows the reversed colors too.
+  starts the palette from its last color, so with `okabe-ito` the first
+  line is black and the second grey. Spread palettes such as
+  viridis are reversed end to end. The viewer's line list shows the same
+  colors.
 
 - In `cdrgam viz`, X tick values typed for lines now set the plot's ticks.
   They had reached the exported render YAML but not the plot itself.

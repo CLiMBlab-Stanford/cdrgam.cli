@@ -130,6 +130,10 @@
     if (identical(values$palette, 'custom')) {
         values$palette <- .cdrgam_cli_viz_gradient(input$render_palette_colors)
     }
+    # The vertical range is two inputs; an empty one keeps that end automatic.
+    values$ylim <- if (!identical(input$mode, 'surface')) {
+        .cdrgam_cli_viz_limits(input$render_ylim_min, input$render_ylim_max)
+    }
     # Show peak lags, under the plot, sets the peak timeline.
     values$peaks <- if (isFALSE(input$show_peaks)) 'never' else NULL
     # Tick values label a line's axis; points and bars are evaluated at them.
@@ -146,6 +150,20 @@
         ), error=function(error) NULL)
     }
     Filter(Negate(is.null), values)
+}
+
+# Display or evaluation limits from two viewer inputs, as c(low, high) with
+# NA for an empty end, or NULL when both are empty or unreadable.
+.cdrgam_cli_viz_limits <- function(low, high) {
+    read <- function(value) {
+        value <- suppressWarnings(as.numeric(.cdrgam_cli_null(value, NA)))
+        if (length(value) != 1L || !is.finite(value)) NA_real_ else value
+    }
+    limits <- c(read(low), read(high))
+    if (all(is.na(limits)) || (!anyNA(limits) && limits[[1L]] >= limits[[2L]])) {
+        return(NULL)
+    }
+    limits
 }
 
 # Whether the viewer evaluates lines at the typed tick values: for points
@@ -254,7 +272,7 @@
     )
     for (name in c(
         'title', 'theme', 'peaks', 'spacing', 'statistic', 'y_zero', 'reverse_palette',
-        'breaks', 'tick_labels'
+        'breaks', 'tick_labels', 'ylim', 'zero_line'
     )) {
         render[[name]] <- settings[[name]]
     }
@@ -425,6 +443,24 @@
         reverse_palette=if (identical(mode, 'line')) shiny::checkboxInput(
             'render_reverse_palette', fields$reverse_palette$label,
             isTRUE(values$reverse_palette)
+        ),
+        zero_line=if (identical(mode, 'line')) shiny::checkboxInput(
+            'render_zero_line', fields$zero_line$label, !isFALSE(values$zero_line)
+        ),
+        ylim=if (identical(mode, 'line')) shiny::div(
+            id='render_ylim',
+            shiny::tags$label(class='form-label', fields$ylim$label),
+            shiny::div(
+                style='display:flex; gap:0.5rem;',
+                shiny::numericInput('render_ylim_min', NULL,
+                    .cdrgam_cli_null(values$ylim_min, NA), width='50%'),
+                shiny::numericInput('render_ylim_max', NULL,
+                    .cdrgam_cli_null(values$ylim_max, NA), width='50%')
+            ),
+            shiny::div(
+                class='form-text mt-n2 mb-2',
+                'Low and high; leave one empty to keep it automatic. Display only.'
+            )
         )
     )
     shiny::tagList(
@@ -484,10 +520,14 @@
     if (surface) {
         fields <- setdiff(fields, c(
             'palette', 'spacing', 'statistic', 'peaks', 'y_zero', 'reverse_palette',
-            'breaks', 'tick_labels'
+            'breaks', 'tick_labels', 'ylim', 'zero_line'
         ))
     }
     values <- settings[intersect(fields, names(settings))]
+    # YAML writes an automatic end as null.
+    if (!is.null(values$ylim)) values$ylim <- lapply(values$ylim, function(value) {
+        if (is.na(value)) NULL else value
+    })
     if (!surface) {
         palette <- .cdrgam_cli_null(values$palette, 'okabe-ito')
         values$palette <- .cdrgam_cli_validate_render_palette(palette, 'palette')
@@ -498,7 +538,7 @@
 .cdrgam_cli_viz_render_yaml <- function(settings, mode='line') {
     surface <- identical(mode, 'surface')
     fields <- .cdrgam_cli_viz_control_fields()
-    fields <- c(fields, 'breaks', 'tick_labels')
+    fields <- unique(c(fields, 'breaks', 'tick_labels'))
     values <- .cdrgam_cli_viz_render_values(settings, mode)
     three_d <- surface && identical(.cdrgam_cli_null(values$geometry, 'surface'), 'surface')
     if (three_d) values$geometry <- NULL
@@ -518,7 +558,7 @@
 
 # The raw values of the appearance inputs, as kept in session storage.
 .cdrgam_cli_viz_appearance_values <- function(input) {
-    names <- c(.cdrgam_cli_viz_control_fields(), 'palette_colors')
+    names <- c(.cdrgam_cli_viz_control_fields(), 'palette_colors', 'ylim_min', 'ylim_max')
     values <- lapply(names, function(name) input[[paste0('render_', name)]])
     names(values) <- names
     values$show_peaks <- input$show_peaks
@@ -548,6 +588,16 @@
         line
     })
 }
+
+# The line being edited is marked by a tinted background and a left bar
+# instead of Bootstrap's active fill, which is the links' own color and
+# would hide them.
+.cdrgam_cli_viz_style_tag <- function() shiny::tags$style(shiny::HTML(paste(
+    '.list-group-item.cdrgam-editing {',
+    '  background-color: rgba(255, 193, 7, 0.18);',
+    '  box-shadow: inset 4px 0 0 #E0A800;',
+    '}'
+)))
 
 .cdrgam_cli_viz_script_tag <- function() shiny::tags$script(shiny::HTML("
 $(function() {
@@ -618,6 +668,7 @@ $(function() {
         theme=bslib::bs_theme(version=5L),
         sidebar=bslib::sidebar(
             width=360,
+            .cdrgam_cli_viz_style_tag(),
             .cdrgam_cli_viz_script_tag(),
             shiny::div(
                 style='display:flex; gap:0.5rem;',
@@ -708,6 +759,25 @@ $(function() {
                                     'One label per tick value, in order, separated',
                                     'by commas.'
                                 )
+                            )
+                        )
+                    ),
+                    shiny::conditionalPanel(
+                        "input.mode == 'line'",
+                        shiny::tags$label(class='form-label', 'X range'),
+                        shiny::div(
+                            style='display:flex; gap:0.5rem;',
+                            shiny::textInput('x_min', NULL, placeholder='Fitted min',
+                                width='50%'),
+                            shiny::textInput('x_max', NULL, placeholder='Fitted max',
+                                width='50%')
+                        ),
+                        shiny::div(
+                            class='form-text mt-n2 mb-2',
+                            paste(
+                                'Where lines are evaluated: numbers or expressions',
+                                'in mean, sd, and median, such as mean - 2 * sd.',
+                                'An empty end uses the fitted domain.'
                             )
                         )
                     ),
@@ -1161,6 +1231,12 @@ $(function() {
             ticks=if (!identical(input$mode, 'surface') &&
                     .cdrgam_cli_viz_ticks_evaluated(input)) {
                 tryCatch(.cdrgam_cli_viz_ticks(input$x_ticks), error=function(error) NULL)
+            },
+            x_range=if (!identical(input$mode, 'surface')) {
+                range <- vapply(list(input$x_min, input$x_max), function(value) {
+                    trimws(.cdrgam_cli_null(value, ''))
+                }, character(1))
+                if (any(nzchar(range))) range
             }
         ))
 
@@ -1203,7 +1279,8 @@ $(function() {
         # session storage: the model, term, axes, fixed and reference values,
         # composition, grouping, label, and the Options panel.
         option_inputs <- c(
-            'n', 'level', 'interval', 'unconditional', 'x_ticks', 'x_tick_labels'
+            'n', 'level', 'interval', 'unconditional', 'x_ticks', 'x_tick_labels',
+            'x_min', 'x_max'
         )
         shiny::observe({
             info <- tryCatch(term(), error=function(error) NULL)
@@ -1256,6 +1333,9 @@ $(function() {
             if (!is.null(options$x_tick_labels)) shiny::updateTextInput(
                 session, 'x_tick_labels', value=options$x_tick_labels
             )
+            for (name in c('x_min', 'x_max')) if (!is.null(options[[name]])) {
+                shiny::updateTextInput(session, name, value=options[[name]])
+            }
             if (!is.null(state$mode)) {
                 shiny::updateRadioButtons(session, 'mode', selected=state$mode)
             }
@@ -1317,6 +1397,9 @@ $(function() {
             lines(Filter(function(line) !identical(line$id, input$remove_line), lines()))
             if (identical(editing(), input$remove_line)) editing(NULL)
         })
+        shiny::observeEvent(input$duplicate_line, {
+            lines(.cdrgam_cli_viz_duplicate_line(lines(), input$duplicate_line))
+        })
         shiny::observeEvent(input$edit_line, {
             match <- Filter(function(line) identical(line$id, input$edit_line), lines())
             if (!length(match)) return()
@@ -1372,7 +1455,7 @@ $(function() {
                 shiny::tags$li(
                     class=paste(
                         'list-group-item d-flex align-items-center',
-                        if (identical(editing(), line$id)) 'active' else ''
+                        if (identical(editing(), line$id)) 'cdrgam-editing' else ''
                     ),
                     shiny::span(style=sprintf(
                         paste0(
@@ -1384,7 +1467,9 @@ $(function() {
                     shiny::span(class='flex-grow-1', line$label),
                     action('move_line_up', '\u2191', 'Move up', index > 1L),
                     action('move_line_down', '\u2193', 'Move down', index < length(values)),
-                    action('edit_line', 'Edit'), action('remove_line', 'Remove')
+                    action('edit_line', 'Edit'),
+                    action('duplicate_line', 'Duplicate', 'Add a copy below'),
+                    action('remove_line', 'Remove')
                 )
             }))
         })
@@ -1530,4 +1615,17 @@ $(function() {
     shiny::shinyApp(
         .cdrgam_cli_viz_ui(restartable), .cdrgam_cli_viz_server(cdrgam_root, control)
     )
+}
+
+# The lines with a copy of line `id` inserted after it, under a new id and
+# with " (copy)" added to its label so the legend tells them apart. The
+# lines are unchanged when no line has that id.
+.cdrgam_cli_viz_duplicate_line <- function(lines, id) {
+    ids <- vapply(lines, `[[`, character(1), 'id')
+    index <- match(id, ids)
+    if (is.na(index)) return(lines)
+    copy <- lines[[index]]
+    copy$id <- .cdrgam_cli_random_id('line')
+    copy$label <- paste(copy$label, '(copy)')
+    append(lines, list(copy), after=index)
 }

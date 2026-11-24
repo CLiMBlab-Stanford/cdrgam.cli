@@ -468,7 +468,7 @@
             )
         )
         all(vapply(patterns, function(pattern) {
-            if (literal) {
+            if (literal && !.cdrgam_cli_is_name_pattern(pattern)) {
                 pattern %in% available
             } else {
                 length(.cdrgam_cli_match_name_pattern(
@@ -1035,13 +1035,45 @@ cdrgam_cli_def <- function(
             project, type, name, cdrgam_root
         ))
     }
-    names <- vapply(
-        name, .cdrgam_cli_name, character(1), field=paste0(type, ' name')
-    )
+    names <- .cdrgam_cli_edit_names(project, type, name, source, cdrgam_root)
     paths <- vapply(names, function(name) {
         .cdrgam_cli_define_definition(
             project, type, name, source, cdrgam_root, editor
         )
     }, character(1))
     invisible(stats::setNames(paths, names))
+}
+
+# Whether a selector value is a pattern, a `*` glob or an `re:` regular
+# expression, rather than a literal name.
+.cdrgam_cli_is_name_pattern <- function(value) {
+    startsWith(value, 're:') || grepl('*', value, fixed=TRUE)
+}
+
+# The names def edit opens, in order: a literal name as given, which may
+# create the definition, and each pattern expanded to the existing
+# definitions it matches. A pattern that matches nothing is an error, and
+# patterns cannot be combined with a source, which creates definitions.
+.cdrgam_cli_edit_names <- function(project, type, values, source=NULL, checkout=NULL) {
+    patterns <- vapply(values, .cdrgam_cli_is_name_pattern, logical(1))
+    if (any(patterns) && !is.null(source)) .cdrgam_cli_abort(paste0(
+        'def edit --source creates definitions, so its ', type,
+        ' names must be literal, not patterns: ',
+        paste(values[patterns], collapse=', ')
+    ))
+    available <- if (any(patterns)) {
+        root <- find_cdrgam_project(project, checkout)
+        directory <- switch(
+            type,
+            dataset='datasets', model='models',
+            visualization='visualizations', comparison='comparisons'
+        )
+        sub('\\.ya?ml$', '', basename(.cdrgam_cli_definition_files(root, directory)))
+    } else character()
+    names <- unlist(lapply(seq_along(values), function(index) {
+        if (patterns[[index]]) {
+            .cdrgam_cli_match_names(values[[index]], available, type)
+        } else .cdrgam_cli_name(values[[index]], paste0(type, ' name'))
+    }), use.names=FALSE)
+    unique(names)
 }

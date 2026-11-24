@@ -14,6 +14,9 @@
 #' @return Selected generated paths, invisibly.
 #' @details Registry records and private attempt directories for selected work
 #'   items are removed even when their generated artifacts are already absent.
+#'   Selectors match the names of current definitions and also the names left
+#'   in results, work directories, logs, or the registry, so the outputs of a
+#'   removed definition can still be purged.
 #' @export
 cdrgam_cli_purge <- function(
         projects=NULL, models=NULL, predictions=NULL, visualizations=NULL,
@@ -47,11 +50,10 @@ cdrgam_cli_purge <- function(
         definitions <- .cdrgam_cli_read_definitions(
             project, check_sources=FALSE, checkout=cdrgam_root
         )
+        known <- .cdrgam_cli_purge_names(definitions, configuration)
         model_names <- if (length(models)) {
-            .cdrgam_cli_match_names(
-                models, names(definitions$models), 'model'
-            )
-        } else names(definitions$models)
+            .cdrgam_cli_match_names(models, known$models, 'model')
+        } else known$models
         typed <- any(c(
             length(predictions), length(visualizations), length(comparisons),
             length(datasets)
@@ -64,17 +66,28 @@ cdrgam_cli_purge <- function(
             }, character(1)))
         }
         if (length(predictions)) {
+            # Models match prediction selectors independently, so a selector
+            # fails only when it matches no model's predictions.
+            prediction_choices <- character()
             for (model_name in model_names) {
                 model <- definitions$models[[model_name]]
+                existing <- known$predictions(model_name)
                 choices <- unique(c(
-                    names(model$datasets), names(definitions$datasets)
+                    names(model$datasets), names(definitions$datasets), existing
                 ))
+                prediction_choices <- unique(c(prediction_choices, choices))
                 prediction_names <- .cdrgam_cli_match_names(
-                    predictions, choices, 'prediction'
+                    predictions, choices, 'prediction', strict=FALSE
                 )
+                # A removed model or dataset leaves predictions named by
+                # their dataset directory, which need no resolution.
                 dataset_names <- unique(vapply(
                     prediction_names,
-                    function(selector) .cdrgam_cli_resolve_prediction_dataset(
+                    function(selector) if (is.null(model) || (selector %in% existing &&
+                            !(selector %in% c(names(model$datasets),
+                                names(definitions$datasets))))) {
+                        selector
+                    } else .cdrgam_cli_resolve_prediction_dataset(
                         definitions, model, selector
                     ),
                     character(1)
@@ -88,16 +101,26 @@ cdrgam_cli_purge <- function(
                     }, character(1)
                 ))
             }
+            # Report a selector that matched nothing as a strict match would.
+            .cdrgam_cli_match_names(
+                setdiff(predictions, Filter(function(pattern) length(
+                    .cdrgam_cli_match_name_pattern(pattern, prediction_choices, 'prediction')
+                ), predictions)),
+                prediction_choices, 'prediction'
+            )
         }
         if (length(visualizations)) {
             visualization_names <- .cdrgam_cli_match_names(
-                visualizations, names(definitions$visualizations),
-                'visualization'
+                visualizations, known$visualizations, 'visualization'
             )
             if (length(models)) {
+                # A visualization without a definition has no known model,
+                # so a model selector leaves it out.
                 visualization_names <- visualization_names[vapply(
-                    definitions$visualizations[visualization_names],
-                    function(value) value$model %in% model_names,
+                    visualization_names,
+                    function(name) isTRUE(
+                        definitions$visualizations[[name]]$model %in% model_names
+                    ),
                     logical(1)
                 )]
                 if (!length(visualization_names)) {
@@ -115,12 +138,15 @@ cdrgam_cli_purge <- function(
         }
         if (length(comparisons)) {
             comparison_names <- .cdrgam_cli_match_names(
-                comparisons, names(definitions$comparisons), 'comparison'
+                comparisons, known$comparisons, 'comparison'
             )
             if (length(models)) {
                 comparison_names <- comparison_names[vapply(
-                    definitions$comparisons[comparison_names],
-                    function(value) all(model_names %in% value$models),
+                    comparison_names,
+                    function(name) {
+                        value <- definitions$comparisons[[name]]
+                        !is.null(value) && all(model_names %in% value$models)
+                    },
                     logical(1)
                 )]
                 if (!length(comparison_names)) {
@@ -138,7 +164,7 @@ cdrgam_cli_purge <- function(
         }
         if (length(datasets)) {
             dataset_names <- .cdrgam_cli_match_names(
-                datasets, names(definitions$datasets), 'dataset'
+                datasets, known$datasets, 'dataset'
             )
             project_targets <- c(project_targets, vapply(
                 dataset_names, function(name) {
@@ -157,7 +183,7 @@ cdrgam_cli_purge <- function(
             ), use.names=FALSE))
         }
         project_targets <- c(project_targets, .cdrgam_cli_purge_work_targets(
-            definitions, project_targets,
+            definitions, project_targets, known=known,
             archives=workload_selected && isTRUE(work),
             logs=workload_selected && isTRUE(logs)
         ))
@@ -284,7 +310,8 @@ cdrgam_cli_purge <- function(
 # Archived artifacts and logs are returned only when `archives` or `logs` is
 # TRUE.
 .cdrgam_cli_purge_work_targets <- function(
-        definitions, targets, archives=FALSE, logs=FALSE
+        definitions, targets, archives=FALSE, logs=FALSE,
+        known=.cdrgam_cli_purge_names(definitions)
 ) {
     if (!length(targets)) return(character())
     work_root <- .cdrgam_cli_path(definitions, 'work')
@@ -327,7 +354,7 @@ cdrgam_cli_purge <- function(
     # strings and build artifact paths only for work items that left files.
     # Projects with many models and datasets otherwise build thousands of
     # paths, each of which touches the file system.
-    models <- names(definitions$models)
+    models <- known$models
     candidates <- list()
     add <- function(kind, name, artifact) {
         candidates[[length(candidates) + 1L]] <<- list(
@@ -338,20 +365,21 @@ cdrgam_cli_purge <- function(
         add('fit', model_name, list('model', model_name))
         model <- definitions$models[[model_name]]
         for (dataset_name in unique(c(
-                names(model$datasets), names(definitions$datasets)))) {
+                names(model$datasets), names(definitions$datasets),
+                known$predictions(model_name)))) {
             add(
                 'prediction', paste(model_name, dataset_name, sep='_'),
                 list('prediction', model_name, dataset_name)
             )
         }
     }
-    for (name in names(definitions$visualizations)) {
+    for (name in known$visualizations) {
         add(
             'visualization', name,
             list('visualization', name)
         )
     }
-    for (name in names(definitions$comparisons)) {
+    for (name in known$comparisons) {
         add('comparison', name, list('comparison', name))
     }
     # Effect items are named `<model>_<request hash>`; their outputs live
@@ -413,4 +441,57 @@ cdrgam_cli_purge <- function(
         }
     }
     output
+}
+
+# The workload names purge can select in a project: those of its current
+# definitions and those left by earlier ones in results, work directories,
+# logs, and the registry, as lists of names by kind. `predictions` is a
+# function of a model name giving its prediction dataset directories.
+.cdrgam_cli_purge_names <- function(definitions, configuration=NULL) {
+    children <- function(...) {
+        directory <- file.path(...)
+        if (!dir.exists(directory)) return(character())
+        basename(list.dirs(directory, recursive=FALSE, full.names=TRUE))
+    }
+    results <- file.path(definitions$root, 'results')
+    work <- children(.cdrgam_cli_path(definitions, 'work'))
+    log_root <- .cdrgam_cli_path(definitions, 'log')
+    logged <- function(kind) {
+        directory <- file.path(log_root, kind)
+        if (!dir.exists(directory)) return(character())
+        files <- list.files(directory, pattern='[.]log$')
+        sub('[.]log$', '', files)
+    }
+    prefixed <- function(kind) {
+        prefix <- paste0(kind, '_')
+        substring(work[startsWith(work, prefix)], nchar(prefix) + 1L)
+    }
+    registered <- if (is.null(configuration)) list() else {
+        .cdrgam_cli_registry_project_names(
+            configuration, definitions$project$project$name
+        )
+    }
+    names_of <- function(defined, ...) {
+        found <- unique(c(defined, ...))
+        found[nzchar(found) & !(found %in% c('.', '..', 'archive'))]
+    }
+    list(
+        models=names_of(
+            names(definitions$models), children(results, 'models'),
+            prefixed('fit'), logged('fit'), registered[['fit']]
+        ),
+        visualizations=names_of(
+            names(definitions$visualizations), children(results, 'visualizations'),
+            prefixed('visualization'), logged('visualization'),
+            registered[['visualization']]
+        ),
+        comparisons=names_of(
+            names(definitions$comparisons), children(results, 'comparisons'),
+            prefixed('comparison'), logged('comparison'), registered[['comparison']]
+        ),
+        datasets=names_of(names(definitions$datasets), children(results, 'datasets')),
+        predictions=function(model_name) {
+            children(results, 'models', model_name, 'predictions')
+        }
+    )
 }

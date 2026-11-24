@@ -194,9 +194,10 @@ expected <- list(
         missing_geometry='render is missing required field: geometry',
         unknown_field=paste0(
             'render contains unknown field: size. Allowed fields: geometry, mapping',
-            's, interval, theme, formats, width, height, dpi, title, xlab, ylab, pa',
+            's, interval, theme, formats, width, height, dpi, panel_width, panel_heig',
+            'ht, title, xlab, ylab, pa',
             'lette, scales, peaks, spacing, breaks, tick_labels, statistic, y_zero, re',
-            'verse_palette'
+            'verse_palette, ylim, zero_line'
         ),
         bad_geometry=paste0(
             'render.geometry must be one of line, point, connected-point, bar, ',
@@ -297,6 +298,103 @@ stopifnot(grepl('2 labels for 3 x values', tryCatch(
     internal('.cdrgam_cli_x_axis')(c(1, 2, 3), points_labelled),
     error=conditionMessage
 )))
+
+# ylim takes [low, high] with null for an automatic end.
+validate_ylim <- function(value) tryCatch(internal('.cdrgam_cli_validate_render')(
+    list(geometry='line', mappings=list(x='lag', y='estimate'), ylim=value), 'render'
+)$ylim, error=conditionMessage)
+stopifnot(
+    identical(validate_ylim(list(-1, 2)), c(-1, 2)),
+    identical(validate_ylim(list(NULL, 2)), c(NA, 2)),
+    grepl('low end below', validate_ylim(list(2, 1))),
+    grepl('at least one finite', validate_ylim(list(NULL, NULL))),
+    grepl('must be \\[low, high\\]', validate_ylim(list(1)))
+)
+
+# panel_width and panel_height fix the panel, not the figure: they exclude
+# width and height and are set together. The saved size fits the panel plus
+# its labels and legend, so a longer legend widens the file, not the panel.
+panel_error <- function(extra) tryCatch(internal('.cdrgam_cli_validate_render')(
+    c(list(geometry='line', mappings=list(x='lag', y='estimate')), extra), 'render'
+), error=conditionMessage)
+stopifnot(
+    grepl('not both', panel_error(list(width=4, panel_width=3, panel_height=3))),
+    grepl('set together', panel_error(list(panel_width=3))),
+    is.list(panel_error(list(panel_width=3, panel_height=2)))
+)
+panel_plot <- function(labels) ggplot2::ggplot(
+    data.frame(x=rep(1:3, length(labels)), y=seq_along(labels), g=rep(labels, each=3)),
+    ggplot2::aes(x, y, colour=g)
+) + ggplot2::geom_line()
+panel_inches <- function(figure) {
+    grDevices::pdf(NULL)
+    on.exit(grDevices::dev.off())
+    grob <- figure$plot
+    panels <- grob$layout[grepl('^panel', grob$layout$name), , drop=FALSE]
+    c(
+        grid::convertWidth(grob$widths[panels$l[[1L]]], 'in', TRUE),
+        grid::convertHeight(grob$heights[panels$t[[1L]]], 'in', TRUE)
+    )
+}
+panel_figure <- internal('.cdrgam_cli_panel_figure')
+short_legend <- panel_figure(panel_plot(c('a', 'b')), list(width=3, height=2))
+long_legend <- panel_figure(
+    panel_plot(c('a much longer legend entry', 'another long legend entry')),
+    list(width=3, height=2)
+)
+stopifnot(
+    isTRUE(all.equal(panel_inches(short_legend), c(3, 2))),
+    isTRUE(all.equal(panel_inches(long_legend), c(3, 2))),
+    long_legend$width > short_legend$width + 0.5,
+    short_legend$width > 3, short_legend$height > 2
+)
+# A stack under a fixed panel keeps the main panel's size and aligns the
+# panels below it.
+stacked <- internal('.cdrgam_cli_stack_plots')(
+    list(panel_plot(c('a', 'b')), panel_plot('c') + ggplot2::theme(legend.position='none')),
+    c(1, 0.5), list(width=3, height=2)
+)
+grDevices::pdf(NULL)
+stack_heights <- grid::convertHeight(stacked$heights, 'in', TRUE)
+stack_width <- grid::convertWidth(stacked$widths, 'in', TRUE)
+grDevices::dev.off()
+stopifnot(length(stack_heights) == 2L, stack_heights[[1L]] > 2,
+    stack_heights[[2L]] > 1, stack_heights[[2L]] < stack_heights[[1L]],
+    stack_width > 3)
+saved <- internal('.cdrgam_cli_save_ggplot')(
+    panel_plot(c('a', 'b')), tempdir(),
+    list(formats='svg', panel_width=3, panel_height=2), stem='panel-test'
+)
+svg_head <- paste(readLines(file.path(tempdir(), saved), n=3L), collapse=' ')
+svg_width <- as.numeric(sub('.*width="([0-9.]+)pt".*', '\\1', svg_head)) / 72
+stopifnot(abs(svg_width - short_legend$width) < 0.05)
+
+# zero_line is on unless false, and only false is stored. The line is drawn
+# only in panels whose range includes zero, so it never moves an axis.
+zero_spec <- function(y, render=list()) {
+    data <- data.frame(term_id='t', term='t', group=NA, layer='estimate', lag=1:3,
+        estimate=y, lower=y - 0.1, upper=y + 0.1)
+    internal('.cdrgam_cli_plot_spec')(data, list(render=internal(
+        '.cdrgam_cli_validate_render'
+    )(c(list(geometry='line', mappings=list(x='lag', y='estimate')), render), 'render')))
+}
+has_hline <- function(spec) any(vapply(
+    internal('.cdrgam_cli_ggplot_plot')(spec)$layers,
+    function(layer) inherits(layer$geom, 'GeomHline'), logical(1)
+))
+stopifnot(
+    is.null(validate_render(list(geometry='line', mappings=list(x='lag', y='estimate'),
+        zero_line=TRUE), 'render')$zero_line),
+    isFALSE(validate_render(list(geometry='line', mappings=list(x='lag', y='estimate'),
+        zero_line=FALSE), 'render')$zero_line),
+    has_hline(zero_spec(c(-1, 0.5, 1))),
+    !has_hline(zero_spec(c(1, 2, 3))),
+    !has_hline(zero_spec(c(-1, 0.5, 1), list(zero_line=FALSE))),
+    has_hline(zero_spec(c(1, 2, 3), list(ylim=list(-1, 4)))),
+    # Zero inside the padded axis but below the data still gets the line.
+    has_hline(zero_spec(c(0.15, 2, 3))),
+    !has_hline(zero_spec(c(0.5, 2, 3)))
+)
 
 # y_zero is a flag that keeps zero on the vertical axis of line geometries;
 # false is the same as leaving it out. Every native ggplot2 theme renders.

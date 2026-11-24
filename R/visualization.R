@@ -437,6 +437,18 @@
     } else {
         plot <- ggplot2::ggplot()
         used <- character()
+        # The zero line sits beneath the data, and only in panels whose range
+        # already includes zero, so it never extends an axis. Bars draw
+        # their own baseline.
+        zero <- if (!identical(spec$geometry, 'bar')) .cdrgam_cli_zero_panels(spec)
+        if (length(zero)) {
+            lines <- data.frame(yintercept=rep(0, length(zero)))
+            if (!is.null(spec$facet)) lines[[spec$facet$column]] <- zero
+            plot <- plot + ggplot2::geom_hline(
+                data=lines, mapping=.cdrgam_cli_ggplot_aes(yintercept='yintercept'),
+                colour='grey55', linewidth=0.3, inherit.aes=FALSE
+            )
+        }
         for (layer in spec$layers) {
             rows <- spec$rows[spec$rows$layer == layer$id, , drop=FALSE]
             drawn <- if (identical(spec$geometry, 'line')) {
@@ -463,6 +475,8 @@
         stats::as.formula(paste('~', spec$facet$column)), scales=spec$facet$scales
     )
     if (isTRUE(spec$y_zero)) plot <- plot + ggplot2::expand_limits(y=0)
+    ylim <- if (is.null(spec$surface)) .cdrgam_cli_spec_ylim(spec)
+    if (!is.null(ylim)) plot <- plot + ggplot2::coord_cartesian(ylim=ylim)
     plot + ggplot2::labs(title=spec$labels$title, x=spec$labels$x, y=spec$labels$y) +
         .cdrgam_cli_ggplot_theme(spec$theme)
 }
@@ -545,7 +559,11 @@
 # Each plot is padded on the left and right to the widest plot's axis and
 # legend widths. `heights` are relative. Grobs are built on a null device,
 # so no default device file is opened.
-.cdrgam_cli_stack_plots <- function(plots, heights) {
+# With `panel`, a list of width and height in inches, every plot's panels
+# get that width and the main plot's panels that height, the plots below it
+# their share of it by `heights`, and the stack has the absolute size of its
+# parts.
+.cdrgam_cli_stack_plots <- function(plots, heights, panel=NULL) {
     current <- grDevices::dev.cur()
     grDevices::pdf(NULL)
     device <- grDevices::dev.cur()
@@ -553,6 +571,11 @@
         grDevices::dev.off(device)
         if (current > 1L) grDevices::dev.set(current)
     }, add=TRUE)
+    if (!is.null(panel)) plots <- lapply(seq_along(plots), function(index) {
+        .cdrgam_cli_panel_sized(
+            plots[[index]], panel$width, panel$height * heights[[index]] / heights[[1L]]
+        )
+    })
     grobs <- lapply(plots, ggplot2::ggplotGrob)
     edges <- lapply(grobs, function(grob) {
         panels <- grob$layout[grepl('^panel', grob$layout$name), , drop=FALSE]
@@ -568,17 +591,28 @@
     })
     left <- max(vapply(edges, `[[`, numeric(1), 'left'))
     right <- max(vapply(edges, `[[`, numeric(1), 'right'))
-    output <- gtable::gtable(
-        widths=grid::unit(1, 'null'), heights=grid::unit(heights, 'null')
-    )
-    for (index in seq_along(grobs)) {
+    padded <- lapply(seq_along(grobs), function(index) {
         grob <- gtable::gtable_add_cols(
             grobs[[index]], grid::unit(left - edges[[index]]$left, 'cm'), pos=0L
         )
-        grob <- gtable::gtable_add_cols(
+        gtable::gtable_add_cols(
             grob, grid::unit(right - edges[[index]]$right, 'cm'), pos=-1L
         )
-        output <- gtable::gtable_add_grob(output, grob, t=index, l=1L, name=paste0('plot-', index))
+    })
+    output <- if (is.null(panel)) gtable::gtable(
+        widths=grid::unit(1, 'null'), heights=grid::unit(heights, 'null')
+    ) else gtable::gtable(
+        widths=grid::unit(max(vapply(
+            padded, .cdrgam_cli_grob_inches, numeric(1), side='width'
+        )), 'in'),
+        heights=grid::unit(vapply(
+            padded, .cdrgam_cli_grob_inches, numeric(1), side='height'
+        ), 'in')
+    )
+    for (index in seq_along(padded)) {
+        output <- gtable::gtable_add_grob(
+            output, padded[[index]], t=index, l=1L, name=paste0('plot-', index)
+        )
     }
     output
 }
@@ -588,14 +622,14 @@
 .cdrgam_cli_peak_figure <- function(plot, data, peaks, definition, pointwise=NULL) {
     .cdrgam_cli_ggplot_figure(
         plot, .cdrgam_cli_figure_peaks(data, peaks, definition$render),
-        .cdrgam_cli_figure_pointwise(data, pointwise, definition)
+        .cdrgam_cli_figure_pointwise(data, pointwise, definition), definition$render
     )
 }
 
 # Draw a main plot with its pointwise-peak panel and peak strip
 # specifications below it, either NULL when not drawn; NULL when neither
 # is drawn.
-.cdrgam_cli_ggplot_figure <- function(plot, strip, panel) {
+.cdrgam_cli_ggplot_figure <- function(plot, strip, panel, render=list()) {
     if (is.null(strip) && is.null(panel)) return(NULL)
     plots <- list(plot)
     heights <- 1
@@ -614,13 +648,63 @@
     }
     list(
         strip=drawn_strip, pointwise=drawn_panel,
-        figure=.cdrgam_cli_stack_plots(plots, heights)
+        figure=.cdrgam_cli_stack_plots(plots, heights, .cdrgam_cli_panel_size(render))
+    )
+}
+
+# The fixed panel size of a render, as list(width, height) in inches, or
+# NULL when the figure size is set instead.
+.cdrgam_cli_panel_size <- function(render) {
+    if (is.null(render$panel_width) || is.null(render$panel_height)) return(NULL)
+    list(width=render$panel_width, height=render$panel_height)
+}
+
+# A ggplot with every panel `width` by `height` inches.
+.cdrgam_cli_panel_sized <- function(plot, width, height) {
+    plot + ggplot2::theme(
+        panel.widths=grid::unit(width, 'in'), panel.heights=grid::unit(height, 'in')
+    )
+}
+
+# The total width or height of a drawn plot in inches. Call with a device
+# open, as unit conversion needs one.
+.cdrgam_cli_grob_inches <- function(grob, side=c('width', 'height')) {
+    side <- match.arg(side)
+    units <- if (identical(side, 'width')) grob$widths else grob$heights
+    convert <- if (identical(side, 'width')) grid::convertWidth else grid::convertHeight
+    sum(convert(units, 'in', valueOnly=TRUE))
+}
+
+# Under a fixed panel size, the plot as a drawn table with absolute size,
+# and that size, so the file fits the panels plus their axes, titles, and
+# legend. A stack from .cdrgam_cli_stack_plots() is already sized.
+.cdrgam_cli_panel_figure <- function(plot, panel) {
+    current <- grDevices::dev.cur()
+    grDevices::pdf(NULL)
+    device <- grDevices::dev.cur()
+    on.exit({
+        grDevices::dev.off(device)
+        if (current > 1L) grDevices::dev.set(current)
+    }, add=TRUE)
+    grob <- if (inherits(plot, 'ggplot')) {
+        ggplot2::ggplotGrob(.cdrgam_cli_panel_sized(plot, panel$width, panel$height))
+    } else plot
+    list(
+        plot=grob, width=.cdrgam_cli_grob_inches(grob, 'width'),
+        height=.cdrgam_cli_grob_inches(grob, 'height')
     )
 }
 
 .cdrgam_cli_save_ggplot <- function(plot, stage, render, stem='visualization') {
     width <- .cdrgam_cli_null(render$width, 8)
     height <- .cdrgam_cli_null(render$height, 5)
+    panel <- .cdrgam_cli_panel_size(render)
+    if (!is.null(panel)) {
+        sized <- .cdrgam_cli_panel_figure(plot, panel)
+        plot <- sized$plot
+        width <- sized$width
+        height <- sized$height
+    }
     dpi <- .cdrgam_cli_null(render$dpi, 300)
     paths <- character()
     for (format in render$formats) {
@@ -681,7 +765,7 @@
     figure <- .cdrgam_cli_lines_figure(entries, render)
     plot <- .cdrgam_cli_ggplot_plot(figure$spec)
     saveRDS(plot, file.path(stage, 'plot.rds'), version=3)
-    stacked <- .cdrgam_cli_ggplot_figure(plot, figure$strip, figure$pointwise)
+    stacked <- .cdrgam_cli_ggplot_figure(plot, figure$strip, figure$pointwise, render)
     if (!is.null(stacked$strip)) {
         saveRDS(stacked$strip, file.path(stage, 'plot-peaks.rds'), version=3)
     }

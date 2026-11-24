@@ -23,7 +23,7 @@ Imports:
     digest,
     filelock,
     fs,
-    ggplot2,
+    ggplot2 (>= 4.0.0),
     grid,
     gtable,
     processx,

@@ -249,8 +249,10 @@
         xaxis$tickvals <- spec$x$breaks
         xaxis$ticktext <- spec$x$labels
     }
-    yaxis <- list(title=spec$labels$y, zeroline=TRUE)
+    yaxis <- list(title=spec$labels$y, zeroline=!isFALSE(spec$zero_line))
     if (isTRUE(spec$y_zero)) yaxis$rangemode <- 'tozero'
+    ylim <- .cdrgam_cli_spec_ylim(spec)
+    if (!is.null(ylim)) yaxis$range <- ylim
     .cdrgam_cli_plotly_themed(
         plot, spec$theme, xaxis=xaxis, yaxis=yaxis, title=spec$labels$title,
         legend=list(orientation='h', y=-0.2), hovermode='closest', barmode='overlay'

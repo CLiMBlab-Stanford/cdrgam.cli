@@ -75,6 +75,12 @@
     width=list(kind='positive', viewer='file', reason='sets the size of rendered files'),
     height=list(kind='positive', viewer='file', reason='sets the size of rendered files'),
     dpi=list(kind='positive', viewer='file', reason='sets the resolution of rendered files'),
+    panel_width=list(
+        kind='positive', viewer='file', reason='sets the size of rendered files'
+    ),
+    panel_height=list(
+        kind='positive', viewer='file', reason='sets the size of rendered files'
+    ),
     title=list(kind='text', viewer='control', label='Title'),
     xlab=list(kind='text', viewer='control', label='Horizontal axis title'),
     ylab=list(kind='text', viewer='control', label='Vertical axis title'),
@@ -112,6 +118,16 @@
     reverse_palette=list(
         kind='flag', omit=FALSE, geometries=.cdrgam_cli_line_geometries,
         viewer='control', label='Reverse palette order'
+    ),
+    ylim=list(
+        kind='limits', geometries=.cdrgam_cli_line_geometries,
+        viewer='control', label='Vertical axis range'
+    ),
+    # On unless false; only false is stored, so renders without the field
+    # keep their identities.
+    zero_line=list(
+        kind='flag', omit=TRUE, geometries=.cdrgam_cli_line_geometries,
+        viewer='control', label='Line at zero'
     )
 )
 
@@ -198,6 +214,28 @@
             }
             sort(unique(as.numeric(value)))
         },
+        # Display limits as c(low, high); NA keeps that end automatic.
+        limits={
+            parts <- if (is.list(value)) lapply(value, function(part) {
+                if (is.null(part)) NA_real_ else part
+            }) else as.list(value)
+            numeric_part <- function(part) {
+                length(part) == 1L && (is.na(part) || (is.numeric(part) && is.finite(part)))
+            }
+            if (length(parts) != 2L || !all(vapply(parts, numeric_part, logical(1)))) {
+                .cdrgam_cli_abort(paste0(
+                    field, ' must be [low, high], with null for an automatic end'
+                ))
+            }
+            limits <- vapply(parts, as.numeric, numeric(1))
+            if (all(is.na(limits))) .cdrgam_cli_abort(paste0(
+                field, ' needs at least one finite end'
+            ))
+            if (!anyNA(limits) && limits[[1L]] >= limits[[2L]]) .cdrgam_cli_abort(paste0(
+                field, ' must have its low end below its high end'
+            ))
+            limits
+        },
         flag={
             if (!is.logical(value) || length(value) != 1L || is.na(value)) {
                 .cdrgam_cli_abort(paste0(field, ' must be true or false'))
@@ -244,6 +282,20 @@
         } else NULL
         if (!is.null(needed) && !(value$geometry %in% needed)) .cdrgam_cli_abort(paste0(
             subfield, ' ', value[[name]], ' requires ', .cdrgam_cli_geometry_phrase(needed)
+        ))
+    }
+    # A fixed panel size determines the file size, so it excludes width
+    # and height, and its two sides are set together.
+    panel_set <- intersect(c('panel_width', 'panel_height'), names(value))
+    if (length(panel_set)) {
+        figure_set <- intersect(c('width', 'height'), names(value))
+        if (length(figure_set)) .cdrgam_cli_abort(paste0(
+            field, ' sets ', paste(figure_set, collapse=' and '), ' and ',
+            paste(panel_set, collapse=' and '), '; set the figure size (width, ',
+            'height) or the panel size (panel_width, panel_height), not both'
+        ))
+        if (length(panel_set) != 2L) .cdrgam_cli_abort(paste0(
+            field, '.panel_width and ', field, '.panel_height must be set together'
         ))
     }
     if (!is.null(value$breaks) && identical(value$spacing, 'uniform')) {

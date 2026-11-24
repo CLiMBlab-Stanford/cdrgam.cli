@@ -837,6 +837,33 @@ stopifnot(
 )
 unlink(cancelled_path)
 
+# Edit selectors may be globs or regular expressions over the existing
+# definitions; each match opens in turn, and a literal name keeps creating.
+opened <- character()
+record_editor <- function(path) {
+    opened <<- c(opened, paste(readLines(path), collapse='\n'))
+    invisible(path)
+}
+model_texts <- vapply(list.files(
+    file.path(project, 'definitions', 'models'), pattern='[.]ya?ml$', full.names=TRUE
+), function(path) paste(readLines(path), collapse='\n'), character(1))
+cdrgam_cli_def('test-project', type='model', name='*', editor=record_editor)
+stopifnot(length(opened) == length(model_texts), setequal(opened, model_texts))
+opened <- character()
+cdrgam_cli_def('test-project', type='model', name='re:^decay$', editor=record_editor)
+stopifnot(identical(opened, paste(readLines(file.path(
+    project, 'definitions', 'models', 'decay.yml'
+)), collapse='\n')))
+stopifnot(
+    grepl('matched nothing', tryCatch(cdrgam_cli_def(
+        'test-project', type='model', name='nothing-*', editor=record_editor
+    ), error=conditionMessage)),
+    grepl('must be literal', tryCatch(cdrgam_cli_def(
+        'test-project', type='model', name='decay-*', source='decay',
+        editor=record_editor
+    ), error=conditionMessage))
+)
+
 # Invalid edits do not replace the published definition. Their draft is
 # reopened by the next edit and removed after successful publication.
 model_path <- file.path(project, 'definitions', 'models', 'decay.yml')
@@ -1879,9 +1906,62 @@ stopifnot(
     file.exists(file.path(lines_output, 'line-by-lag-grid.csv')),
     identical(lines_plot$labels$x, 'x / lag'),
     is.null(lines_plot$scales$get_scales('colour')$name),
-    setequal(unique(as.character(unlist(lapply(lines_plot$layers, function(layer) {
-        if (is.data.frame(layer$data)) layer$data$line
-    })))), c('by-x', 'by-lag'))
+    setequal(unique(unlist(lapply(lines_plot$layers, function(layer) {
+        if (is.data.frame(layer$data)) as.character(layer$data$line)
+    }))), c('by-x', 'by-lag')),
+    # The x axis crosses zero effect, so the zero line is drawn.
+    any(vapply(lines_plot$layers, function(layer) inherits(layer$geom, 'GeomHline'),
+        logical(1)))
+)
+
+# A fixed panel size renders the lines and their peak timeline with the file
+# sized to fit; the main panel keeps the given size.
+panel_lines <- lines_definition
+panel_lines$render <- c(lines_definition$render, list(
+    panel_width=3, panel_height=2
+))
+panel_lines$render$formats <- 'svg'
+yaml::write_yaml(panel_lines,
+    file.path(project, 'definitions', 'visualizations', 'lines-panel.yml'))
+cdrgam_cli_run(projects='test-project', visualizations='lines-panel')
+panel_svg <- file.path(project, 'results', 'visualizations', 'lines-panel',
+    'visualization.svg')
+panel_head <- paste(readLines(panel_svg, n=3L), collapse=' ')
+panel_size <- as.numeric(c(
+    sub('.*width="([0-9.]+)pt".*', '\\1', panel_head),
+    sub('.*height="([0-9.]+)pt".*', '\\1', panel_head)
+)) / 72
+stopifnot(
+    file.exists(file.path(dirname(panel_svg), 'plot-peaks.rds')),
+    panel_size[[1L]] > 3, panel_size[[2L]] > 2 * 1.1
+)
+unlink(file.path(project, 'definitions', 'visualizations', 'lines-panel.yml'))
+
+# A visualization whose definition was removed can still be purged by
+# name: its results, work directory, log, and registry record go together.
+unlink(file.path(project, 'definitions', 'visualizations', 'lines-one.yml'))
+orphan_output <- file.path(project, 'results', 'visualizations', 'lines-one')
+orphan_work <- file.path(project, '.cdrgam', 'work', 'visualization_lines-one')
+stopifnot(dir.exists(orphan_output), dir.exists(orphan_work))
+orphan_preview <- cdrgam_cli_purge(
+    projects='test-project', visualizations='lines-one', work=TRUE, logs=TRUE,
+    force=FALSE
+)
+stopifnot(
+    dir.exists(orphan_output),
+    any(vapply(orphan_preview, same_path, logical(1), right=orphan_output)),
+    any(vapply(orphan_preview, same_path, logical(1), right=orphan_work))
+)
+cdrgam_cli_purge(
+    projects='test-project', visualizations='lines-one', work=TRUE, logs=TRUE,
+    force=TRUE
+)
+stopifnot(
+    !dir.exists(orphan_output), !dir.exists(orphan_work),
+    dir.exists(lines_output),
+    grepl('matched nothing: lines-one', tryCatch(cdrgam_cli_purge(
+        projects='test-project', visualizations='lines-one', force=TRUE
+    ), error=conditionMessage))
 )
 
 comparison_plan <- cdrgam_cli_plan(

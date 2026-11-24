@@ -744,7 +744,8 @@ has a control for `geometry`, `interval`, `theme`, `title`, `xlab`, `ylab`,
 `palette`, `peaks`, `spacing`, and `statistic`, checked as in a definition.
 The viewer sets `mappings` itself: x is each line's horizontal axis and
 color is the line. It draws no facets, so `scales` does not apply, and
-`formats`, `width`, `height`, and `dpi` affect only rendered files. The
+`formats`, `width`, `height`, `panel_width`, `panel_height`, and `dpi`
+affect only rendered files. The
 viewer's palette defaults to `okabe-ito` and switches every line to
 `viridis` when there are more than eight; rendered files use `default` and
 fail past a palette's last color. Its 3D surface has no render geometry.
@@ -771,9 +772,48 @@ fields are `x`, `y`, `color`, `fill`, `linetype`, `group`, and `facet`. Themes a
 `paper` (ggplot2's bw), `slides` (minimal at a larger base size), and the native
 ggplot2 themes `grey`, `gray`, `bw`, `linedraw`, `light`, `dark`, `minimal`,
 `classic`, `void`, and `test`. `y_zero: true` extends the vertical axis of a
-line, point, or bar plot to include zero. `reverse_palette: true` assigns the
-palette's colors to the color levels in reverse order, or reverses a
-continuous color gradient; the viewer's **Reverse palette order** box sets it.
+line, point, or bar plot to include zero. `reverse_palette: true` reads the
+palette from its last color: a palette with a fixed list of colors, such as
+`okabe-ito` or `Set1`, gives the first level its last color, the next level
+the color before it, and so on. Palettes that spread over the levels, such as
+viridis or a gradient, and continuous color scales are reversed end to end.
+The viewer's **Reverse palette order** box sets it.
+
+`zero_line` draws a thin grey line at zero effect beneath the data, in each
+panel whose vertical axis includes zero: the range of `ylim` when it is set,
+and otherwise that of the panel's estimates and intervals with the usual 5%
+padding. It never extends an
+axis to reach zero; use `y_zero` for that. It is on unless set to `false`, and
+bars draw their own baseline instead. The viewer's **Line at zero** box sets
+it.
+
+`width` and `height` set the size of a rendered file in inches, 8 by 5 by
+default; the plot panel takes whatever the axes, titles, and legend leave.
+`panel_width` and `panel_height` instead fix the size of the plot panel, so
+figures with legends of different sizes keep identical panels:
+
+```yaml
+render:
+  geometry: line
+  panel_width: 3
+  panel_height: 3
+```
+
+The file is then sized to fit the panel with its axes, titles, and legend.
+Each facet panel takes the given size, and a peak timeline or pointwise-peak
+panel below the plot keeps the panel's width and is aligned with it. The two
+are set together and cannot be combined with `width` or `height`. They need
+ggplot2 4.0.0 or later.
+
+`ylim: [low, high]` sets the vertical display range of a line, point, or bar
+plot; `null` keeps that end automatic, as in `ylim: [null, 0.5]`. It only
+zooms the view: estimates and intervals outside it are drawn to the edge, not
+removed, and nothing is evaluated differently. To change where an effect is
+evaluated instead, give the varying axis a range in the query, such as
+`axes: {predictors: {surprisal: {range: [mean - 2 * sd, mean + 2 * sd]}}}` or
+`axes: {lag: {range: [0, 0.5]}}`. In the viewer, **Vertical axis range** under
+**Appearance** sets `ylim`, and **X range** under **Options** sets each line's
+evaluation range, which the exported definition YAML records.
 
 Multiple layers can superimpose related estimands without repeating the axis
 query. Each layer has an `id` and may override `composition`, `grouping`,

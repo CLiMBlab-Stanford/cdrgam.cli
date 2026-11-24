@@ -149,10 +149,27 @@
 # peak strip color the same level alike. A gradient places the levels at
 # equal steps along the listed colors, from the first color to the last.
 # NULL or `default` gives ggplot2's hue colors.
-# `reverse = TRUE` assigns the same colors to the levels in reverse order.
+# `reverse = TRUE` reads the palette from its other end. A palette with a
+# fixed list of colors, okabe-ito or a Brewer palette, then starts from its
+# last color, so three levels take the last three colors, last first. Other
+# palettes spread over the levels, and their spread is reversed.
 .cdrgam_cli_palette_colors <- function(palette, levels, reverse=FALSE) {
-    colors <- .cdrgam_cli_palette_level_colors(palette, levels)
-    if (isTRUE(reverse)) colors <- stats::setNames(rev(unname(colors)), names(colors))
+    if (!isTRUE(reverse)) return(.cdrgam_cli_palette_level_colors(palette, levels))
+    fixed <- if (length(palette) == 1L && identical(palette, 'okabe-ito')) {
+        length(.cdrgam_cli_okabe_ito)
+    } else if (length(palette) == 1L && palette %in% names(.cdrgam_cli_brewer_palettes)) {
+        .cdrgam_cli_brewer_palettes[[palette]]
+    }
+    colors <- if (is.null(fixed)) {
+        rev(unname(.cdrgam_cli_palette_level_colors(palette, levels)))
+    } else {
+        if (length(levels) > fixed) {
+            .cdrgam_cli_palette_level_colors(palette, levels)
+        }
+        full <- .cdrgam_cli_palette_level_colors(palette, paste0('level', seq_len(fixed)))
+        rev(unname(full))[seq_along(levels)]
+    }
+    names(colors) <- levels
     colors
 }
 
@@ -353,6 +370,7 @@
     ))
     spec <- list(
         geometry=geometry, theme=render$theme, y_zero=isTRUE(render$y_zero),
+        ylim=render$ylim, zero_line=!isFALSE(render$zero_line),
         columns=columns, facet=facet,
         layers=layers,
         labels=list(
@@ -577,4 +595,57 @@
     .cdrgam_cli_pointwise_spec(
         pointwise, .cdrgam_cli_plot_spec(data, definition), render
     )
+}
+
+# The vertical display limits of a plot specification, or NULL when
+# render.ylim is unset. An NA end takes the extent of the plotted values and
+# their intervals, padded by 5% of their span, and includes zero under
+# y_zero. Limits only zoom the view: no row is dropped.
+.cdrgam_cli_spec_ylim <- function(spec) {
+    limits <- spec$ylim
+    if (is.null(limits)) return(NULL)
+    if (anyNA(limits)) {
+        rows <- spec$rows
+        values <- c(rows[[spec$columns$y]], rows$lower, rows$upper,
+            rows$.cdrgam_ymin, rows$.cdrgam_ymax, if (isTRUE(spec$y_zero)) 0)
+        values <- values[is.finite(values)]
+        extent <- if (length(values)) range(values) else c(0, 1)
+        known <- limits[is.finite(limits)]
+        extent <- range(c(extent, known))
+        pad <- 0.05 * max(diff(extent), abs(extent), 1e-8)
+        if (is.na(limits[[1L]])) limits[[1L]] <- min(extent[[1L]] - pad, limits[[2L]] - pad)
+        if (is.na(limits[[2L]])) limits[[2L]] <- max(extent[[2L]] + pad, limits[[1L]] + pad)
+    }
+    limits
+}
+
+# The facet values whose vertical axis includes zero, for the zero line:
+# NA for an unfaceted plot when its axis does. A panel's axis is
+# render.ylim when set, and otherwise the extent of its estimates and
+# intervals with ggplot2's 5% padding, per facet under free y scales and
+# over all rows otherwise.
+.cdrgam_cli_zero_panels <- function(spec) {
+    if (!isTRUE(spec$zero_line) || is.null(spec$rows) || !nrow(spec$rows)) {
+        return(character())
+    }
+    covers <- function(rows) {
+        limits <- .cdrgam_cli_spec_ylim(c(spec[setdiff(names(spec), 'rows')], list(rows=rows)))
+        if (is.null(limits)) {
+            values <- c(rows[[spec$columns$y]], rows$lower, rows$upper)
+            values <- values[is.finite(values)]
+            if (!length(values)) return(FALSE)
+            # The drawn axis: ggplot2 pads a continuous range by 5% of its
+            # span on each side.
+            limits <- range(values)
+            limits <- limits + c(-1, 1) * 0.05 * diff(limits)
+        }
+        limits[[1L]] <= 0 && 0 <= limits[[2L]]
+    }
+    facet <- spec$facet
+    if (is.null(facet)) return(if (covers(spec$rows)) NA_character_ else character())
+    values <- as.character(spec$rows[[facet$column]])
+    if (!(facet$scales %in% c('free', 'free_y'))) {
+        return(if (covers(spec$rows)) unique(values) else character())
+    }
+    Filter(function(value) covers(spec$rows[values == value, , drop=FALSE]), unique(values))
 }

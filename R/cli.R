@@ -119,7 +119,10 @@
                 description=paste(
                     'Create a missing definition or open an existing definition',
                     'in the configured editor. At most one definition type may',
-                    'be selected in one invocation.'
+                    'be selected in one invocation. Names may be * globs or',
+                    're:-prefixed regular expressions, which open every existing',
+                    'definition they match in turn; quote them so the shell does',
+                    'not expand them.'
                 ),
                 options=c(
                     list(project_selector),
@@ -133,7 +136,8 @@
                 examples=c(
                     'cdrgam def edit -P brown',
                     'cdrgam def edit -P brown --model main',
-                    'cdrgam def edit -P brown --model alternative --source main'
+                    'cdrgam def edit -P brown --model alternative --source main',
+                    "cdrgam def edit -P brown --visualization 'main-*'"
                 ),
                 handler='def-edit'
             ),

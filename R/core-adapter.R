@@ -155,6 +155,12 @@
     'points' %in% names(formals(cdrgam::estimate_effect))
 }
 
+# estimate_effect(covariance=) is new after cdrgam 0.4.0; simultaneous bands
+# use it to read the joint covariance from one evaluation.
+.cdrgam_cli_core_has_covariance <- function() {
+    'covariance' %in% names(formals(cdrgam::estimate_effect))
+}
+
 # sample_effect_coefficients() and simulate_effect(coefficients=) are new
 # after cdrgam 0.4.0; posterior intervals need them.
 .cdrgam_cli_core_has_shared_draws <- function() {

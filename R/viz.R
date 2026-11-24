@@ -131,8 +131,11 @@
 # definition writes. `spec` holds term, varying, fixed, composition,
 # grouping, group, and optional reference values and `ranges`; `options`
 # holds n, level, unconditional, interval, and optional `ticks`, the x
-# values of a line. Varying axes span the fitted domain, or `ranges` gives
-# their limits, or `ticks` their values. Every other axis is fixed at its
+# values of a line, and optional `x_range`, the low and high ends of a
+# line's x axis as numbers or value expressions, "" for the fitted end.
+# Varying axes span the fitted domain, or `ranges` gives their limits, or
+# `ticks` their values, or `x_range` the range of a line's one varying
+# axis. Every other axis is fixed at its
 # value in `fixed`, which may be an expression, or at lag 0 and the training
 # mean. An axis with no stored training summary is held at the midpoint of
 # its fitted domain instead, and its expressions are resolved here, since a
@@ -175,6 +178,18 @@
             } else if (length(limits) == 2L && all(is.finite(as.numeric(limits)))) {
                 limits <- sort(as.numeric(limits))
                 list(values=seq(limits[[1L]], limits[[2L]], length.out=n))
+            } else if (length(options$x_range) == 2L && length(varying) == 1L &&
+                    any(nzchar(options$x_range))) {
+                # An empty end is the fitted end; expressions are resolved by
+                # the query, or here for an axis without training summaries.
+                ends <- lapply(1:2, function(end) {
+                    text <- options$x_range[[end]]
+                    if (!nzchar(text)) return(c(term$axes[[name]]$min, term$axes[[name]]$max)[[end]])
+                    number <- suppressWarnings(as.numeric(text))
+                    if (is.finite(number)) return(number)
+                    if (summarized(name)) text else .cdrgam_cli_viz_resolve(term, name, text)
+                })
+                list(range=ends, n=n)
             } else list(grid='fitted', n=n)
         } else value_of(name, fixed[[name]])
         place(name, request)

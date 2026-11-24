@@ -9,6 +9,17 @@ scheduler and generic worker pool. A Slurm worker exits after five consecutive
 minutes without ready work; the scheduler submits another worker when later
 work becomes ready.
 
+## Documentation
+
+The reference manual is at
+[climblab-stanford.github.io/cdrgam.cli](https://climblab-stanford.github.io/cdrgam.cli/),
+and [docs/project-schema.md](docs/project-schema.md) describes the project,
+definition, and visualization schema. Models are fitted by the
+[cdrgam](https://github.com/CLiMBlab-Stanford/cdrgam) core package, whose
+documentation is at [climblab-stanford.github.io/cdrgam](https://climblab-stanford.github.io/cdrgam/).
+
+## Installation
+
 Install from the checkout:
 
 ```sh
@@ -143,9 +154,10 @@ containing a match is inferred. A selector without values lists every
 definition of that type. Once any type selector is supplied, unselected types
 are omitted.
 
-Definition selectors accept multiple values. `edit` processes literal names in
-order; `ls`, `val`, and `rm` also accept `*` globs and `re:`-prefixed
-Perl-compatible regular expressions and operate on every match. Regular
+Definition selectors accept multiple values, processed in order. `edit`, `ls`,
+`val`, and `rm` accept `*` globs and `re:`-prefixed Perl-compatible regular
+expressions and operate on every existing match; `edit` opens the matches one
+after another, and a literal name it does not find creates that definition. Regular
 expressions use ordinary substring matching unless you include `^` or `$`.
 Quote patterns so the shell does not interpret them.
 
@@ -223,8 +235,9 @@ panel on and off. Effects are on
 the linear-predictor scale with pointwise or, under **Options**, simultaneous
 intervals. For a line at a peak, simultaneous intervals come from posterior
 draws that each re-find the peak, so they include uncertainty about where the
-peak lies. **X tick values** under **Options** evaluates every line at the
-listed x values and puts a tick at each. In the viewer the peak timeline
+peak lies. **X tick values** under **Options** puts a tick at each listed x value;
+points and bars are evaluated at those values instead of the grid, and **X
+tick labels** replaces the tick text. In the viewer the peak timeline
 appears whenever a line uses a peak, unless **Show peak lags** is off.
 
 **Definition YAML**, in the lines list, shows the plot as a visualization
@@ -232,8 +245,8 @@ definition with `lines` (see the project schema): its lines, options, and
 appearance. Saved in a project, `cdrgam run` renders the same figure.
 
 **Appearance** holds the viewer's counterparts of a visualization's `render`
-settings, with the same meanings and checks: geometry (lines, points, or
-bars; for surfaces a 3D surface, heatmap, or contours), effect estimates or
+settings, with the same meanings and checks: geometry (lines, points,
+connected points, or bars; for surfaces a 3D surface, heatmap, or contours), effect estimates or
 peak lags, intervals, tick spacing, palette, titles, and theme. The palette menu shows each palette's colors. Lines use `okabe-ito`
 colors in list order, and the arrows in the lines list move a line up or
 down; with more

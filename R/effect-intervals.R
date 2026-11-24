@@ -110,23 +110,40 @@
             level=level, n=2L
         ), extra))
     }
-    base <- estimate()
+    joint <- .cdrgam_cli_core_has_covariance()
+    base <- estimate(if (joint) list(covariance=TRUE) else list())
     keys <- .cdrgam_cli_grid_key(base, axes)
     groups <- if (all(is.na(base$group))) NA_character_ else unique(base$group)
     in_group <- function(frame, group) {
         if (is.na(group)) rep.int(TRUE, nrow(frame)) else frame$group %in% group
     }
     grid_keys <- .cdrgam_cli_grid_key(grid, axes)
+    # The covariance of the support grid in each group: read from one
+    # evaluation when the core returns it, and otherwise recovered from the
+    # variance of each point's difference from every other point, which
+    # takes one evaluation per point.
+    covariances <- vector('list', length(groups))
+    if (joint) {
+        whole <- attr(base, 'covariance')
+        for (g in seq_along(groups)) {
+            rows <- which(in_group(base, groups[[g]]))
+            group_keys <- .cdrgam_cli_grid_key(
+                transform(grid, group=groups[[g]]), axes
+            )
+            index <- rows[match(group_keys, keys[rows])]
+            covariances[[g]] <- whole[index, index, drop=FALSE]
+        }
+    }
     variance <- matrix(NA_real_, nrow(grid), length(groups))
     differences <- array(NA_real_, c(nrow(grid), nrow(grid), length(groups)))
-    for (g in seq_along(groups)) {
+    if (!joint) for (g in seq_along(groups)) {
         rows <- in_group(base, groups[[g]])
         group_keys <- .cdrgam_cli_grid_key(
             transform(grid, group=groups[[g]]), axes
         )
         variance[, g] <- base$se[rows][match(group_keys, keys[rows])]^2
     }
-    for (index in seq_len(nrow(grid))) {
+    if (!joint) for (index in seq_len(nrow(grid))) {
         point <- as.list(grid[index, , drop=FALSE])
         shifted <- estimate(list(reference=point))
         shifted_keys <- .cdrgam_cli_grid_key(shifted, axes)
@@ -149,8 +166,9 @@
     baseline_index <- match(.cdrgam_cli_grid_key(baselines, axes), grid_keys)
     data$critical_value <- NA_real_
     for (g in seq_along(groups)) {
-        covariance <- (outer(variance[, g], variance[, g], '+') -
-            differences[, , g]) / 2
+        covariance <- if (joint) covariances[[g]] else {
+            (outer(variance[, g], variance[, g], '+') - differences[, , g]) / 2
+        }
         covariance <- (covariance + t(covariance)) / 2
         effect <- covariance[target_index, target_index, drop=FALSE]
         if (length(reference_axes)) {

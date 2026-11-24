@@ -145,6 +145,51 @@ if (internal('.cdrgam_cli_core_has_points')()) {
     unlink(file.path(project, 'definitions', 'models', 'nested.yml'))
 }
 tensor <- terms[[match('x:z', labels)]]
+
+# A simultaneous band from the core's joint covariance equals the band
+# recovered point by point from differences, which older cores need.
+if (internal('.cdrgam_cli_core_has_covariance')()) {
+    band_query <- list(
+        terms='x:z', n=15L, composition='term', grouping='population',
+        uncertainty=list(kind='simultaneous', level=0.95, points=12L,
+            unconditional=FALSE),
+        axes=list(lag=list(grid='fitted', n=15L), predictors=list(
+            x='mean + sd', z=list(values=c('mean - sd', 'mean + sd'))
+        )),
+        reference=list(x='mean')
+    )
+    band_training <- internal('.cdrgam_cli_effect_training')(fit, NULL)
+    joint_band <- internal('.cdrgam_cli_compute_effect')(
+        fit, band_query, training=band_training
+    )
+    namespace <- asNamespace('cdrgam.cli')
+    original <- get('.cdrgam_cli_core_has_covariance', namespace)
+    unlockBinding('.cdrgam_cli_core_has_covariance', namespace)
+    assign('.cdrgam_cli_core_has_covariance', function() FALSE, namespace)
+    pointwise_band <- tryCatch(
+        internal('.cdrgam_cli_compute_effect')(fit, band_query, training=band_training),
+        finally=assign('.cdrgam_cli_core_has_covariance', original, namespace)
+    )
+    lockBinding('.cdrgam_cli_core_has_covariance', namespace)
+    stopifnot(
+        all(joint_band$critical_value > stats::qnorm(0.975)),
+        isTRUE(all.equal(joint_band$critical_value, pointwise_band$critical_value,
+            tolerance=1e-6)),
+        isTRUE(all.equal(joint_band$lower, pointwise_band$lower, tolerance=1e-6))
+    )
+}
+
+# The viewer's X range sets where a line is evaluated: an expression end is
+# resolved from the axis's training summaries, and an empty end is the
+# fitted end.
+ranged <- internal('.cdrgam_cli_viz_estimate')(fit, tensor, list(
+    term='x:z', varying='x', fixed=list(), composition='term', grouping='population'
+), list(n=5L, x_range=c('mean - sd', '')))
+stopifnot(
+    nrow(ranged) == 5L,
+    isTRUE(all.equal(min(ranged$x), tensor$axes$x$mean - tensor$axes$x$sd)),
+    isTRUE(all.equal(max(ranged$x), tensor$axes$x$max))
+)
 stopifnot(
     setequal(names(tensor$axes), c('lag', 'x', 'z')),
     all(vapply(tensor$axes, function(axis) {
@@ -909,17 +954,24 @@ if (requireNamespace('plotly', quietly=TRUE)) {
             render_geometry='point', x_tick_labels='start, middle, end'
         )))$tick_labels, c('start', 'middle', 'end'))
     )
-    # Reversing the palette assigns the same colors to the lines in reverse
-    # order, in the plot and in the line list.
+    # Reversing the palette starts it from its last color: two lines under
+    # okabe-ito take its eighth and seventh colors, in the plot and in the
+    # line list. A spread palette such as viridis reverses its spread.
+    okabe <- getFromNamespace('.cdrgam_cli_okabe_ito', 'cdrgam.cli')
     forward <- viz_render(peaked, settings=list())
     reversed <- viz_render(peaked, settings=list(reverse_palette=TRUE))
-    forward_colors <- internal('.cdrgam_cli_lines_spec')(peaked, forward)$color$values
     reversed_colors <- internal('.cdrgam_cli_lines_spec')(peaked, reversed)$color$values
+    palette_colors <- internal('.cdrgam_cli_palette_colors')
     stopifnot(
         isTRUE(reversed$reverse_palette), is.null(forward$reverse_palette),
-        identical(unname(reversed_colors), rev(unname(forward_colors))),
+        identical(unname(reversed_colors), okabe[c(8L, 7L)]),
         identical(unname(internal('.cdrgam_cli_viz_line_colors')(c('a', 'b'), reverse=TRUE)),
-            rev(unname(internal('.cdrgam_cli_viz_line_colors')(c('a', 'b')))))
+            okabe[c(8L, 7L)]),
+        identical(unname(palette_colors('Set1', c('a', 'b', 'c'), TRUE)),
+            rev(unname(palette_colors('Set1', paste0('l', 1:9))))[1:3]),
+        identical(unname(palette_colors('viridis', c('a', 'b', 'c'), TRUE)),
+            rev(unname(palette_colors('viridis', c('a', 'b', 'c'))))),
+        identical(names(palette_colors('okabe-ito', c('a', 'b'), TRUE)), c('a', 'b'))
     )
     # Typed tick values and labels reach the viewer's plot.
     labelled_axis <- plotly::plotly_build(internal('.cdrgam_cli_viz_line_plot')(
@@ -929,6 +981,45 @@ if (requireNamespace('plotly', quietly=TRUE)) {
         ))
     ))$x$layout$xaxis
     stopifnot(identical(unlist(labelled_axis$ticktext), c('start', 'middle', 'end')))
+    # The vertical range only zooms: rows are kept, and an empty end is
+    # automatic. Both renderers apply it.
+    zoom_settings <- internal('.cdrgam_cli_viz_settings')(list(
+        mode='line', render_geometry='line', render_ylim_min=-0.5, render_ylim_max=NA
+    ))
+    stopifnot(identical(zoom_settings$ylim, c(-0.5, NA)))
+    zoom_render <- viz_render(peaked, settings=zoom_settings)
+    zoom_spec <- internal('.cdrgam_cli_lines_spec')(peaked, zoom_render)
+    zoom_limits <- internal('.cdrgam_cli_spec_ylim')(zoom_spec)
+    stopifnot(
+        nrow(zoom_spec$rows) == nrow(internal('.cdrgam_cli_lines_spec')(
+            peaked, viz_render(peaked, settings=list())
+        )$rows),
+        zoom_limits[[1L]] == -0.5, zoom_limits[[2L]] > max(zoom_spec$rows$estimate),
+        isTRUE(all.equal(unlist(plotly::plotly_build(
+            internal('.cdrgam_cli_viz_line_plot')(peaked, settings=zoom_settings)
+        )$x$layout$yaxis$range), zoom_limits)),
+        isTRUE(all.equal(
+            internal('.cdrgam_cli_ggplot_plot')(zoom_spec)$coordinates$limits$y,
+            zoom_limits
+        )),
+        is.null(internal('.cdrgam_cli_viz_limits')(2, 1)),
+        grepl('- ~', internal('.cdrgam_cli_viz_render_yaml')(zoom_settings))
+    )
+    # The viewer's zero line follows the Line at zero box.
+    zero_axis <- function(settings) plotly::plotly_build(
+        internal('.cdrgam_cli_viz_line_plot')(peaked, settings=settings)
+    )$x$layout$yaxis$zeroline
+    stopifnot(isTRUE(zero_axis(list())), isFALSE(zero_axis(list(zero_line=FALSE))))
+    # Duplicate inserts a copy after its line under a new id and label.
+    duplicate <- internal('.cdrgam_cli_viz_duplicate_line')
+    listed <- list(list(id='one', label='A', term='x'), list(id='two', label='B'))
+    copied <- duplicate(listed, 'one')
+    stopifnot(
+        length(copied) == 3L,
+        identical(vapply(copied, `[[`, character(1), 'label'), c('A', 'A (copy)', 'B')),
+        !(copied[[2L]]$id %in% c('one', 'two')), identical(copied[[2L]]$term, 'x'),
+        identical(duplicate(listed, 'missing'), listed)
+    )
     # An interval that does not suit the geometry falls back to its default.
     stopifnot(identical(
         viz_render(peaked, settings=list(geometry='bar', interval='ribbon'))$interval,

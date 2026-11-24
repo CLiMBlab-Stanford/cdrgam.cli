@@ -1,5 +1,11 @@
 # cdrgam.cli (development version)
 
+- Effect grids are a private cache under `.cdrgam/work/` instead of
+  published artifacts under `results/models/MODEL/effects/`, and
+  `cdrgam status` no longer lists them. A run skips an effect whose
+  visualizations are all current, even when its grid is missing, and
+  rebuilds it when a visualization that reads it must render again.
+
 - Rendered visualizations are written to `results/visualizations/NAME/`
   instead of `results/models/MODEL/visualizations/NAME/`, because a
   visualization with `lines` may draw from several models. Existing

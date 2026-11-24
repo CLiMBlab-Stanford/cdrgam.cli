@@ -260,18 +260,19 @@
     request_identity <- .cdrgam_cli_short_hash(list(
         query=value$query, layers=value$layers
     ))
+    name <- paste(model_name, request_identity, sep='_')
     list(
         key=paste(
             'effect', definitions$project$project$id, model_name,
             identity$identity, sep=':'
         ),
         kind='effect', project=definitions$project$project$name,
-        name=paste(model_name, request_identity, sep='_'),
+        name=name, intermediate=TRUE,
         model_name=model_name, identity=identity$identity,
         resolved_identity=identity, dependencies=fit$key,
         query=value$query, layers=value$layers, fit=fit,
         output=.cdrgam_cli_path(
-            definitions, 'effect', model_name, identity=identity$identity
+            definitions, 'effect', name, identity=identity$identity
         )
     )
 }

@@ -200,6 +200,8 @@
         configuration, selected, project_ids
     )
     output <- snapshot$records
+    # Effect grids are private cached intermediates, not published artifacts.
+    output <- output[output$kind != 'effect', , drop=FALSE]
     if (!nrow(output)) return(output)
     project_roots <- .cdrgam_cli_project_roots(configuration)
     if (length(project_ids)) {

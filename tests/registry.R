@@ -219,7 +219,7 @@ stopifnot(remaining == 0L)
 shared <- list(
     key='effect:project-registry-test:shared:race-identity',
     project='example', kind='effect', name='shared', identity='race-identity',
-    output=file.path(project, 'results', 'effects', 'shared'),
+    output=file.path(project, '.cdrgam', 'work', 'effect_shared', 'cache', 'race-identity'),
     dependencies=character()
 )
 first <- internal('.cdrgam_cli_attempt_directory')(definitions, shared)$path

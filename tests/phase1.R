@@ -1675,6 +1675,21 @@ stopifnot(
 )
 unlink(alternate_effect_path)
 
+# Effect grids are a private work cache: a fresh visualization does not
+# need its grid, and deleting the grid does not make it stale.
+stopifnot(
+    startsWith(effect_artifact, file.path(project, '.cdrgam', 'work')),
+    !('effect' %in% cdrgam_cli_status('test-project', pager=function(text) NULL)$kind)
+)
+fresh_plan <- cdrgam_cli_plan(projects='test-project', visualizations='effects')
+stopifnot(!('effect' %in% fresh_plan$kind))
+unlink(effect_artifact, recursive=TRUE)
+fresh_plan <- cdrgam_cli_plan(projects='test-project', visualizations='effects')
+stopifnot(
+    !('effect' %in% fresh_plan$kind),
+    all(fresh_plan$state[fresh_plan$kind == 'visualization'] == 'complete')
+)
+
 # A reference subtracts the functional at reference axis values, and a test
 # request writes joint Wald tests beside the effect grid.
 contrast_definition <- effect_definition

@@ -437,9 +437,12 @@ A visualization separates statistical evaluation in `query` from ggplot2
 presentation in `render`. The scheduler inserts an internal effect-grid work
 item between the fit and the rendered visualization. Identical queries share
 that work item even when their render settings differ. The effect-grid RDS and
-CSV live under `models/MODEL/effects/EFFECT-IDENTITY/`; rendered files live
-under `visualizations/VISUALIZATION/`, beside `models/`, because a
-visualization may draw lines from several models.
+CSV are a private cache under the project's `.cdrgam/work/` directory, not
+published results, and `cdrgam status` does not list them. A run rebuilds a
+missing grid only when a visualization that reads it is out of date, and a
+missing grid does not make a current visualization out of date. Rendered
+files live under `visualizations/VISUALIZATION/`, beside `models/`, because
+a visualization may draw lines from several models.
 
 `terms` may be a list of exact fitted term labels or a selector mapping. A
 selector accepts `names`, `predictors`, `match` (`contains` or `exact`),

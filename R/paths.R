@@ -13,7 +13,9 @@
     } else if (identical(kind, 'visualization')) {
         parts <- c(results, 'visualizations', name)
     } else if (identical(kind, 'effect')) {
-        parts <- c(results, 'models', name, 'effects', identity)
+        # Effect grids are a private cache under the effect's work directory,
+        # not published results.
+        parts <- c(root, '.cdrgam', 'work', paste0('effect_', name), 'cache', identity)
     } else if (kind %in% c('comparison', 'analysis')) {
         parts <- c(results, paste0(kind, 's'), name)
     } else if (identical(kind, 'work')) {

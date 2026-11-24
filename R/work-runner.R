@@ -42,10 +42,8 @@
         metadata <- if (file.exists(metadata_path)) tryCatch(
             .cdrgam_cli_read_yaml(metadata_path), error=function(error) NULL
         ) else NULL
-        active <- .cdrgam_cli_attempt_active(metadata)
-        if (active) .cdrgam_cli_abort(paste0(
-            'A superseded attempt still appears active: ', path
-        ))
+        # Another process may have claimed this attempt; leave it alone.
+        if (.cdrgam_cli_attempt_active(metadata)) next
         unlink(path, recursive=TRUE, force=TRUE)
         if (file.exists(path)) .cdrgam_cli_abort(paste0(
             'Could not remove superseded attempt ', sQuote(path)
@@ -54,14 +52,52 @@
     invisible(keep)
 }
 
-.cdrgam_cli_attempt_directory <- function(definitions, item, explicit=NULL) {
-    parent <- .cdrgam_cli_path(
+.cdrgam_cli_attempt_parent <- function(definitions, item) {
+    .cdrgam_cli_path(
         definitions, 'work', name=paste(item$kind, item$name, sep='_'),
         identity=item$identity
     )
-    if (!dir.exists(parent) && !dir.create(parent, recursive=TRUE)) {
-        .cdrgam_cli_abort(paste0('Could not create work directory ', parent))
+}
+
+# Serializes claiming and publishing one work item across processes, so
+# parallel jobs that share an item neither delete each other's attempts nor
+# publish over each other.
+.cdrgam_cli_with_item_lock <- function(definitions, item, code) {
+    lock <- paste0(.cdrgam_cli_attempt_parent(definitions, item), '.lock')
+    .cdrgam_cli_with_lock(lock, code, timeout=60000)
+}
+
+.cdrgam_cli_attempt_directory <- function(definitions, item, explicit=NULL) {
+    .cdrgam_cli_with_item_lock(definitions, item, {
+        .cdrgam_cli_claim_attempt_directory(definitions, item, explicit)
+    })
+}
+
+# Allocates an attempt, waiting while another process runs the same item.
+# Returns NULL when that process publishes the artifact meanwhile.
+.cdrgam_cli_await_attempt_directory <- function(definitions, item, poll=10) {
+    announced <- FALSE
+    repeat {
+        if (.cdrgam_cli_complete_artifact(item$output, item$identity)) return(NULL)
+        attempt <- tryCatch(
+            .cdrgam_cli_attempt_directory(definitions, item),
+            cdrgam_cli_attempt_active=function(condition) NULL
+        )
+        if (!is.null(attempt)) return(attempt)
+        if (!announced) {
+            message(
+                .cdrgam_cli_timestamp(), ' Waiting for another job running ',
+                item$kind, ' ', item$name
+            )
+            announced <- TRUE
+        }
+        Sys.sleep(poll)
     }
+}
+
+.cdrgam_cli_claim_attempt_directory <- function(definitions, item, explicit=NULL) {
+    parent <- .cdrgam_cli_attempt_parent(definitions, item)
+    .cdrgam_cli_ensure_directory(parent, 'work directory')
     existing <- sort(list.dirs(parent, recursive=FALSE, full.names=TRUE), decreasing=TRUE)
     if (!is.null(explicit)) {
         explicit <- .cdrgam_cli_normalize_path(explicit, must_work=TRUE)
@@ -78,7 +114,12 @@
         metadata <- tryCatch(.cdrgam_cli_read_yaml(metadata_path), error=function(error) NULL)
         if (is.null(metadata) || !(metadata$status %in% c('running', 'failed'))) next
         active <- .cdrgam_cli_attempt_active(metadata)
-        if (active) .cdrgam_cli_abort(paste0('Work item appears active: ', item$key))
+        if (active) stop(structure(class=c(
+            'cdrgam_cli_attempt_active', 'error', 'condition'
+        ), list(
+            message=paste0('Work item appears active: ', item$key), call=NULL,
+            attempt=path
+        )))
         if (is.null(resume)) resume <- path
     }
     if (!is.null(resume)) {
@@ -89,6 +130,17 @@
     label <- paste0(format(Sys.time(), '%Y%m%dT%H%M%S'), '-', Sys.getpid())
     path <- file.path(parent, label)
     if (!dir.create(path)) .cdrgam_cli_abort(paste0('Could not create ', path))
+    # Mark the attempt as claimed before releasing the item lock, so another
+    # process does not mistake the new directory for a stale one.
+    claim <- list(
+        schema=1L, status='running', key=item$key, pid=Sys.getpid(),
+        host=.cdrgam_cli_host_name(),
+        process_started=.cdrgam_cli_process_started(),
+        claimed_at=.cdrgam_cli_timestamp()
+    )
+    job_id <- Sys.getenv('SLURM_JOB_ID', '')
+    if (nzchar(job_id)) claim$job_id <- job_id
+    .cdrgam_cli_write_yaml(claim, file.path(path, 'attempt.yml'))
     if (identical(item$kind, 'fit')) {
         manifest_path <- .cdrgam_cli_manifest_path(item$output)
         manifest <- if (file.exists(manifest_path)) tryCatch(
@@ -217,7 +269,9 @@
         .cdrgam_cli_capture_conditions(switch(
             item$kind,
             fit=.cdrgam_cli_execute_fit(item, stage, publish=function(build) {
-                .cdrgam_cli_publish_directory(build, destination, definitions, item)
+                .cdrgam_cli_with_item_lock(definitions, item, {
+                    .cdrgam_cli_publish_directory(build, destination, definitions, item)
+                })
             }),
             prediction=.cdrgam_cli_execute_prediction(item, stage),
             effect=.cdrgam_cli_execute_effect(item, stage),
@@ -278,8 +332,19 @@
         )
     }
     .cdrgam_cli_write_yaml(manifest, .cdrgam_cli_manifest_path(stage))
-    .cdrgam_cli_publish_directory(stage, destination, definitions, item)
+    superseded <- .cdrgam_cli_with_item_lock(definitions, item, {
+        # A parallel job may have published the same identity meanwhile.
+        if (.cdrgam_cli_complete_artifact(destination, item$identity)) TRUE else {
+            .cdrgam_cli_publish_directory(stage, destination, definitions, item)
+            FALSE
+        }
+    })
     published <- TRUE
+    if (superseded) {
+        unlink(stage, recursive=TRUE, force=TRUE)
+        message('Reusing ', item$kind, ' artifact published concurrently ', destination)
+        return(invisible(list(status='reused', path=destination, item=item$key)))
+    }
     message('Published ', item$kind, ' artifact ', destination)
     invisible(list(
         status=if (run_status == 'complete') 'completed' else run_status,

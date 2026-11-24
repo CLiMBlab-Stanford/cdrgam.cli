@@ -247,6 +247,15 @@
     }, error=function(error) FALSE)
 }
 
+# Creates a directory, tolerating another process creating it first.
+.cdrgam_cli_ensure_directory <- function(path, label='directory') {
+    dir.create(path, recursive=TRUE, showWarnings=FALSE)
+    if (!dir.exists(path)) {
+        .cdrgam_cli_abort(paste0('Could not create ', label, ' ', sQuote(path)))
+    }
+    invisible(path)
+}
+
 .cdrgam_cli_with_lock <- function(path, code, timeout=5000) {
     directory <- fs::path_dir(path)
     if (!fs::dir_exists(directory)) fs::dir_create(directory, recurse=TRUE)

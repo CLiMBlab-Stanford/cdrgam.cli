@@ -182,7 +182,12 @@ cdrgam_cli_plan <- function(
             results[[key]] <- list(status='reused', path=item$output, item=item$key)
             next
         }
-        attempt <- .cdrgam_cli_attempt_directory(definitions, item)
+        attempt <- .cdrgam_cli_await_attempt_directory(definitions, item)
+        if (is.null(attempt)) {
+            .cdrgam_cli_registry_state(definitions$site, item, 'complete')
+            results[[key]] <- list(status='reused', path=item$output, item=item$key)
+            next
+        }
         .cdrgam_cli_registry_attempt(
             definitions$site, item,
             list(

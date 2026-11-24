@@ -1,5 +1,13 @@
 # cdrgam.cli (development version)
 
+- Parallel jobs that share a work item, such as one effect used by several
+  visualizations, no longer conflict. Claiming and publishing an item hold a
+  per-item lock, and a new attempt is marked running at once, so another job
+  no longer deletes it as stale. A job that reaches an item another job is
+  running waits, then reuses the published artifact. Under the scheduler,
+  the worker takes other ready work instead. Creating a shared results
+  directory no longer fails when another job creates it first.
+
 - `cdrgam purge --work --logs` with a workload selector removes only the
   selected work items' attempts, archived artifacts, and logs. It previously
   removed the project's entire work and log directories, including files

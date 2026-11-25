@@ -307,13 +307,13 @@ line_render <- validate_render(
 stopifnot(identical(line_render$interval, 'ribbon'), is.null(line_render$statistic))
 expect_error(validate_render(list(
     geometry='line', mappings=list(x='lag', y='estimate'), interval='errorbar'
-), 'render'), 'requires point or bar')
+), 'render'), 'requires point, connected-point, or bar')
 expect_error(validate_render(list(
     geometry='bar', mappings=list(x='term', y='estimate'), interval='ribbon'
 ), 'render'), 'requires line geometry')
 expect_error(validate_render(list(
     geometry='line', mappings=list(x='lag', y='estimate'), statistic='peak-lag'
-), 'render'), 'requires point or bar')
+), 'render'), 'requires point, connected-point, or bar')
 expect_error(validate_render(list(
     geometry='raster', mappings=list(x='lag', y='x', fill='estimate'),
     interval='none', spacing='uniform'

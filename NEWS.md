@@ -1,9 +1,12 @@
 # cdrgam.cli (development version)
 
-- Simultaneous bands read the effect covariance from one core evaluation
-  when `cdrgam` provides `estimate_effect(covariance = TRUE)`, instead of
-  one evaluation per point. A line of `spr-main` with 40 band points takes
-  about 3 seconds instead of 70. Older cores use the previous method.
+- Simultaneous bands read the effect covariance from one core evaluation,
+  instead of one evaluation per point. A line of `spr-main` with 40 band
+  points takes about 3 seconds instead of 70. Their critical values, and
+  those of bands at peaks, now come from `cdrgam`'s
+  `simultaneous_critical_value()`, so the CLI no longer computes them
+  itself. Simultaneous intervals need a `cdrgam` release with that function
+  and report an error asking to update `cdrgam` otherwise.
 
 - `cdrgam def edit` accepts `*` globs and `re:` regular expressions, as
   `def ls`, `def val`, and `def rm` do, and opens each existing match in

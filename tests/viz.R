@@ -146,9 +146,11 @@ if (internal('.cdrgam_cli_core_has_points')()) {
 }
 tensor <- terms[[match('x:z', labels)]]
 
-# A simultaneous band from the core's joint covariance equals the band
-# recovered point by point from differences, which older cores need.
-if (internal('.cdrgam_cli_core_has_covariance')()) {
+# A simultaneous band with a reference takes its critical value from the
+# core: above the pointwise multiplier and below Bonferroni over the
+# evaluated points. Without the core helper it fails instead of falling
+# back.
+if (internal('.cdrgam_cli_core_has_simultaneous')()) {
     band_query <- list(
         terms='x:z', n=15L, composition='term', grouping='population',
         uncertainty=list(kind='simultaneous', level=0.95, points=12L,
@@ -162,21 +164,23 @@ if (internal('.cdrgam_cli_core_has_covariance')()) {
     joint_band <- internal('.cdrgam_cli_compute_effect')(
         fit, band_query, training=band_training
     )
-    namespace <- asNamespace('cdrgam.cli')
-    original <- get('.cdrgam_cli_core_has_covariance', namespace)
-    unlockBinding('.cdrgam_cli_core_has_covariance', namespace)
-    assign('.cdrgam_cli_core_has_covariance', function() FALSE, namespace)
-    pointwise_band <- tryCatch(
-        internal('.cdrgam_cli_compute_effect')(fit, band_query, training=band_training),
-        finally=assign('.cdrgam_cli_core_has_covariance', original, namespace)
-    )
-    lockBinding('.cdrgam_cli_core_has_covariance', namespace)
     stopifnot(
         all(joint_band$critical_value > stats::qnorm(0.975)),
-        isTRUE(all.equal(joint_band$critical_value, pointwise_band$critical_value,
-            tolerance=1e-6)),
-        isTRUE(all.equal(joint_band$lower, pointwise_band$lower, tolerance=1e-6))
+        all(joint_band$critical_value < stats::qnorm(1 - 0.025 / 30)),
+        all(joint_band$lower <= joint_band$estimate &
+            joint_band$estimate <= joint_band$upper)
     )
+    namespace <- asNamespace('cdrgam.cli')
+    original <- get('.cdrgam_cli_core_has_simultaneous', namespace)
+    unlockBinding('.cdrgam_cli_core_has_simultaneous', namespace)
+    assign('.cdrgam_cli_core_has_simultaneous', function() FALSE, namespace)
+    missing_core <- tryCatch(
+        internal('.cdrgam_cli_compute_effect')(fit, band_query, training=band_training),
+        error=conditionMessage,
+        finally=assign('.cdrgam_cli_core_has_simultaneous', original, namespace)
+    )
+    lockBinding('.cdrgam_cli_core_has_simultaneous', namespace)
+    stopifnot(is.character(missing_core), grepl('update cdrgam', missing_core))
 }
 
 # The viewer's X range sets where a line is evaluated: an expression end is

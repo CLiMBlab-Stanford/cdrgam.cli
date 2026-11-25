@@ -155,10 +155,21 @@
     'points' %in% names(formals(cdrgam::estimate_effect))
 }
 
-# estimate_effect(covariance=) is new after cdrgam 0.4.0; simultaneous bands
-# use it to read the joint covariance from one evaluation.
-.cdrgam_cli_core_has_covariance <- function() {
-    'covariance' %in% names(formals(cdrgam::estimate_effect))
+# simultaneous_critical_value() and estimate_effect(covariance=) are new
+# after cdrgam 0.4.0; simultaneous bands need them.
+.cdrgam_cli_core_has_simultaneous <- function() {
+    'simultaneous_critical_value' %in% getNamespaceExports('cdrgam')
+}
+
+.cdrgam_cli_core_require_simultaneous <- function() {
+    if (!.cdrgam_cli_core_has_simultaneous()) .cdrgam_cli_abort(paste(
+        'Simultaneous intervals need a cdrgam release with',
+        'simultaneous_critical_value(); update cdrgam'
+    ))
+}
+
+.cdrgam_cli_core_simultaneous_critical_value <- function(...) {
+    getExportedValue('cdrgam', 'simultaneous_critical_value')(...)
 }
 
 # sample_effect_coefficients() and simulate_effect(coefficients=) are new

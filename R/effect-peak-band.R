@@ -14,20 +14,16 @@
 
 # A simultaneous band from posterior draws: `estimate` at each row, `draws`
 # a matrix with one row per row and one column per draw, and `groups` the
-# rows of each joint band. Each row's scale is its draw standard deviation;
-# the critical value is the `level` quantile over draws of the largest
-# absolute scaled deviation from the estimate within a group. Returns
+# rows of each joint band. Each row's scale is its draw standard deviation,
+# and the core gives each group's max-modulus critical value. Returns
 # lower, upper, and critical_value per row.
 .cdrgam_cli_draw_band <- function(estimate, draws, groups, level) {
+    .cdrgam_cli_core_require_simultaneous()
     scale <- apply(draws, 1L, stats::sd)
     scale[!is.finite(scale) | scale <= 0] <- NA_real_
-    critical <- numeric(length(estimate))
-    for (rows in split(seq_along(estimate), groups)) {
-        deviations <- abs(draws[rows, , drop=FALSE] - estimate[rows]) / scale[rows]
-        largest <- apply(deviations, 2L, max, na.rm=TRUE)
-        critical[rows] <- stats::quantile(largest[is.finite(largest)], level,
-            names=FALSE, type=7)
-    }
+    critical <- .cdrgam_cli_core_simultaneous_critical_value(
+        draws=draws, estimate=estimate, groups=groups, level=level
+    )
     width <- critical * ifelse(is.na(scale), 0, scale)
     list(lower=estimate - width, upper=estimate + width, critical_value=critical)
 }

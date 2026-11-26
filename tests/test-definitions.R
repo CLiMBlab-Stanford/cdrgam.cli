@@ -228,4 +228,23 @@ expect_error(
     internal('.cdrgam_cli_test_term_rows')(fitted_model, native_definition$terms),
     'test term selector matched nothing: nope; available: '
 )
+# Renaming or removing a test is refused while it has results, and the
+# message gives the purge command; after purging, it is renamed.
+expect_error(
+    cli_main(c('def', 'mv', '-P', 'tests-project', '-t', 'shape', 'renamed')),
+    'cdrgam purge -P tests-project -t shape'
+)
+expect_error(
+    cli_main(c('def', 'rm', '-P', 'tests-project', '-t', 'shape')),
+    'cdrgam purge -P tests-project -t shape'
+)
+cdrgam_cli_purge(projects='tests-project', tests='shape', force=TRUE)
+# def edit stages the definitions it creates; this one was written directly.
+system2('git', c('-C', project, 'add', '--', 'definitions/tests/shape.yml'))
+stopifnot(
+    !dir.exists(file.path(project, 'results', 'tests', 'shape')),
+    identical(cli_main(c('def', 'mv', '-P', 'tests-project', '-t', 'shape', 'renamed')), 0L),
+    file.exists(file.path(project, 'definitions', 'tests', 'renamed.yml')),
+    !file.exists(test_path)
+)
 message('test definition checks ran')

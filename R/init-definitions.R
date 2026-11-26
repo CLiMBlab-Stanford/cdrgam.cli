@@ -428,7 +428,8 @@
                 )
             }, character(1))
         },
-        comparison=.cdrgam_cli_path(definitions, 'comparison', name)
+        comparison=.cdrgam_cli_path(definitions, 'comparison', name),
+        test=.cdrgam_cli_path(definitions, 'test', name)
     )
 }
 
@@ -438,7 +439,8 @@
         dataset=paste('--dataset', name),
         model=paste('-m', name),
         visualization=paste('-v', name),
-        comparison=paste('-c', name)
+        comparison=paste('-c', name),
+        test=paste('-t', name)
     )
     paste('cdrgam purge -P', project, selector)
 }

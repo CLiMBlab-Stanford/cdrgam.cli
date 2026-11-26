@@ -1,5 +1,13 @@
 # cdrgam.cli (development version)
 
+- New test definitions, under `definitions/tests/`, estimate and test
+  summary statistics of fitted effects: weighted contrasts, means, areas,
+  peak lags and values, and Wood's whole-functional tests. Effects use the
+  visualization value language and are evaluated on one joint coefficient
+  distribution. `cdrgam run -t NAME` writes `results/tests/NAME/tests.csv`.
+  `--test`/`-t` selects tests in `def`, `plan`, `run`, `stop`, `log`, and
+  `purge`. Tests need a `cdrgam` release with `effect_inference()`.
+
 - Simultaneous bands read the effect covariance from one core evaluation,
   instead of one evaluation per point. A line of `spr-main` with 40 band
   points takes about 3 seconds instead of 70. Their critical values, and

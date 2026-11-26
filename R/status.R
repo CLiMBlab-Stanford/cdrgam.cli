@@ -207,7 +207,7 @@
     if (length(project_ids)) {
         for (project in names(project_ids)) {
             stable <- Reduce(`|`, lapply(
-                c('fit', 'prediction', 'effect', 'visualization', 'comparison'),
+                c('fit', 'prediction', 'effect', 'visualization', 'comparison', 'test'),
                 function(kind) startsWith(
                     output$work_key,
                     paste0(kind, ':', project_ids[[project]], ':')
@@ -330,6 +330,9 @@ cdrgam_cli_status <- function(
         related_models <- .cdrgam_cli_null(
             definitions$comparisons[[name]]$models, character()
         )
+    } else if (identical(kind, 'test')) {
+        model <- definitions$tests[[name]]$model
+        related_models <- .cdrgam_cli_null(model, character())
     }
     list(
         path=path, project=row$project[[1L]], kind=kind, name=name,
@@ -388,7 +391,8 @@ cdrgam_cli_status <- function(
 }
 
 .cdrgam_cli_log_selected <- function(
-        record, definitions, models, predictions, visualizations, comparisons
+        record, definitions, models, predictions, visualizations, comparisons,
+        tests=NULL
 ) {
     if (length(models) && !.cdrgam_cli_log_selector_matches(
             record$models, models, 'model'
@@ -396,7 +400,8 @@ cdrgam_cli_status <- function(
         return(FALSE)
     }
     typed <- any(c(
-        length(predictions), length(visualizations), length(comparisons)
+        length(predictions), length(visualizations), length(comparisons),
+        length(tests)
     ) > 0L)
     if (!typed) return(TRUE)
     (identical(record$kind, 'prediction') && length(predictions) &&
@@ -411,7 +416,9 @@ cdrgam_cli_status <- function(
         (identical(record$kind, 'comparison') && length(comparisons) &&
             .cdrgam_cli_log_selector_matches(
                 record$name, comparisons, 'comparison'
-            ))
+            )) ||
+        (identical(record$kind, 'test') && length(tests) &&
+            .cdrgam_cli_log_selector_matches(record$name, tests, 'test'))
 }
 
 .cdrgam_cli_display_logs <- function(records, lines=NULL, pager=NULL) {
@@ -471,7 +478,7 @@ cdrgam_cli_status <- function(
 
 #' View managed work logs
 #'
-#' @param projects,models,predictions,visualizations,comparisons Log selectors.
+#' @param projects,models,predictions,visualizations,comparisons,tests Log selectors.
 #'   Omitted selector dimensions match all logged workloads.
 #' @param lines Optional maximum number of trailing lines from each log.
 #' @param worker Whether to show generic worker lifecycle logs instead of
@@ -485,7 +492,7 @@ cdrgam_cli_status <- function(
 cdrgam_cli_log <- function(
         projects=NULL, models=NULL, predictions=NULL, visualizations=NULL,
         comparisons=NULL, lines=NULL, cdrgam_root=NULL, pager=NULL, worker=FALSE,
-        running=FALSE
+        running=FALSE, tests=NULL
 ) {
     configuration <- .cdrgam_cli_site(cdrgam_root, create_root=TRUE)
     if (isTRUE(worker)) {
@@ -494,7 +501,7 @@ cdrgam_cli_log <- function(
         }
         if (any(c(
                 length(projects), length(models), length(predictions),
-                length(visualizations), length(comparisons)
+                length(visualizations), length(comparisons), length(tests)
             ) > 0L)) {
             .cdrgam_cli_abort('Worker logs cannot be combined with workload selectors')
         }
@@ -520,7 +527,8 @@ cdrgam_cli_log <- function(
         })
         candidates <- Filter(Negate(is.null), candidates)
         candidates <- Filter(function(record) .cdrgam_cli_log_selected(
-            record, definitions, models, predictions, visualizations, comparisons
+            record, definitions, models, predictions, visualizations, comparisons,
+            tests
         ), candidates)
         if (isTRUE(running)) {
             candidates <- Filter(function(record) {

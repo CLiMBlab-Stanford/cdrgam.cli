@@ -12,7 +12,7 @@
         parts <- c(results, 'models', name, 'predictions', dataset)
     } else if (identical(kind, 'visualization')) {
         parts <- c(results, 'visualizations', name)
-    } else if (kind %in% c('comparison', 'analysis')) {
+    } else if (kind %in% c('comparison', 'analysis', 'test')) {
         parts <- c(results, paste0(kind, 's'), name)
     } else if (identical(kind, 'work')) {
         parts <- c(root, '.cdrgam', 'work')
@@ -52,7 +52,7 @@
     name <- .cdrgam_cli_scalar_character(name, 'work log name')
     if (!(kind %in% c(
             'fit', 'prediction', 'effect', 'visualization',
-            'comparison', 'analysis'
+            'comparison', 'analysis', 'test'
         )) || basename(name) != name || name %in% c('.', '..')) {
         .cdrgam_cli_abort('Work log kind and name must be safe path components')
     }
@@ -249,7 +249,7 @@
         .cdrgam_cli_abort('Registry work-log fields have incompatible lengths')
     }
     allowed <- c(
-        'fit', 'prediction', 'effect', 'visualization', 'comparison', 'analysis'
+        'fit', 'prediction', 'effect', 'visualization', 'comparison', 'analysis', 'test'
     )
     valid <- kinds %in% allowed & basename(names) == names &
         !(names %in% c('.', '..'))

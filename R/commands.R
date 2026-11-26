@@ -31,7 +31,8 @@ cdrgam_cli_list <- function(projects=NULL, cdrgam_root=NULL) {
         list(
             datasets=names(definitions$datasets), models=names(definitions$models),
             visualizations=names(definitions$visualizations),
-            comparisons=names(definitions$comparisons)
+            comparisons=names(definitions$comparisons),
+            tests=names(definitions$tests)
         )
     })
     for (project in names(output)) {
@@ -48,14 +49,15 @@ cdrgam_cli_list <- function(projects=NULL, cdrgam_root=NULL) {
 
 .cdrgam_cli_combined_graph <- function(
         projects=NULL, models=NULL, predictions=NULL, visualizations=NULL,
-        comparisons=NULL, checkout=NULL, progress=NULL
+        comparisons=NULL, checkout=NULL, progress=NULL, tests=NULL
 ) {
     .cdrgam_cli_progress(progress, 'selecting projects')
     selected <- .cdrgam_cli_select_projects(projects, checkout)
     if (!length(selected)) .cdrgam_cli_abort('No configured projects matched')
     combined <- list(items=list(), targets=character(), definitions=list())
     available <- list(
-        models=character(), visualizations=character(), comparisons=character()
+        models=character(), visualizations=character(), comparisons=character(),
+        tests=character()
     )
     fingerprints <- NULL
     for (project in selected) {
@@ -70,6 +72,7 @@ cdrgam_cli_list <- function(projects=NULL, cdrgam_root=NULL) {
         available$comparisons <- c(
             available$comparisons, names(definitions$comparisons)
         )
+        available$tests <- c(available$tests, names(definitions$tests))
         if (is.null(fingerprints)) {
             fingerprints <- .cdrgam_cli_fingerprint_context(
                 definitions$site, progress
@@ -81,14 +84,15 @@ cdrgam_cli_list <- function(projects=NULL, cdrgam_root=NULL) {
         )
         graph <- .cdrgam_cli_resolve_graph(
             definitions, models, predictions, visualizations, comparisons,
-            fingerprints=fingerprints, strict_selectors=FALSE
+            fingerprints=fingerprints, strict_selectors=FALSE, tests=tests
         )
         combined$items <- c(combined$items, graph$items)
         combined$targets <- c(combined$targets, graph$targets)
         combined$definitions[[project]] <- definitions
     }
     requested <- list(
-        models=models, visualizations=visualizations, comparisons=comparisons
+        models=models, visualizations=visualizations, comparisons=comparisons,
+        tests=tests
     )
     for (field in names(requested)) if (length(requested[[field]])) {
         .cdrgam_cli_match_names(
@@ -142,7 +146,7 @@ cdrgam_cli_list <- function(projects=NULL, cdrgam_root=NULL) {
 
 #' Plan root work without executing it
 #'
-#' @param projects,models,predictions,visualizations,comparisons Selector
+#' @param projects,models,predictions,visualizations,comparisons,tests Selector
 #'   dimensions are conjunctive; repeated values within a dimension are
 #'   combined. With multiple projects, definition selectors match their union
 #'   rather than being required to match inside every project. Repeated
@@ -152,10 +156,11 @@ cdrgam_cli_list <- function(projects=NULL, cdrgam_root=NULL) {
 #' @export
 cdrgam_cli_plan <- function(
         projects=NULL, models=NULL, predictions=NULL, visualizations=NULL,
-        comparisons=NULL, cdrgam_root=NULL
+        comparisons=NULL, cdrgam_root=NULL, tests=NULL
 ) {
     graph <- .cdrgam_cli_combined_graph(
-        projects, models, predictions, visualizations, comparisons, cdrgam_root
+        projects, models, predictions, visualizations, comparisons, cdrgam_root,
+        tests=tests
     )
     output <- .cdrgam_cli_plan_table(graph)
     print(output, row.names=FALSE)
@@ -234,7 +239,8 @@ cdrgam_cli_plan <- function(
 }
 
 .cdrgam_cli_stop_keys <- function(
-        configuration, projects, models, predictions, visualizations, comparisons
+        configuration, projects, models, predictions, visualizations, comparisons,
+        tests=NULL
 ) {
     selected <- .cdrgam_cli_select_projects(projects, configuration$cdrgam_root)
     project_ids <- vapply(selected, function(project) {
@@ -274,13 +280,17 @@ cdrgam_cli_plan <- function(
                 related_models <- .cdrgam_cli_null(
                     definitions$comparisons[[name]]$models, character()
                 )
+            } else if (identical(kind, 'test')) {
+                model <- definitions$tests[[name]]$model
+                related_models <- .cdrgam_cli_null(model, character())
             }
             record <- list(
                 kind=kind, name=name, model=model, models=related_models,
                 dataset=dataset
             )
             if (.cdrgam_cli_log_selected(
-                    record, definitions, models, predictions, visualizations, comparisons
+                    record, definitions, models, predictions, visualizations, comparisons,
+                    tests
             )) {
                 keys <- c(keys, row$work_key[[1L]])
             }
@@ -339,13 +349,13 @@ cdrgam_cli_plan <- function(
 cdrgam_cli_run <- function(
         projects=NULL, models=NULL, predictions=NULL, visualizations=NULL,
         comparisons=NULL, dry_run=FALSE, cpus=NULL, partition=NULL, memory=NULL,
-        time=NULL, scheduler_time=NULL, qos=NULL, cdrgam_root=NULL
+        time=NULL, scheduler_time=NULL, qos=NULL, cdrgam_root=NULL, tests=NULL
 ) {
     progress <- .cdrgam_cli_progress_context()
     on.exit(.cdrgam_cli_progress_finish(progress), add=TRUE)
     graph <- .cdrgam_cli_combined_graph(
         projects, models, predictions, visualizations, comparisons, cdrgam_root,
-        progress
+        progress, tests=tests
     )
     if (isTRUE(dry_run)) {
         output <- .cdrgam_cli_plan_table(graph)
@@ -356,7 +366,7 @@ cdrgam_cli_run <- function(
     selector <- paste(c(
         paste0('project=', projects), paste0('model=', models),
         paste0('prediction=', predictions), paste0('visualization=', visualizations),
-        paste0('comparison=', comparisons)
+        paste0('comparison=', comparisons), paste0('test=', tests)
     ), collapse=';')
     resources <- list(
         cpus=cpus, partition=partition, memory=memory, time=time, qos=qos
@@ -410,7 +420,8 @@ cdrgam_cli_run <- function(
 #' @export
 cdrgam_cli_stop <- function(
         projects=NULL, models=NULL, predictions=NULL, visualizations=NULL,
-        comparisons=NULL, force=FALSE, scheduler=FALSE, cdrgam_root=NULL
+        comparisons=NULL, force=FALSE, scheduler=FALSE, cdrgam_root=NULL,
+        tests=NULL
 ) {
     configuration <- .cdrgam_cli_site(cdrgam_root, create_root=TRUE)
     if (!identical(configuration$scheduler, 'slurm')) {
@@ -419,7 +430,7 @@ cdrgam_cli_stop <- function(
     if (isTRUE(scheduler)) {
         if (any(c(
                 length(projects), length(models), length(predictions),
-                length(visualizations), length(comparisons)
+                length(visualizations), length(comparisons), length(tests)
         ) > 0L)) {
             .cdrgam_cli_abort('--scheduler cannot be combined with work selectors')
         }
@@ -428,7 +439,8 @@ cdrgam_cli_stop <- function(
         return(invisible(character()))
     }
     keys <- .cdrgam_cli_stop_keys(
-        configuration, projects, models, predictions, visualizations, comparisons
+        configuration, projects, models, predictions, visualizations, comparisons,
+        tests
     )
     if (!length(keys)) .cdrgam_cli_abort('No registered work items matched the selectors')
     job_ids <- .cdrgam_cli_registry_active_job_ids(configuration, keys)

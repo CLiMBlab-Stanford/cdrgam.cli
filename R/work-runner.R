@@ -276,6 +276,7 @@
             prediction=.cdrgam_cli_execute_prediction(item, stage),
             visualization=.cdrgam_cli_execute_visualization(item, stage),
             comparison=.cdrgam_cli_execute_comparison(item, stage),
+            test=.cdrgam_cli_execute_test(item, stage),
             .cdrgam_cli_abort(paste0('No executor for work kind ', item$kind))
         ), log_path),
         error=function(error) {

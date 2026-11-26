@@ -1,6 +1,6 @@
 #' Preview or remove generated artifacts
 #'
-#' @param projects,models,predictions,visualizations,comparisons,datasets
+#' @param projects,models,predictions,visualizations,comparisons,datasets,tests
 #'   Conjunctive selectors for generated results. Dataset selectors address
 #'   dataset artifacts directly.
 #' @param work,logs Include private attempts or logs.
@@ -22,11 +22,11 @@ cdrgam_cli_purge <- function(
         projects=NULL, models=NULL, predictions=NULL, visualizations=NULL,
         comparisons=NULL, datasets=NULL, work=FALSE, logs=FALSE,
         force=FALSE, cdrgam_root=NULL, confirm=NULL, pager=NULL,
-        use_pager=TRUE
+        use_pager=TRUE, tests=NULL
 ) {
     workload_selected <- any(c(
         length(models), length(predictions), length(visualizations),
-        length(comparisons), length(datasets)
+        length(comparisons), length(datasets), length(tests)
     ) > 0L)
     if (!workload_selected && !isTRUE(work) && !isTRUE(logs) &&
             (is.null(projects) || !length(projects))) {
@@ -56,7 +56,7 @@ cdrgam_cli_purge <- function(
         } else known$models
         typed <- any(c(
             length(predictions), length(visualizations), length(comparisons),
-            length(datasets)
+            length(datasets), length(tests)
         ) > 0L)
         project_targets <- character()
         if (length(models) && !typed) {
@@ -162,6 +162,23 @@ cdrgam_cli_purge <- function(
                 }, character(1)
             ))
         }
+        if (length(tests)) {
+            test_names <- .cdrgam_cli_match_names(tests, known$tests, 'test')
+            if (length(models)) {
+                test_names <- test_names[vapply(
+                    test_names,
+                    function(name) isTRUE(definitions$tests[[name]]$model %in% model_names),
+                    logical(1)
+                )]
+                if (!length(test_names)) {
+                    .cdrgam_cli_abort('Combined model and test selectors matched nothing')
+                }
+            }
+            project_targets <- c(project_targets, vapply(
+                test_names, function(name) .cdrgam_cli_path(definitions, 'test', name),
+                character(1)
+            ))
+        }
         if (length(datasets)) {
             dataset_names <- .cdrgam_cli_match_names(
                 datasets, known$datasets, 'dataset'
@@ -174,7 +191,7 @@ cdrgam_cli_purge <- function(
         }
         if (!workload_selected) {
             roots <- file.path(definitions$root, 'results', c(
-                'datasets', 'models', 'comparisons', 'analyses'
+                'datasets', 'models', 'comparisons', 'analyses', 'tests'
             ))
             project_targets <- c(project_targets, unlist(lapply(
                 roots[dir.exists(roots)], function(root) {
@@ -382,6 +399,9 @@ cdrgam_cli_purge <- function(
     for (name in known$comparisons) {
         add('comparison', name, list('comparison', name))
     }
+    for (name in known$tests) {
+        add('test', name, list('test', name))
+    }
     # Effect items are named `<model>_<request hash>`; their outputs live
     # under the model, so they are selected exactly when the model is.
     effect_names <- unique(c(
@@ -488,6 +508,10 @@ cdrgam_cli_purge <- function(
         comparisons=names_of(
             names(definitions$comparisons), children(results, 'comparisons'),
             prefixed('comparison'), logged('comparison'), registered[['comparison']]
+        ),
+        tests=names_of(
+            names(definitions$tests), children(results, 'tests'),
+            prefixed('test'), logged('test'), registered[['test']]
         ),
         datasets=names_of(names(definitions$datasets), children(results, 'datasets')),
         predictions=function(model_name) {

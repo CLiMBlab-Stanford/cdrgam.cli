@@ -97,6 +97,7 @@ projects/PROJECT/
     models/
     visualizations/
     comparisons/
+    tests/
     analyses/
   results/
     datasets/
@@ -111,6 +112,8 @@ projects/PROJECT/
           VISUALIZATION/
     comparisons/
       COMPARISON/
+    tests/
+      TEST/
     analyses/
       ANALYSIS/
   .cdrgam/
@@ -176,12 +179,12 @@ validation. Staging copies the source bytes directly, preserving comments and
 formatting unless the editor changes them. The source and target must belong
 to the same project and the target must not exist.
 
-The filename stem is the sole name of a dataset, model, visualization, or
-comparison definition. For example, `definitions/models/main.yml` defines the
+The filename stem is the sole name of a dataset, model, visualization,
+comparison, or test definition. For example, `definitions/models/main.yml` defines the
 model named `main`; subordinate definitions must omit redundant `dataset`,
-`model`, `visualization`, and `comparison` identity fields. A `model` field in
-a visualization remains an upstream model reference, rather than the
-visualization's own name.
+`model`, `visualization`, `comparison`, and `test` identity fields. A `model`
+field in a visualization or test remains an upstream model reference, rather
+than the definition's own name.
 
 `cdrgam def rm PROJECT --TYPE NAME` removes one subordinate definition. It
 does not remove site or project definitions, generated results, or referenced
@@ -195,7 +198,7 @@ removal because dependency safety cannot be established.
 
 Bare `cdrgam def ls` lists every available project in the root.
 `cdrgam def ls PROJECT` lists the project definition and every subordinate
-definition. Dataset, model, visualization, and comparison selectors accept
+definition. Dataset, model, visualization, comparison, and test selectors accept
 multiple names, `*` globs, and `re:`-prefixed Perl-compatible regular
 expressions. Regular expressions use substring matching unless explicitly
 anchored with `^` or `$`. Multiple selector types may be combined; the result
@@ -950,12 +953,78 @@ The evaluation selector is resolved independently through each model's dataset
 mapping. Every model must resolve it to the same dataset. Comparisons depend on
 the corresponding prediction artifacts.
 
+## Test definition
+
+A test definition estimates and tests summary statistics of fitted effects.
+It names effects and the estimands built from them:
+
+```yaml
+schema: 1
+model: main
+effects:
+  response:
+    terms: x
+    axes:
+      lag: {grid: fitted, n: 50}
+      predictors: {x: 1}
+  contrast:
+    terms: x
+    axes:
+      lag: {values: [0.2, 0.8]}
+      predictors: {x: 1}
+estimands:
+  early_minus_late: {weights: {contrast: [1, -1]}}
+  area: {area: response}
+  peak: {peak_lag: response}
+  trough_size: {peak_value: response, direction: neg}
+  whole: {wood: response}
+null: 0
+uncertainty: {level: 0.95, unconditional: false, draws: 2000, seed: 1}
+```
+
+Each effect is an effect query, as in a visualization `query`, that selects
+exactly one term. It accepts `terms`, `composition`, `grouping`, `groups`,
+`axes`, `reference`, and `n`, with the same value language. Pointwise peak
+lags (`peak-pointwise`) are not available; `peak` and `peak(TERM)` are.
+
+Each estimand uses one form:
+
+| Form | Value | Inference |
+| --- | --- | --- |
+| `weights` | Weights by effect name, one per effect row or one recycled weight | Wald |
+| `mean` | An effect name: the mean over its rows | Wald |
+| `area` | An effect name: the trapezoidal area over lag | Wald |
+| `peak_lag` | An effect name: the lag of its maximum, or minimum with `direction: neg` | Simulation |
+| `peak_value` | An effect name: the value at that lag | Simulation |
+| `wood` | An effect name: Wood's whole-functional test of its terms | Wood (2013) |
+
+`area`, `peak_lag`, and `peak_value` need an effect that varies over lag
+only, for one group. `null` gives the value of every estimand under the null
+hypothesis; an estimand's own `null` overrides it. A `wood` estimand tests that
+the effect's whole function is zero, as `summary()` tests smooth terms, and
+uses only the effect's `terms`, `composition`, `grouping`, and `groups`.
+
+All effects are evaluated on one joint distribution of their coefficients, so
+contrasts between effects that share coefficients have the right variance.
+Linear estimands use exact Wald inference; peak estimands apply the summary to
+`draws` coefficient draws and report quantile intervals and posterior tail
+areas, whose resolution is `1 / draws`. Simultaneous intervals and adjusted
+p-values cover the linear estimands together and the peak estimands together.
+
+`draws` and `seed` are execution settings. They are excluded from the
+resolved identity, so changing them alone does not make the test stale. The
+other fields, including `level`, are part of it. A test depends on its model's
+fit and writes `tests.csv` (one row per estimand, or per group for a `wood`
+estimand of a conditional effect), `effects-grid.csv` (the evaluated effects),
+and `request.yml` (the resolved effect requests and the joint Wald test of the
+linear estimands).
+
 ## Selection and dependencies
 
-`run` and `plan` accept project, model, prediction, visualization, and
-comparison selectors. Supplied dimensions are conjunctive. Repeating
+`run` and `plan` accept project, model, prediction, visualization, comparison,
+and test selectors. Supplied dimensions are conjunctive. Repeating
 `--prediction` requests multiple partitions of the same selected model.
-Project, model, visualization, and comparison selectors accept exact names,
+Project, model, visualization, comparison, and test selectors accept exact names,
 `*` globs, and `re:`-prefixed Perl-compatible regular expressions. Regexes use
 substring matching unless anchored. Prediction selectors remain exact because
 each value resolves first as a model-local partition and then as a dataset
@@ -965,6 +1034,7 @@ definition.
 cdrgam run -P brown -m main -p val -p test
 cdrgam run -P brown -m main -v main-effects
 cdrgam run -P brown -c alternatives
+cdrgam run -P brown -t effect-shape
 cdrgam run -P val -m 're:^natstor-(raw|log)-l[01]s[01]h[01]$'
 ```
 

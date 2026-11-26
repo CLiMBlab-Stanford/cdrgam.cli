@@ -168,6 +168,15 @@
     ))
 }
 
+# effect_inference() is new after cdrgam 0.4.0; test definitions need it.
+.cdrgam_cli_core_has_effect_inference <- function() {
+    'effect_inference' %in% getNamespaceExports('cdrgam')
+}
+
+.cdrgam_cli_core_effect_inference <- function(fit, ...) {
+    getExportedValue('cdrgam', 'effect_inference')(fit, ...)
+}
+
 .cdrgam_cli_core_simultaneous_critical_value <- function(...) {
     getExportedValue('cdrgam', 'simultaneous_critical_value')(...)
 }

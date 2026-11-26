@@ -5,6 +5,7 @@
         model='models',
         visualization='visualizations',
         comparison='comparisons',
+        test='tests',
         analysis='analyses'
     )
     file.path(root, 'definitions', directory, paste0(name, '.yml'))
@@ -71,6 +72,20 @@
             schema=1L,
             models=selected,
             methods='mse'
+        ))
+    }
+    if (identical(type, 'test')) {
+        models <- names(definitions$models)
+        return(list(
+            schema=1L,
+            model=if (length(models)) models[[1L]] else 'choose-model',
+            effects=list(response=list(
+                terms='choose-term', axes=list(lag=list(grid='fitted', n=50L))
+            )),
+            estimands=list(
+                whole=list(wood='response'), area=list(area='response'),
+                peak=list(peak_lag='response')
+            )
         ))
     }
     .cdrgam_cli_abort(paste0('No starter definition is available for ', type))
@@ -187,7 +202,8 @@
         ),
         model=.cdrgam_cli_validate_model(value, path),
         visualization=.cdrgam_cli_validate_visualization(value, path),
-        comparison=.cdrgam_cli_validate_comparison(value, path)
+        comparison=.cdrgam_cli_validate_comparison(value, path),
+        test=.cdrgam_cli_validate_test(value, path)
     )
     validated <- .cdrgam_cli_assign_definition_identity(
         validated, type, name, path
@@ -199,10 +215,10 @@
             path, ': model references missing datasets: ',
             paste(missing, collapse=', ')
         ))
-    } else if (identical(type, 'visualization') &&
+    } else if (type %in% c('visualization', 'test') &&
             !(validated$model %in% names(definitions$models))) {
         .cdrgam_cli_abort(paste0(
-            path, ': visualization references missing model ', validated$model
+            path, ': ', type, ' references missing model ', validated$model
         ))
     } else if (identical(type, 'comparison')) {
         missing <- setdiff(validated$models, names(definitions$models))
@@ -375,7 +391,11 @@
         comparisons <- names(Filter(function(comparison) {
             name %in% as.character(unlist(comparison$models, use.names=FALSE))
         }, comparisons))
+        tests <- names(Filter(function(test) {
+            name %in% as.character(unlist(test$model, use.names=FALSE))
+        }, .cdrgam_cli_reference_definitions(root, 'tests', paste('model', name))))
         return(c(
+            if (length(tests)) paste0('test ', tests) else character(),
             if (length(visualizations)) {
                 paste0('visualization ', visualizations)
             } else character(),
@@ -450,7 +470,7 @@
     directory <- switch(
         type,
         dataset='datasets', model='models', visualization='visualizations',
-        comparison='comparisons',
+        comparison='comparisons', test='tests',
         .cdrgam_cli_abort(paste0('Unsupported definition type: ', type))
     )
     patterns <- if (identical(operation, 'mv')) {
@@ -494,7 +514,7 @@
 .cdrgam_cli_list_definitions <- function(
         project, selectors=list(), checkout=NULL
 ) {
-    supported <- c('dataset', 'model', 'visualization', 'comparison')
+    supported <- c('dataset', 'model', 'visualization', 'comparison', 'test')
     unexpected <- setdiff(names(selectors), supported)
     if (length(unexpected)) {
         .cdrgam_cli_abort(paste0(
@@ -575,7 +595,7 @@
     }
     directories <- c(
         dataset='datasets', model='models',
-        visualization='visualizations', comparison='comparisons'
+        visualization='visualizations', comparison='comparisons', test='tests'
     )
     for (type in selected_types) {
         files <- .cdrgam_cli_definition_files(root, directories[[type]])
@@ -610,7 +630,7 @@
     directory <- switch(
         type,
         dataset='datasets', model='models',
-        visualization='visualizations', comparison='comparisons'
+        visualization='visualizations', comparison='comparisons', test='tests'
     )
     files <- .cdrgam_cli_definition_files(root, directory)
     available <- sub('\\.ya?ml$', '', basename(files))
@@ -947,7 +967,7 @@ cdrgam_cli_def <- function(
             anyNA(name) || any(!nzchar(name)))) {
         .cdrgam_cli_abort('Definition names must be a nonempty string list')
     }
-    supported <- c('dataset', 'model', 'visualization', 'comparison')
+    supported <- c('dataset', 'model', 'visualization', 'comparison', 'test')
     if (!is.null(type) && !(type %in% supported)) {
         .cdrgam_cli_abort(paste0(
             'Unsupported definition type: ', type, '. Expected: ',
@@ -1066,7 +1086,7 @@ cdrgam_cli_def <- function(
         directory <- switch(
             type,
             dataset='datasets', model='models',
-            visualization='visualizations', comparison='comparisons'
+            visualization='visualizations', comparison='comparisons', test='tests'
         )
         sub('\\.ya?ml$', '', basename(.cdrgam_cli_definition_files(root, directory)))
     } else character()

@@ -11,13 +11,14 @@ case "$scope" in
     identities) tests='tests/definition-identities.R' ;;
     viz) tests='tests/viz.R' ;;
     effects) tests='tests/effect-queries.R' ;;
+    tests) tests='tests/test-definitions.R' ;;
     integration) tests='tests/phase1.R' ;;
     render) tests='tests/render.R' ;;
     portability) tests='tests/paths.R tests/phase1.R'; policy_test=true ;;
-    all) tests='tests/architecture.R tests/cli.R tests/paths.R tests/registry.R tests/fingerprints.R tests/definition-identities.R tests/effect-queries.R tests/render.R tests/viz.R tests/phase1.R' ;;
+    all) tests='tests/architecture.R tests/cli.R tests/paths.R tests/registry.R tests/fingerprints.R tests/definition-identities.R tests/effect-queries.R tests/test-definitions.R tests/render.R tests/viz.R tests/phase1.R' ;;
     *)
         echo "Unknown test scope: $scope" >&2
-        echo 'Expected architecture, cli, paths, registry, fingerprints, identities, effects, render, viz, integration, portability, or all' >&2
+        echo 'Expected architecture, cli, paths, registry, fingerprints, identities, effects, tests, render, viz, integration, portability, or all' >&2
         exit 2
         ;;
 esac

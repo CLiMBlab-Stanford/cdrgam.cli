@@ -11,6 +11,7 @@
         model='model',
         visualization='visualization',
         comparison='comparison',
+        test='test',
         .cdrgam_cli_abort(paste0('Unknown definition type: ', type))
     )
 }
@@ -1174,7 +1175,8 @@
         type <- switch(
             directory,
             datasets='dataset', models='model',
-            visualizations='visualization', comparisons='comparison'
+            visualizations='visualization', comparisons='comparison',
+            tests='test'
         )
         values <- lapply(files, function(path) {
             value <- validator(.cdrgam_cli_read_yaml(path), path, ...)
@@ -1192,6 +1194,7 @@
     models <- read_kind('models', .cdrgam_cli_validate_model)
     visualizations <- read_kind('visualizations', .cdrgam_cli_validate_visualization)
     comparisons <- read_kind('comparisons', .cdrgam_cli_validate_comparison)
+    tests <- read_kind('tests', .cdrgam_cli_validate_test)
     model_datasets <- unique(unlist(lapply(models, function(value) {
         unlist(value$datasets, use.names=FALSE)
     })))
@@ -1217,9 +1220,18 @@
             'Comparisons reference missing models: ', paste(missing_models, collapse=', ')
         ))
     }
+    missing_test_models <- setdiff(
+        vapply(tests, `[[`, character(1), 'model'), names(models)
+    )
+    if (length(missing_test_models)) {
+        .cdrgam_cli_abort(paste0(
+            'Tests reference missing models: ',
+            paste(unique(missing_test_models), collapse=', ')
+        ))
+    }
     list(
         root=root, project=project, datasets=datasets, models=models,
-        visualizations=visualizations, comparisons=comparisons,
+        visualizations=visualizations, comparisons=comparisons, tests=tests,
         site=.cdrgam_cli_site(checkout)
     )
 }

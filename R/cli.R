@@ -53,6 +53,12 @@
             'Select comparison workloads by exact name, * glob, or re: regex.'
         ),
         short='-c', metavar='COMPARISON', arity=arity
+    ),
+    .cdrgam_cli_option(
+        'test', paste(
+            'Select test workloads by exact name, * glob, or re: regex.'
+        ),
+        short='-t', metavar='TEST', arity=arity
     )
 )
 
@@ -72,6 +78,10 @@
     .cdrgam_cli_option(
         'comparison', 'Select comparison definitions by file name.',
         short='-c', metavar='COMPARISON', arity=arity
+    ),
+    .cdrgam_cli_option(
+        'test', 'Select test definitions by file name.',
+        short='-t', metavar='TEST', arity=arity
     )
 )
 
@@ -805,7 +815,7 @@
     project <- if (!is.null(selected_project)) {
         selected_project
     } else positional_project
-    supported <- c('dataset', 'model', 'visualization', 'comparison')
+    supported <- c('dataset', 'model', 'visualization', 'comparison', 'test')
     selected <- intersect(names(flags), supported)
     if (identical(operation, 'ls')) {
         return(.cdrgam_cli_list_definitions(
@@ -841,7 +851,8 @@
 
 .cdrgam_cli_selector_arguments <- function(flags) list(
     projects=flags$project, models=flags$model, predictions=flags$prediction,
-    visualizations=flags$visualization, comparisons=flags$comparison
+    visualizations=flags$visualization, comparisons=flags$comparison,
+    tests=flags$test
 )
 
 #' Run the command-line dispatcher
@@ -980,7 +991,7 @@ cli_main <- function(args=commandArgs(trailingOnly=TRUE)) {
             projects=flags$project, models=flags$model,
             predictions=flags$prediction,
             visualizations=flags$visualization,
-            comparisons=flags$comparison, datasets=flags$dataset,
+            comparisons=flags$comparison, tests=flags$test, datasets=flags$dataset,
             work=isTRUE(flags$work), logs=isTRUE(flags$logs),
             force=isTRUE(flags$force)
         )

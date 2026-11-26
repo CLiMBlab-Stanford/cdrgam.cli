@@ -49,7 +49,7 @@
             ')'
         )
         id_clauses <- unlist(lapply(project_ids, function(id) vapply(
-            c('fit', 'prediction', 'effect', 'visualization', 'comparison'),
+            c('fit', 'prediction', 'effect', 'visualization', 'comparison', 'test'),
             function(kind) paste0(
                 'w.work_key LIKE ',
                 .cdrgam_cli_sql_quote(paste0(kind, ':', id, ':%'))

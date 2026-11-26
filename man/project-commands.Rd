@@ -20,15 +20,17 @@ cdrgam_cli_list(projects = NULL, cdrgam_root = NULL)
 
 cdrgam_cli_log(projects = NULL, models = NULL, predictions = NULL,
   visualizations = NULL, comparisons = NULL, lines = NULL,
-  cdrgam_root = NULL, pager = NULL, worker = FALSE, running = FALSE)
+  cdrgam_root = NULL, pager = NULL, worker = FALSE, running = FALSE,
+  tests = NULL)
 
 cdrgam_cli_plan(projects = NULL, models = NULL, predictions = NULL,
-  visualizations = NULL, comparisons = NULL, cdrgam_root = NULL)
+  visualizations = NULL, comparisons = NULL, cdrgam_root = NULL,
+  tests = NULL)
 
 cdrgam_cli_run(projects = NULL, models = NULL, predictions = NULL,
   visualizations = NULL, comparisons = NULL, dry_run = FALSE,
   cpus = NULL, partition = NULL, memory = NULL, time = NULL,
-  scheduler_time = NULL, qos = NULL, cdrgam_root = NULL)
+  scheduler_time = NULL, qos = NULL, cdrgam_root = NULL, tests = NULL)
 
 cdrgam_cli_status(projects = NULL, cdrgam_root = NULL, pager = NULL,
   use_pager = TRUE)
@@ -36,7 +38,7 @@ cdrgam_cli_status(projects = NULL, cdrgam_root = NULL, pager = NULL,
 cdrgam_cli_purge(projects = NULL, models = NULL, predictions = NULL,
   visualizations = NULL, comparisons = NULL, datasets = NULL,
   work = FALSE, logs = FALSE, force = FALSE, cdrgam_root = NULL,
-  confirm = NULL, pager = NULL, use_pager = TRUE)
+  confirm = NULL, pager = NULL, use_pager = TRUE, tests = NULL)
 
 find_cdrgam_project(project = NULL, cdrgam_root = NULL)
 }
@@ -45,7 +47,7 @@ find_cdrgam_project(project = NULL, cdrgam_root = NULL)
   \code{*} patterns; editing treats names literally. Renaming requires the
   existing and new names, in that order.}
   \item{type}{Optional definition type: \code{dataset}, \code{model},
-  \code{visualization}, or \code{comparison}.}
+  \code{visualization}, \code{comparison}, or \code{test}.}
   \item{source}{Optional source project or subordinate definition name. The
   source initializes the requested target without generated artifacts. A
   project copy includes its definitions and \file{code/}; subordinate
@@ -70,6 +72,7 @@ find_cdrgam_project(project = NULL, cdrgam_root = NULL)
   \item{predictions}{Prediction partition or dataset selectors.}
   \item{visualizations}{Visualization selectors.}
   \item{comparisons}{Comparison selectors.}
+  \item{tests}{Test selectors.}
   \item{datasets}{Dataset artifact selectors used by
   \code{cdrgam_cli_purge()}.}
   \item{cdrgam_root}{The configured CDR-GAM root. The launcher supplies it

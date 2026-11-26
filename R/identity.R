@@ -18,7 +18,9 @@
 }
 
 .cdrgam_cli_artifact_contract <- function(kind, definition=NULL, inputs=list()) {
-    kinds <- c('dataset', 'fit', 'prediction', 'effect', 'visualization', 'comparison')
+    kinds <- c(
+        'dataset', 'fit', 'prediction', 'effect', 'visualization', 'comparison', 'test'
+    )
     if (!(kind %in% kinds)) {
         .cdrgam_cli_abort(paste0('No artifact contract is defined for ', kind))
     }
@@ -306,6 +308,7 @@
             fits[!duplicated(vapply(fits, `[[`, character(1), 'key'))]
         } else c(list(item$fit), item$predictions),
         comparison=item$predictions,
+        test=list(item$fit),
         list()
     )
     for (child in children) graph <- .cdrgam_cli_add_item(graph, child)
@@ -329,10 +332,11 @@
 .cdrgam_cli_resolve_graph <- function(
         definitions, models=NULL, predictions=NULL, visualizations=NULL,
         comparisons=NULL, all=FALSE, fingerprints=NULL,
-        strict_selectors=TRUE
+        strict_selectors=TRUE, tests=NULL
 ) {
     explicit <- any(c(
-        length(models), length(predictions), length(visualizations), length(comparisons)
+        length(models), length(predictions), length(visualizations), length(comparisons),
+        length(tests)
     ) > 0L)
     if (!explicit) all <- TRUE
     model_names <- if (length(models)) {
@@ -342,7 +346,7 @@
     } else names(definitions$models)
     terminals <- list()
     if (isTRUE(all) || (length(models) && !length(predictions) &&
-            !length(visualizations) && !length(comparisons))) {
+            !length(visualizations) && !length(comparisons) && !length(tests))) {
         terminals <- c(terminals, lapply(model_names, function(name) {
             .cdrgam_cli_fit_item(definitions, name, fingerprints)
         }))
@@ -400,6 +404,22 @@
     }
     terminals <- c(terminals, lapply(comparison_names, function(name) {
         .cdrgam_cli_comparison_item(definitions, name, fingerprints)
+    }))
+    test_names <- if (isTRUE(all)) names(definitions$tests) else
+        if (length(tests)) .cdrgam_cli_match_names(
+            tests, names(definitions$tests), 'test', strict_selectors
+        ) else character()
+    if (length(models) && length(test_names)) {
+        test_names <- test_names[vapply(
+            definitions$tests[test_names],
+            function(value) value$model %in% model_names, logical(1)
+        )]
+        if (!length(test_names) && isTRUE(strict_selectors)) {
+            .cdrgam_cli_abort('Combined model and test selectors matched nothing')
+        }
+    }
+    terminals <- c(terminals, lapply(test_names, function(name) {
+        .cdrgam_cli_test_item(definitions, name, fingerprints)
     }))
     graph <- list()
     for (item in terminals) graph <- .cdrgam_cli_add_item(graph, item)

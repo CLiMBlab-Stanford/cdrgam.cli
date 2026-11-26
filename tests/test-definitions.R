@@ -247,4 +247,24 @@ stopifnot(
     file.exists(file.path(project, 'definitions', 'tests', 'renamed.yml')),
     !file.exists(test_path)
 )
+# run -t MODEL, with no test of that name, creates and runs a test of every
+# term of the model; plan and dry runs create nothing.
+model_test <- file.path(project, 'definitions', 'tests', 'main.yml')
+cdrgam_cli_run(projects='tests-project', tests='main', dry_run=TRUE) |>
+    tryCatch(error=function(error) NULL)
+stopifnot(!file.exists(model_test))
+cdrgam_cli_run(projects='tests-project', tests='main')
+created <- yaml::read_yaml(model_test)
+model_rows <- utils::read.csv(file.path(project, 'results', 'tests', 'main', 'tests.csv'))
+stopifnot(
+    identical(created$model, 'main'), identical(created$terms, '*'),
+    identical(model_rows$estimand, native$estimand),
+    any(grepl('definitions/tests/main.yml', system2(
+        'git', c('-C', project, 'diff', '--cached', '--name-only'), stdout=TRUE
+    ), fixed=TRUE))
+)
+expect_error(
+    cdrgam_cli_run(projects='tests-project', tests='no-such-model'),
+    'test selector matched nothing: no-such-model'
+)
 message('test definition checks ran')

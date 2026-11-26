@@ -353,6 +353,7 @@ cdrgam_cli_run <- function(
 ) {
     progress <- .cdrgam_cli_progress_context()
     on.exit(.cdrgam_cli_progress_finish(progress), add=TRUE)
+    if (!isTRUE(dry_run)) .cdrgam_cli_create_model_term_tests(projects, tests, cdrgam_root)
     graph <- .cdrgam_cli_combined_graph(
         projects, models, predictions, visualizations, comparisons, cdrgam_root,
         progress, tests=tests

@@ -5,7 +5,8 @@
   smooths and IRF terms alike, selected by label: `terms: ['s(time)']`.
   Parametric terms are included and get mgcv's per-term Wald tests.
   `cdrgam def terms [-m MODEL ...]` prints each fitted model's labels; fits
-  now also record `parametric-terms.csv`.
+  now also record `parametric-terms.csv`. `cdrgam run -t MODEL`, when no
+  test has that name, creates a test of every term of the model and runs it.
   `effects` and `estimands` estimate and test derived summary statistics of
   fitted effects: weighted contrasts, means, areas, peak lags and values, and
   Wood's whole-functional tests of compositions. Effects use the

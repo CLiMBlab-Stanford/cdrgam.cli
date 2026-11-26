@@ -974,6 +974,11 @@ artifact, as a YAML list to paste under `terms`. For a fit written before
 fits recorded `parametric-terms.csv`, it lists parametric coefficient names
 instead, which differ from the term label for a factor.
 
+`cdrgam run -t MODEL`, where `MODEL` names a model and no test, first creates
+`definitions/tests/MODEL.yml` with `model: MODEL` and `terms: ['*']`, stages
+it in the project repository, and runs it. Only literal names do this;
+patterns and `--dry-run` never create definitions.
+
 A parametric term gets the Wald test of its coefficients that mgcv's
 `summary.gam()` reports in `pTerms.table`: one degree of freedom for a numeric
 term and one per contrast for a factor, with an F reference when the scale is

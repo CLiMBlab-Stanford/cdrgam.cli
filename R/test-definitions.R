@@ -524,3 +524,36 @@
     }
     invisible(output)
 }
+
+# A literal test selector that names no test but names a model requests the
+# whole-term tests of that model: `cdrgam run -t MODEL` first creates
+# definitions/tests/MODEL.yml testing every term of MODEL, and stages it as
+# def edit would. Patterns, existing tests, and names that are not models are
+# left for the ordinary selector to resolve.
+.cdrgam_cli_create_model_term_tests <- function(projects, tests, checkout=NULL) {
+    literal <- tests[!grepl('[*]', tests) & !startsWith(tests, 're:')]
+    if (!length(literal)) return(invisible(character()))
+    created <- character()
+    for (project in .cdrgam_cli_select_projects(projects, checkout)) {
+        definitions <- .cdrgam_cli_read_definitions(
+            project, check_sources=FALSE, checkout=checkout
+        )
+        for (name in setdiff(intersect(literal, names(definitions$models)),
+                names(definitions$tests))) {
+            target <- .cdrgam_cli_definition_target(definitions$root, 'test', name)
+            if (file.exists(target)) next
+            dir.create(dirname(target), recursive=TRUE, showWarnings=FALSE)
+            .cdrgam_cli_write_yaml(
+                list(schema=1L, model=name, terms=list('*')), target
+            )
+            .cdrgam_cli_git_track_project(definitions$root)
+            .cdrgam_cli_git_stage(definitions$root, target)
+            message(
+                'Created test definition ', project, '/', name,
+                ' testing every term of model ', name, ' at ', target
+            )
+            created <- c(created, target)
+        }
+    }
+    invisible(created)
+}

@@ -11,7 +11,8 @@
   fitted effects: weighted contrasts, means, areas, peak lags and values, and
   Wood's whole-functional tests of compositions. Effects use the
   visualization value language and are evaluated on one joint coefficient
-  distribution. `cdrgam run -t NAME` writes `results/tests/NAME/tests.csv`.
+  distribution. `cdrgam run -t NAME` writes `results/tests/NAME/tests.tsv`, tab-separated for
+  `column -t -s $'\t'`.
   `--test`/`-t` selects tests in `def`, `plan`, `run`, `stop`, `log`, and
   `purge`. Estimands need a `cdrgam` release with `effect_inference()`.
 

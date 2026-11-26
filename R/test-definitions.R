@@ -183,12 +183,24 @@
     value
 }
 
+# Test tables are tab-separated and unquoted, so `column -t -s $'\t'` aligns
+# them. Term labels and estimand names contain no tabs.
+.cdrgam_cli_test_output_format <- 'tsv'
+
+.cdrgam_cli_write_tsv <- function(table, path) {
+    utils::write.table(
+        table, path, sep='\t', quote=FALSE, row.names=FALSE, na='NA'
+    )
+}
+
 # The draws and seed only set how the Monte Carlo parts are computed, so
-# they are execution settings and do not enter the identity.
+# they are execution settings and do not enter the identity. The output
+# format does, so artifacts written in an earlier format are rebuilt.
 .cdrgam_cli_test_identity <- function(value, inputs) {
     scientific <- .cdrgam_cli_scientific_definition(value)
     scientific$uncertainty$draws <- NULL
     scientific$uncertainty$seed <- NULL
+    inputs$output_format <- .cdrgam_cli_test_output_format
     resolved <- .cdrgam_cli_artifact_contract('test', scientific, inputs)
     list(identity=.cdrgam_cli_short_hash(resolved), resolved=resolved)
 }
@@ -363,7 +375,7 @@
         .cdrgam_cli_test_term_rows(fit, definition$terms)
     }
     if (is.null(definition$estimands)) {
-        utils::write.csv(term_rows, file.path(stage, 'tests.csv'), row.names=FALSE)
+        .cdrgam_cli_write_tsv(term_rows, file.path(stage, 'tests.tsv'))
         .cdrgam_cli_write_yaml(list(terms=term_rows$estimand),
             file.path(stage, 'request.yml'))
         return(list(kind='test', rows=nrow(term_rows)))
@@ -466,12 +478,12 @@
         drop=FALSE]
     if (!is.null(term_rows)) table <- .cdrgam_cli_bind_tables(list(term_rows, table))
     rownames(table) <- NULL
-    utils::write.csv(table, file.path(stage, 'tests.csv'), row.names=FALSE)
+    .cdrgam_cli_write_tsv(table, file.path(stage, 'tests.tsv'))
     if (length(grids)) {
         grid_table <- .cdrgam_cli_bind_tables(lapply(names(grids), function(name) {
             transform(as.data.frame(grids[[name]]), effect=name)
         }))
-        utils::write.csv(grid_table, file.path(stage, 'effects-grid.csv'), row.names=FALSE)
+        .cdrgam_cli_write_tsv(grid_table, file.path(stage, 'effects-grid.tsv'))
     }
     .cdrgam_cli_write_yaml(list(
         terms=if (!is.null(term_rows)) term_rows$estimand,

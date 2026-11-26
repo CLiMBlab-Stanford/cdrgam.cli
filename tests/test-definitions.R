@@ -116,7 +116,7 @@ unlink(file.path(project, 'definitions', 'models', 'unfitted.yml'))
 
 # Native terms get the tests of summary(), selected by label: parametric
 # terms from its pTerms.table, then smooth terms from its smooth table.
-native <- utils::read.csv(file.path(project, 'results', 'tests', 'native', 'tests.csv'))
+native <- utils::read.delim(file.path(project, 'results', 'tests', 'native', 'tests.tsv'))
 fitted_model <- readRDS(file.path(project, 'results', 'models', 'main', 'fit.rds'))
 native_summary <- summary(fitted_model)
 native_table <- native_summary$s.table
@@ -132,14 +132,15 @@ stopifnot(
     max(abs(smooth_rows$edf - native_table[, 'edf'])) < 1e-12
 )
 output <- file.path(project, 'results', 'tests', 'shape')
-table <- utils::read.csv(file.path(output, 'tests.csv'))
+table <- utils::read.delim(file.path(output, 'tests.tsv'))
 stopifnot(
     identical(table$estimand, c(
         'z', 'early_late', 'x_area', 'z_mean', 'x_peak', 'x_height', 'x_whole', 'z_whole'
     )),
     identical(table$form, c('term', 'weights', 'area', 'mean', 'peak_lag', 'peak_value',
         'wood', 'wood')),
-    file.exists(file.path(output, 'effects-grid.csv')),
+    file.exists(file.path(output, 'effects-grid.tsv')),
+    !file.exists(file.path(output, 'tests.csv')),
     file.exists(file.path(output, 'request.yml'))
 )
 
@@ -148,7 +149,7 @@ stopifnot(
 # which match the smooth table.
 fit <- readRDS(file.path(project, 'results', 'models', 'main', 'fit.rds'))
 row <- function(name) table[table$estimand == name, ]
-evaluated <- utils::read.csv(file.path(output, 'effects-grid.csv'))
+evaluated <- utils::read.delim(file.path(output, 'effects-grid.tsv'))
 grid <- sort(evaluated$lag[evaluated$effect == 'x_curve'])
 stopifnot(length(grid) == 31L)
 x_curve <- estimate_effect(fit, terms='x', points=data.frame(lag=grid, x=1))
@@ -255,7 +256,7 @@ cdrgam_cli_run(projects='tests-project', tests='main', dry_run=TRUE) |>
 stopifnot(!file.exists(model_test))
 cdrgam_cli_run(projects='tests-project', tests='main')
 created <- yaml::read_yaml(model_test)
-model_rows <- utils::read.csv(file.path(project, 'results', 'tests', 'main', 'tests.csv'))
+model_rows <- utils::read.delim(file.path(project, 'results', 'tests', 'main', 'tests.tsv'))
 stopifnot(
     identical(created$model, 'main'), identical(created$terms, '*'),
     identical(model_rows$estimand, native$estimand),

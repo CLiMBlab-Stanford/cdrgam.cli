@@ -1046,10 +1046,11 @@ p-values cover the linear estimands together and the peak estimands together.
 `draws` and `seed` are execution settings. They are excluded from the
 resolved identity, so changing them alone does not make the test stale. The
 other fields, including `level`, are part of it. A test depends on its model's
-fit and writes `tests.csv` (one row per selected term, then one per estimand,
-or per group for a `wood` estimand of a conditional effect), `effects-grid.csv` (the evaluated effects),
+fit and writes `tests.tsv` (one row per selected term, then one per estimand,
+or per group for a `wood` estimand of a conditional effect), `effects-grid.tsv` (the evaluated effects),
 and `request.yml` (the resolved effect requests and the joint Wald test of the
-linear estimands).
+linear estimands). Both tables are tab-separated and unquoted, so
+`column -t -s $'\t' tests.tsv` aligns them.
 
 ## Selection and dependencies
 

@@ -79,6 +79,7 @@
         return(list(
             schema=1L,
             model=if (length(models)) models[[1L]] else 'choose-model',
+            terms=list('*'),
             effects=list(response=list(
                 terms='choose-term', axes=list(lag=list(grid='fitted', n=50L))
             )),

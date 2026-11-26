@@ -140,6 +140,11 @@
     cdrgam::estimate_effect(fit, ...)
 }
 
+# The fit's summary, whose smooth table holds the whole-term tests.
+.cdrgam_cli_core_summary <- function(fit) {
+    summary(fit)
+}
+
 .cdrgam_cli_core_test_effect <- function(fit, ...) {
     cdrgam::test_effect(fit, ...)
 }

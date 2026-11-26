@@ -231,6 +231,31 @@
                     'cdrgam def val -P brown --model main alternative --deep'
                 ),
                 handler='def-val'
+            ),
+            terms=.cdrgam_cli_command(
+                'terms', 'List the term labels of fitted models.',
+                description=paste(
+                    'Print the smooth-term labels of each selected model, as',
+                    'test definitions accept them under terms, from its latest',
+                    'fit artifact. Without --model, every model is listed. Values',
+                    'accept exact names, * globs, and re: regular expressions.'
+                ),
+                options=list(
+                    project_selector,
+                    .cdrgam_cli_option(
+                        'model', 'Select model definitions by file name.',
+                        short='-m', metavar='MODEL', arity='zero-or-more'
+                    )
+                ),
+                arguments=list(.cdrgam_cli_argument(
+                    'PROJECT', 'Project whose models should be listed.',
+                    required=FALSE
+                )),
+                examples=c(
+                    'cdrgam def terms -P rep',
+                    "cdrgam def terms -P rep -m 'spr-*'"
+                ),
+                handler='def-terms'
             )
         )
     )
@@ -821,6 +846,9 @@
         return(.cdrgam_cli_list_definitions(
             project, flags[selected]
         ))
+    }
+    if (identical(operation, 'terms')) {
+        return(.cdrgam_cli_model_terms(project, flags$model))
     }
     if (identical(operation, 'init')) {
         if (length(selected)) {

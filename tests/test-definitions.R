@@ -48,8 +48,10 @@ yaml::write_yaml(list(
 dir.create(file.path(project, 'definitions', 'tests'))
 test_path <- file.path(project, 'definitions', 'tests', 'shape.yml')
 lags <- c(0.1, 0.5)
+native_path <- file.path(project, 'definitions', 'tests', 'native.yml')
+yaml::write_yaml(list(schema=1L, model='main', terms=list('*')), native_path)
 yaml::write_yaml(list(
-    schema=1L, model='main',
+    schema=1L, model='main', terms=list('z'),
     effects=list(
         x_curve=list(terms='x', axes=list(lag=list(grid='fitted', n=31L),
             predictors=list(x=1))),
@@ -81,14 +83,51 @@ stopifnot(
     identical(basename(plan$path[plan$kind == 'test']), 'shape')
 )
 
-cdrgam_cli_run(projects='tests-project', tests='shape')
+cdrgam_cli_run(projects='tests-project', tests=c('shape', 'native'))
+
+# def terms prints each model's term labels as a YAML list, from its fit
+# artifact, and reports models that have not been fitted.
+yaml::write_yaml(list(
+    schema=1L, datasets=list(train='training'), window=c(0, 1.5), k_l=5L,
+    formula='response ~ irf(x)',
+    fit=list(family='gaussian', link='identity', method='REML', backend='mgcv',
+        engine='gam')
+), file.path(project, 'definitions', 'models', 'unfitted.yml'))
+listing <- capture.output(stopifnot(identical(
+    cli_main(c('def', 'terms', '-P', 'tests-project')), 0L
+)))
+selected <- capture.output(stopifnot(identical(
+    cli_main(c('def', 'terms', '-P', 'tests-project', '-m', 'main')), 0L
+)))
+fitted_terms <- utils::read.csv(file.path(
+    project, 'results', 'models', 'main', 'smooths.csv'
+))$term
+stopifnot(
+    all(c('x', 'z') %in% fitted_terms),
+    identical(selected, c('main:', paste0("  - '", fitted_terms, "'"))),
+    identical(listing, c(selected, 'unfitted: []  # not fitted')),
+    identical(yaml::yaml.load(paste(selected, collapse='\n'))$main, fitted_terms)
+)
+unlink(file.path(project, 'definitions', 'models', 'unfitted.yml'))
+
+# Native terms get the whole-function tests of summary(), selected by label.
+native <- utils::read.csv(file.path(project, 'results', 'tests', 'native', 'tests.csv'))
+fitted_model <- readRDS(file.path(project, 'results', 'models', 'main', 'fit.rds'))
+native_table <- summary(fitted_model)$s.table
+stopifnot(
+    identical(native$estimand, rownames(native_table)),
+    all(native$form == 'term'),
+    max(abs(native$p_value - native_table[, 'p-value'])) < 1e-12,
+    max(abs(native$df - native_table[, 'Ref.df'])) < 1e-12,
+    max(abs(native$edf - native_table[, 'edf'])) < 1e-12
+)
 output <- file.path(project, 'results', 'tests', 'shape')
 table <- utils::read.csv(file.path(output, 'tests.csv'))
 stopifnot(
     identical(table$estimand, c(
-        'early_late', 'x_area', 'z_mean', 'x_peak', 'x_height', 'x_whole', 'z_whole'
+        'z', 'early_late', 'x_area', 'z_mean', 'x_peak', 'x_height', 'x_whole', 'z_whole'
     )),
-    identical(table$form, c('weights', 'area', 'mean', 'peak_lag', 'peak_value',
+    identical(table$form, c('term', 'weights', 'area', 'mean', 'peak_lag', 'peak_value',
         'wood', 'wood')),
     file.exists(file.path(output, 'effects-grid.csv')),
     file.exists(file.path(output, 'request.yml'))
@@ -167,4 +206,16 @@ invalid(function(value) {
     value$test <- 'shape'
     value
 }, 'test is derived from the file name')
+invalid(function(value) {
+    value$estimands <- NULL
+    value
+}, 'effects and estimands must be given together')
+invalid(function(value) {
+    list(schema=1L, model='main')
+}, 'give terms, or effects and estimands')
+native_definition <- validate(list(schema=1L, model='main', terms=list('nope')), 'n.yml')
+expect_error(
+    internal('.cdrgam_cli_test_term_rows')(fitted_model, native_definition$terms),
+    'test term selector matched nothing: nope; available: '
+)
 message('test definition checks ran')

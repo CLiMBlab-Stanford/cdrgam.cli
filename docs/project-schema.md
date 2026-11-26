@@ -955,8 +955,29 @@ the corresponding prediction artifacts.
 
 ## Test definition
 
-A test definition estimates and tests summary statistics of fitted effects.
-It names effects and the estimands built from them:
+A test definition tests native model terms and estimates and tests summary
+statistics of fitted effects. `terms` requests whole-function tests of terms
+of the model, both mgcv smooths and IRF terms:
+
+```yaml
+schema: 1
+model: main
+terms: ['s(time)', 'unigramsurp:repetition_index', 're:\|subject$']
+```
+
+Terms are selected by their labels in the smooth table of `summary()`, by exact
+label, `*` glob, or `re:` regular expression; `['*']` selects every smooth
+term. An unmatched selector fails and lists the available labels.
+`cdrgam def terms -P PROJECT [-m MODEL ...]` prints the labels of each
+selected model, or of every model, from its latest fit artifact, as a YAML
+list to paste under `terms`. Each term
+gets the test that `summary()` reports for it: Wood's (2013) test, or Wood's
+(2013b) random-effect test for fully penalized terms, with the same `edf`,
+reference degrees of freedom (`df`), statistic, and p-value. The `method`
+column records which test was used, or why none could be computed.
+
+Derived statistics use `effects` and `estimands`, which must be given
+together. A definition may combine them with `terms`:
 
 ```yaml
 schema: 1
@@ -1014,8 +1035,8 @@ p-values cover the linear estimands together and the peak estimands together.
 `draws` and `seed` are execution settings. They are excluded from the
 resolved identity, so changing them alone does not make the test stale. The
 other fields, including `level`, are part of it. A test depends on its model's
-fit and writes `tests.csv` (one row per estimand, or per group for a `wood`
-estimand of a conditional effect), `effects-grid.csv` (the evaluated effects),
+fit and writes `tests.csv` (one row per selected term, then one per estimand,
+or per group for a `wood` estimand of a conditional effect), `effects-grid.csv` (the evaluated effects),
 and `request.yml` (the resolved effect requests and the joint Wald test of the
 linear estimands).
 

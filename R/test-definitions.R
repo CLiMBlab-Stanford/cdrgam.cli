@@ -1,5 +1,7 @@
-# Test definitions: statistical tests and interval estimates of summary
-# statistics of fitted effects. A definition names effects, each a
+# Test definitions: whole-function tests of native model terms, and
+# statistical tests and interval estimates of summary statistics of fitted
+# effects. `terms` selects native terms by their summary() labels. For
+# derived statistics, a definition names effects, each a
 # single-term effect query in the visualization value language, and
 # estimands built from them in a fixed vocabulary. The core evaluates every
 # effect on one joint distribution of their coefficients, through its
@@ -104,11 +106,28 @@
     .cdrgam_cli_validate_schema(value, path)
     .cdrgam_cli_reject_definition_identity(value, 'test', path)
     .cdrgam_cli_check_keys(
-        value, c('schema', 'model', 'effects', 'estimands', 'null', 'uncertainty'),
-        path, c('schema', 'model', 'effects', 'estimands')
+        value,
+        c('schema', 'model', 'terms', 'effects', 'estimands', 'null', 'uncertainty'),
+        path, c('schema', 'model')
     )
     value$model <- .cdrgam_cli_name(value$model, paste0(path, ': model'))
-    for (name in c('effects', 'estimands')) {
+    if (!is.null(value$terms)) {
+        terms <- unlist(value$terms, use.names=FALSE)
+        if (!is.character(terms) || !length(terms) || any(!nzchar(terms)) ||
+                !is.null(names(value$terms))) {
+            .cdrgam_cli_abort(paste0(path, ': terms must be a nonempty list of term labels'))
+        }
+        value$terms <- as.character(terms)
+    }
+    if (is.null(value$effects) != is.null(value$estimands)) {
+        .cdrgam_cli_abort(paste0(
+            path, ': effects and estimands must be given together'
+        ))
+    }
+    if (is.null(value$terms) && is.null(value$estimands)) {
+        .cdrgam_cli_abort(paste0(path, ': give terms, or effects and estimands'))
+    }
+    for (name in intersect(c('effects', 'estimands'), names(value))) {
         entries <- value[[name]]
         if (!is.list(entries) || !length(entries) || is.null(names(entries)) ||
                 anyDuplicated(names(entries))) {
@@ -261,7 +280,7 @@
 }
 
 .cdrgam_cli_test_columns <- c(
-    'estimand', 'form', 'effects', 'estimate', 'std_error', 'lower', 'upper',
+    'estimand', 'form', 'effects', 'edf', 'estimate', 'std_error', 'lower', 'upper',
     'null', 'statistic', 'df', 'residual_df', 'p_value', 'simultaneous_lower',
     'simultaneous_upper', 'adjusted_p_value', 'method'
 )
@@ -272,19 +291,64 @@
     output$effects <- vapply(estimands[output$estimand], function(estimand) {
         paste(.cdrgam_cli_null(names(estimand$weights), estimand$effect), collapse=',')
     }, character(1))
+    output$edf <- NA_real_
     output$df <- NA_real_
     output$residual_df <- NA_real_
     output$method <- paste0(output$method, ' (', family, ')')
     output[.cdrgam_cli_test_columns]
 }
 
-.cdrgam_cli_execute_test <- function(item, stage) {
-    if (!.cdrgam_cli_core_has_effect_inference()) .cdrgam_cli_abort(paste(
-        'Test definitions need a cdrgam release with effect_inference();',
-        'update cdrgam'
+# Whole-function tests of native terms: the rows of the fit's smooth table
+# selected by `patterns`, which match summary() labels exactly, by * glob, or
+# by re: regular expression.
+.cdrgam_cli_test_term_rows <- function(fit, patterns) {
+    summary <- .cdrgam_cli_core_summary(fit)
+    table <- summary$s.table
+    if (is.null(table) || !nrow(table)) .cdrgam_cli_abort(
+        'The fitted model has no smooth terms to test'
+    )
+    labels <- .cdrgam_cli_match_names(patterns, rownames(table), 'test term')
+    status <- attr(table, 'test.status')
+    if (is.null(status)) {
+        status <- stats::setNames(ifelse(
+            is.finite(table[, 'p-value']), 'mgcv summary.gam', 'not computed by mgcv'
+        ), rownames(table))
+    }
+    chi_square <- 'Chi.sq' %in% colnames(table)
+    output <- as.data.frame(stats::setNames(
+        rep(list(rep.int(NA, length(labels))), length(.cdrgam_cli_test_columns)),
+        .cdrgam_cli_test_columns
     ))
+    output$estimand <- labels
+    output$form <- 'term'
+    output$edf <- table[labels, 'edf']
+    output$statistic <- table[labels, if (chi_square) 'Chi.sq' else 'F']
+    output$df <- table[labels, 'Ref.df']
+    output$residual_df <- if (chi_square) NA_real_ else
+        .cdrgam_cli_null(summary$residual.df, NA_real_)
+    output$p_value <- table[labels, 'p-value']
+    output$method <- unname(status[labels])
+    output
+}
+
+.cdrgam_cli_execute_test <- function(item, stage) {
     definition <- item$definition
+    if (!is.null(definition$estimands) && !.cdrgam_cli_core_has_effect_inference()) {
+        .cdrgam_cli_abort(paste(
+            'Test estimands need a cdrgam release with effect_inference();',
+            'update cdrgam'
+        ))
+    }
     fit <- readRDS(file.path(item$fit$output, 'fit.rds'))
+    term_rows <- if (!is.null(definition$terms)) {
+        .cdrgam_cli_test_term_rows(fit, definition$terms)
+    }
+    if (is.null(definition$estimands)) {
+        utils::write.csv(term_rows, file.path(stage, 'tests.csv'), row.names=FALSE)
+        .cdrgam_cli_write_yaml(list(terms=term_rows$estimand),
+            file.path(stage, 'request.yml'))
+        return(list(kind='test', rows=nrow(term_rows)))
+    }
     training <- .cdrgam_cli_effect_training(fit, item$fit$dataset)
     peaks <- new.env()
     peaks$.catalog <- training$catalog
@@ -370,6 +434,7 @@
         } else label
         output$form <- 'wood'
         output$effects <- estimands[[label]]$effect
+        output$edf <- NA_real_
         output$statistic <- tested$statistic
         output$df <- tested$df
         output$residual_df <- tested$residual_df
@@ -380,6 +445,7 @@
     table <- .cdrgam_cli_bind_tables(rows)
     table <- table[order(match(sub('\\[.*$', '', table$estimand), names(estimands))), ,
         drop=FALSE]
+    if (!is.null(term_rows)) table <- .cdrgam_cli_bind_tables(list(term_rows, table))
     rownames(table) <- NULL
     utils::write.csv(table, file.path(stage, 'tests.csv'), row.names=FALSE)
     if (length(grids)) {
@@ -389,6 +455,7 @@
         utils::write.csv(grid_table, file.path(stage, 'effects-grid.csv'), row.names=FALSE)
     }
     .cdrgam_cli_write_yaml(list(
+        terms=if (!is.null(term_rows)) term_rows$estimand,
         effects=specs,
         joint_linear_test=if (length(linear)) joint else NULL,
         adjustment=paste(
@@ -397,4 +464,33 @@
         )
     ), file.path(stage, 'request.yml'))
     list(kind='test', rows=nrow(table))
+}
+
+# The smooth-term labels of each selected model, read from the smooths.csv
+# of its latest fit artifact, printed as YAML lists that can be pasted under
+# a test definition's terms. Models without a fit artifact are reported as
+# such. The artifact is read as it is, even if the model definition has
+# changed since it was fitted.
+.cdrgam_cli_model_terms <- function(project=NULL, models=NULL, checkout=NULL) {
+    definitions <- .cdrgam_cli_read_definitions(
+        project, check_sources=FALSE, checkout=checkout
+    )
+    if (!length(definitions$models)) .cdrgam_cli_abort('The project has no models')
+    names <- .cdrgam_cli_match_names(models, names(definitions$models), 'model')
+    output <- lapply(stats::setNames(names, names), function(name) {
+        path <- file.path(.cdrgam_cli_path(definitions, 'model', name), 'smooths.csv')
+        if (!file.exists(path)) return(NULL)
+        as.character(utils::read.csv(path, check.names=FALSE)$term)
+    })
+    for (name in names) {
+        terms <- output[[name]]
+        if (is.null(terms)) {
+            cat(name, ': []  # not fitted\n', sep='')
+        } else if (!length(terms)) {
+            cat(name, ': []  # no smooth terms\n', sep='')
+        } else {
+            cat(name, ':\n', paste0("  - '", gsub("'", "''", terms), "'\n"), sep='')
+        }
+    }
+    invisible(output)
 }

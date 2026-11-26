@@ -27,6 +27,9 @@ simulation <- simulate_cdr(
     n_impulses=250, n_responses=250, duration=25, window=1.5, noise_sd=0.5,
     seed=21
 )
+set.seed(22)
+simulation$responses$g <- factor(sample(c('a', 'b', 'c'), nrow(simulation$responses), TRUE))
+simulation$responses$w <- stats::rnorm(nrow(simulation$responses))
 dir.create(file.path(project, 'data'))
 saveRDS(simulation$impulses, file.path(project, 'data', 'impulses.rds'))
 saveRDS(simulation$responses, file.path(project, 'data', 'responses.rds'))
@@ -40,7 +43,7 @@ yaml::write_yaml(list(
 ), file.path(project, 'definitions', 'datasets', 'training.yml'))
 yaml::write_yaml(list(
     schema=1L, datasets=list(train='training'), window=c(0, 1.5), k_l=5L,
-    formula='response ~ irf(x) + irf(z)',
+    formula='response ~ g + w + irf(x) + irf(z)',
     fit=list(family='gaussian', link='identity', method='REML', backend='mgcv',
         engine='gam')
 ), file.path(project, 'definitions', 'models', 'main.yml'))
@@ -99,27 +102,34 @@ listing <- capture.output(stopifnot(identical(
 selected <- capture.output(stopifnot(identical(
     cli_main(c('def', 'terms', '-P', 'tests-project', '-m', 'main')), 0L
 )))
-fitted_terms <- utils::read.csv(file.path(
+fitted_terms <- c('g', 'w', utils::read.csv(file.path(
     project, 'results', 'models', 'main', 'smooths.csv'
-))$term
+))$term)
 stopifnot(
     all(c('x', 'z') %in% fitted_terms),
+    file.exists(file.path(project, 'results', 'models', 'main', 'parametric-terms.csv')),
     identical(selected, c('main:', paste0("  - '", fitted_terms, "'"))),
     identical(listing, c(selected, 'unfitted: []  # not fitted')),
     identical(yaml::yaml.load(paste(selected, collapse='\n'))$main, fitted_terms)
 )
 unlink(file.path(project, 'definitions', 'models', 'unfitted.yml'))
 
-# Native terms get the whole-function tests of summary(), selected by label.
+# Native terms get the tests of summary(), selected by label: parametric
+# terms from its pTerms.table, then smooth terms from its smooth table.
 native <- utils::read.csv(file.path(project, 'results', 'tests', 'native', 'tests.csv'))
 fitted_model <- readRDS(file.path(project, 'results', 'models', 'main', 'fit.rds'))
-native_table <- summary(fitted_model)$s.table
+native_summary <- summary(fitted_model)
+native_table <- native_summary$s.table
+parametric_table <- native_summary$pTerms.table
+smooth_rows <- native[-(1:2), ]
 stopifnot(
-    identical(native$estimand, rownames(native_table)),
+    identical(native$estimand, c('g', 'w', rownames(native_table))),
     all(native$form == 'term'),
-    max(abs(native$p_value - native_table[, 'p-value'])) < 1e-12,
-    max(abs(native$df - native_table[, 'Ref.df'])) < 1e-12,
-    max(abs(native$edf - native_table[, 'edf'])) < 1e-12
+    identical(native$df[1:2], c(2, 1)),
+    max(abs(native$p_value[1:2] - parametric_table[, 'p-value'])) < 1e-12,
+    max(abs(smooth_rows$p_value - native_table[, 'p-value'])) < 1e-12,
+    max(abs(smooth_rows$df - native_table[, 'Ref.df'])) < 1e-12,
+    max(abs(smooth_rows$edf - native_table[, 'edf'])) < 1e-12
 )
 output <- file.path(project, 'results', 'tests', 'shape')
 table <- utils::read.csv(file.path(output, 'tests.csv'))

@@ -3,7 +3,9 @@
 - New test definitions, under `definitions/tests/`. `terms` requests the
   whole-function tests that `summary()` reports for native model terms, mgcv
   smooths and IRF terms alike, selected by label: `terms: ['s(time)']`.
-  `cdrgam def terms [-m MODEL ...]` prints each fitted model's labels.
+  Parametric terms are included and get mgcv's per-term Wald tests.
+  `cdrgam def terms [-m MODEL ...]` prints each fitted model's labels; fits
+  now also record `parametric-terms.csv`.
   `effects` and `estimands` estimate and test derived summary statistics of
   fitted effects: weighted contrasts, means, areas, peak lags and values, and
   Wood's whole-functional tests of compositions. Effects use the

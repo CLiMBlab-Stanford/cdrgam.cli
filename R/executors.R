@@ -52,6 +52,10 @@
     utils::write.csv(
         report$smooths, file.path(stage, 'smooths.csv'), row.names=FALSE
     )
+    if (!is.null(report$parametric_terms)) utils::write.csv(
+        report$parametric_terms, file.path(stage, 'parametric-terms.csv'),
+        row.names=FALSE
+    )
     .cdrgam_cli_write_yaml(
         report$diagnostics, file.path(stage, 'diagnostics.yml')
     )

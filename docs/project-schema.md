@@ -956,8 +956,8 @@ the corresponding prediction artifacts.
 ## Test definition
 
 A test definition tests native model terms and estimates and tests summary
-statistics of fitted effects. `terms` requests whole-function tests of terms
-of the model, both mgcv smooths and IRF terms:
+statistics of fitted effects. `terms` requests tests of terms of the model:
+parametric terms, mgcv smooths, and IRF terms:
 
 ```yaml
 schema: 1
@@ -965,13 +965,19 @@ model: main
 terms: ['s(time)', 'unigramsurp:repetition_index', 're:\|subject$']
 ```
 
-Terms are selected by their labels in the smooth table of `summary()`, by exact
-label, `*` glob, or `re:` regular expression; `['*']` selects every smooth
-term. An unmatched selector fails and lists the available labels.
-`cdrgam def terms -P PROJECT [-m MODEL ...]` prints the labels of each
-selected model, or of every model, from its latest fit artifact, as a YAML
-list to paste under `terms`. Each term
-gets the test that `summary()` reports for it: Wood's (2013) test, or Wood's
+Terms are selected by their `summary()` labels, from its parametric-term and
+smooth tables, by exact label, `*` glob, or `re:` regular expression; `['*']`
+selects every term except the intercept. An unmatched selector fails and lists
+the available labels. `cdrgam def terms -P PROJECT [-m MODEL ...]` prints the
+labels of each selected model, or of every model, from its latest fit
+artifact, as a YAML list to paste under `terms`. For a fit written before
+fits recorded `parametric-terms.csv`, it lists parametric coefficient names
+instead, which differ from the term label for a factor.
+
+A parametric term gets the Wald test of its coefficients that mgcv's
+`summary.gam()` reports in `pTerms.table`: one degree of freedom for a numeric
+term and one per contrast for a factor, with an F reference when the scale is
+estimated. Each smooth term gets the test that `summary()` reports for it: Wood's (2013) test, or Wood's
 (2013b) random-effect test for fully penalized terms, with the same `edf`,
 reference degrees of freedom (`df`), statistic, and p-value. The `method`
 column records which test was used, or why none could be computed.

@@ -298,36 +298,55 @@
     output[.cdrgam_cli_test_columns]
 }
 
-# Whole-function tests of native terms: the rows of the fit's smooth table
-# selected by `patterns`, which match summary() labels exactly, by * glob, or
-# by re: regular expression.
+# Tests of native terms: parametric terms, from the fit summary's
+# pTerms.table, then smooth terms, from its smooth table, selected by their
+# summary() labels exactly, by * glob, or by re: regular expression.
 .cdrgam_cli_test_term_rows <- function(fit, patterns) {
     summary <- .cdrgam_cli_core_summary(fit)
-    table <- summary$s.table
-    if (is.null(table) || !nrow(table)) .cdrgam_cli_abort(
-        'The fitted model has no smooth terms to test'
-    )
-    labels <- .cdrgam_cli_match_names(patterns, rownames(table), 'test term')
-    status <- attr(table, 'test.status')
-    if (is.null(status)) {
-        status <- stats::setNames(ifelse(
-            is.finite(table[, 'p-value']), 'mgcv summary.gam', 'not computed by mgcv'
-        ), rownames(table))
-    }
-    chi_square <- 'Chi.sq' %in% colnames(table)
-    output <- as.data.frame(stats::setNames(
-        rep(list(rep.int(NA, length(labels))), length(.cdrgam_cli_test_columns)),
+    empty <- function(count) as.data.frame(stats::setNames(
+        rep(list(rep.int(NA, count)), length(.cdrgam_cli_test_columns)),
         .cdrgam_cli_test_columns
     ))
-    output$estimand <- labels
-    output$form <- 'term'
-    output$edf <- table[labels, 'edf']
-    output$statistic <- table[labels, if (chi_square) 'Chi.sq' else 'F']
-    output$df <- table[labels, 'Ref.df']
-    output$residual_df <- if (chi_square) NA_real_ else
-        .cdrgam_cli_null(summary$residual.df, NA_real_)
-    output$p_value <- table[labels, 'p-value']
-    output$method <- unname(status[labels])
+    rows <- list()
+    residual_df <- .cdrgam_cli_null(summary$residual.df, NA_real_)
+    parametric <- summary$pTerms.table
+    if (!is.null(parametric) && nrow(parametric)) {
+        chi_square <- 'Chi.sq' %in% colnames(parametric)
+        output <- empty(nrow(parametric))
+        output$estimand <- rownames(parametric)
+        output$form <- 'term'
+        output$statistic <- parametric[, if (chi_square) 'Chi.sq' else 'F']
+        output$df <- parametric[, 'df']
+        output$residual_df <- if (chi_square) NA_real_ else residual_df
+        output$p_value <- parametric[, 'p-value']
+        output$method <- 'Wald (parametric term)'
+        rows[[length(rows) + 1L]] <- output
+    }
+    table <- summary$s.table
+    if (!is.null(table) && nrow(table)) {
+        status <- attr(table, 'test.status')
+        if (is.null(status)) {
+            status <- ifelse(
+                is.finite(table[, 'p-value']), 'mgcv summary.gam', 'not computed by mgcv'
+            )
+        }
+        chi_square <- 'Chi.sq' %in% colnames(table)
+        output <- empty(nrow(table))
+        output$estimand <- rownames(table)
+        output$form <- 'term'
+        output$edf <- table[, 'edf']
+        output$statistic <- table[, if (chi_square) 'Chi.sq' else 'F']
+        output$df <- table[, 'Ref.df']
+        output$residual_df <- if (chi_square) NA_real_ else residual_df
+        output$p_value <- table[, 'p-value']
+        output$method <- unname(status)
+        rows[[length(rows) + 1L]] <- output
+    }
+    if (!length(rows)) .cdrgam_cli_abort('The fitted model has no terms to test')
+    available <- do.call(rbind, rows)
+    labels <- .cdrgam_cli_match_names(patterns, available$estimand, 'test term')
+    output <- available[available$estimand %in% labels, , drop=FALSE]
+    rownames(output) <- NULL
     output
 }
 
@@ -466,28 +485,39 @@
     list(kind='test', rows=nrow(table))
 }
 
-# The smooth-term labels of each selected model, read from the smooths.csv
-# of its latest fit artifact, printed as YAML lists that can be pasted under
-# a test definition's terms. Models without a fit artifact are reported as
-# such. The artifact is read as it is, even if the model definition has
-# changed since it was fitted.
+# The term labels of each selected model, parametric then smooth, read from
+# its latest fit artifact and printed as YAML lists that can be pasted under a
+# test definition's terms. Parametric labels come from parametric-terms.csv;
+# artifacts written before it existed give their coefficient names instead,
+# which are the term labels of numeric terms but not of factors. Models
+# without a fit artifact are reported as such. The artifact is read as it is,
+# even if the model definition has changed since it was fitted.
 .cdrgam_cli_model_terms <- function(project=NULL, models=NULL, checkout=NULL) {
     definitions <- .cdrgam_cli_read_definitions(
         project, check_sources=FALSE, checkout=checkout
     )
     if (!length(definitions$models)) .cdrgam_cli_abort('The project has no models')
     names <- .cdrgam_cli_match_names(models, names(definitions$models), 'model')
-    output <- lapply(stats::setNames(names, names), function(name) {
-        path <- file.path(.cdrgam_cli_path(definitions, 'model', name), 'smooths.csv')
-        if (!file.exists(path)) return(NULL)
+    read_terms <- function(path) {
+        if (!file.exists(path) || !length(readLines(path, n=1L))) return(character())
         as.character(utils::read.csv(path, check.names=FALSE)$term)
+    }
+    output <- lapply(stats::setNames(names, names), function(name) {
+        artifact <- .cdrgam_cli_path(definitions, 'model', name)
+        smooth_path <- file.path(artifact, 'smooths.csv')
+        if (!file.exists(smooth_path)) return(NULL)
+        parametric_path <- file.path(artifact, 'parametric-terms.csv')
+        parametric <- if (file.exists(parametric_path)) {
+            read_terms(parametric_path)
+        } else setdiff(read_terms(file.path(artifact, 'coefficients.csv')), '(Intercept)')
+        c(parametric, read_terms(smooth_path))
     })
     for (name in names) {
         terms <- output[[name]]
         if (is.null(terms)) {
             cat(name, ': []  # not fitted\n', sep='')
         } else if (!length(terms)) {
-            cat(name, ': []  # no smooth terms\n', sep='')
+            cat(name, ': []  # no terms\n', sep='')
         } else {
             cat(name, ':\n', paste0("  - '", gsub("'", "''", terms), "'\n"), sep='')
         }

@@ -140,8 +140,11 @@
     cdrgam::estimate_effect(fit, ...)
 }
 
-# The fit's summary, whose smooth table holds the whole-term tests.
+# The fit's summary, whose smooth table holds the whole-term tests. A fit
+# read with readRDS() dispatches to the core's summary methods only once
+# the core namespace is loaded.
 .cdrgam_cli_core_summary <- function(fit) {
+    loadNamespace('cdrgam')
     summary(fit)
 }
 

@@ -706,8 +706,8 @@
         height <- sized$height
     }
     dpi <- .cdrgam_cli_null(render$dpi, 300)
-    if ('svg' %in% render$formats && !isTRUE(capabilities('cairo'))) .cdrgam_cli_abort(
-        'SVG output needs an R built with Cairo; choose pdf or png formats'
+    if ('svg' %in% render$formats && !.cdrgam_cli_svg_available()) .cdrgam_cli_abort(
+        'This R cannot open its Cairo SVG device; choose pdf or png formats'
     )
     paths <- character()
     for (format in render$formats) {
@@ -728,6 +728,23 @@
         paths <- c(paths, basename(path))
     }
     paths
+}
+
+# Whether grDevices::svg() writes a file. capabilities('cairo') can report
+# TRUE when the Cairo module fails to load, as on macOS without XQuartz.
+.cdrgam_cli_svg_available <- function() {
+    path <- tempfile(fileext='.svg')
+    on.exit(unlink(path), add=TRUE)
+    opened <- tryCatch({
+        suppressWarnings(grDevices::svg(path))
+        TRUE
+    }, error=function(e) FALSE)
+    if (!opened) return(FALSE)
+    device <- grDevices::dev.cur()
+    if (!identical(names(device), 'svg')) return(FALSE)
+    grid::grid.newpage()
+    grDevices::dev.off(device)
+    file.exists(path)
 }
 
 # The horizontal axis of one line: the one axis its effect grid varies.

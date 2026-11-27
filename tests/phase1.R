@@ -1916,8 +1916,8 @@ stopifnot(
 
 # A fixed panel size renders the lines and their peak timeline with the file
 # sized to fit; the main panel keeps the given size.
-# SVG output needs Cairo, which some R builds lack.
-if (isTRUE(capabilities('cairo'))) {
+# SVG output needs a working Cairo device, which some R builds lack.
+if (cdrgam.cli:::.cdrgam_cli_svg_available()) {
     panel_lines <- lines_definition
     panel_lines$render <- c(lines_definition$render, list(
         panel_width=3, panel_height=2

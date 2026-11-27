@@ -586,9 +586,21 @@ if (identical(Sys.getenv('CDRGAM_UPDATE_GOLDEN'), '1')) {
     dir.create(golden, showWarnings=FALSE)
     invisible(file.copy(file.path(golden_output, golden_files), golden, overwrite=TRUE))
 }
+# Identities hash the fixture data, whose serialized bytes depend on the R
+# version, so tables are compared without their identity column.
+golden_lines <- function(path) {
+    lines <- readLines(path)
+    if (!grepl('[.]tsv$', path)) return(lines)
+    fields <- strsplit(lines, '\t', fixed=TRUE)
+    drop <- match('identity', fields[[1L]])
+    if (is.na(drop)) return(lines)
+    vapply(fields, function(row) {
+        paste(row[-drop], collapse='\t')
+    }, character(1))
+}
 for (name in golden_files) {
-    if (!identical(readLines(file.path(golden_output, name)),
-            readLines(file.path(golden, name)))) {
+    if (!identical(golden_lines(file.path(golden_output, name)),
+            golden_lines(file.path(golden, name)))) {
         stop('Methods output ', name, ' differs from tests/methods-golden/', name)
     }
 }

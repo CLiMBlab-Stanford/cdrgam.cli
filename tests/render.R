@@ -362,13 +362,16 @@ grDevices::dev.off()
 stopifnot(length(stack_heights) == 2L, stack_heights[[1L]] > 2,
     stack_heights[[2L]] > 1, stack_heights[[2L]] < stack_heights[[1L]],
     stack_width > 3)
-saved <- internal('.cdrgam_cli_save_ggplot')(
-    panel_plot(c('a', 'b')), tempdir(),
-    list(formats='svg', panel_width=3, panel_height=2), stem='panel-test'
-)
-svg_head <- paste(readLines(file.path(tempdir(), saved), n=3L), collapse=' ')
-svg_width <- as.numeric(sub('.*width="([0-9.]+)pt".*', '\\1', svg_head)) / 72
-stopifnot(abs(svg_width - short_legend$width) < 0.05)
+# SVG output needs a working Cairo device, which some R builds lack.
+if (internal('.cdrgam_cli_svg_available')()) {
+    saved <- internal('.cdrgam_cli_save_ggplot')(
+        panel_plot(c('a', 'b')), tempdir(),
+        list(formats='svg', panel_width=3, panel_height=2), stem='panel-test'
+    )
+    svg_head <- paste(readLines(file.path(tempdir(), saved), n=3L), collapse=' ')
+    svg_width <- as.numeric(sub('.*width="([0-9.]+)pt".*', '\\1', svg_head)) / 72
+    stopifnot(abs(svg_width - short_legend$width) < 0.05)
+}
 
 # zero_line is on unless false, and only false is stored. The line is drawn
 # only in panels whose range includes zero, so it never moves an axis.

@@ -78,7 +78,7 @@
         lanes <- .cdrgam_cli_peak_lanes(table)
         label <- entry$spec$label
         table$.label <- ifelse(
-            nrow(table) > 1L, paste0(label, ' · ', sub('^.* · ', '', lanes)), label
+            nrow(table) > 1L, paste0(label, ' \u00b7 ', sub('^.* \u00b7 ', '', lanes)), label
         )
         table$term <- entry$spec$id
         table$line <- entry$spec$id

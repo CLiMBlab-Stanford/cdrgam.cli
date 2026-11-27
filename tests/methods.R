@@ -570,7 +570,9 @@ stopifnot(identical(internal('.cdrgam_cli_methods_rtf_escape')('S\u00e4fken {\\}
 
 # Golden output: the preview report of both fixture projects in every format.
 # Set CDRGAM_UPDATE_GOLDEN=1 to rewrite the files after an intended change.
-golden <- file.path('tests', 'methods-golden')
+# R CMD check runs the tests from inside the tests directory.
+golden <- if (dir.exists('methods-golden')) 'methods-golden' else
+    file.path('tests', 'methods-golden')
 golden_output <- file.path(temporary_parent, 'golden')
 for (format in c('md', 'rtf', 'tex')) {
     stopifnot(identical(cli_main(c('methods', '-P', 'methods-project', 'kinds-project',

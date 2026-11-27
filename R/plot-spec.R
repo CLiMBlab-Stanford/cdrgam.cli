@@ -460,7 +460,7 @@
 
 # One label per strip row. A term held at its own positive peak is labeled
 # by the term alone; other rows also name the peak, as in
-# "x · peak-neg(irf(1))".
+# "x <middle dot> peak-neg(irf(1))".
 .cdrgam_cli_peak_lanes <- function(peaks) {
     own <- peaks$source == peaks$term
     expression <- paste0(
@@ -469,7 +469,7 @@
     )
     plain <- own & peaks$direction == 'pos' &
         !(peaks$term %in% peaks$term[duplicated(peaks$term)])
-    ifelse(plain, peaks$term, paste0(peaks$term, ' · ', expression))
+    ifelse(plain, peaks$term, paste0(peaks$term, ' \u00b7 ', expression))
 }
 
 # The effect grid that plots a peak-lag summary: one row per evaluated term,

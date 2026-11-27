@@ -14,6 +14,8 @@
         parts <- c(results, 'visualizations', name)
     } else if (kind %in% c('comparison', 'analysis', 'test')) {
         parts <- c(results, paste0(kind, 's'), name)
+    } else if (identical(kind, 'methods')) {
+        parts <- c(results, 'methods')
     } else if (identical(kind, 'work')) {
         parts <- c(root, '.cdrgam', 'work')
         if (!is.null(name)) parts <- c(parts, name)

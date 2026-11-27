@@ -202,3 +202,26 @@
 .cdrgam_cli_core_simulate_effect <- function(fit, ...) {
     getExportedValue('cdrgam', 'simulate_effect')(fit, ...)
 }
+
+# Defaults of the installed core for settings a model definition may omit.
+# method is absent because its default depends on the backend and engine.
+# Estimation facts for methods reports: the resolved smoothing criterion, the
+# estimator, and the term tests, each with reference keys.
+.cdrgam_cli_core_methods_facts <- function(backend, engine, method, family) {
+    cdrgam::methods_facts(backend=backend, engine=engine, method=method, family=family)
+}
+
+.cdrgam_cli_core_fit_defaults <- function() {
+    fit <- formals(cdrgam::cdrgam)
+    term <- formals(cdrgam::irf)
+    first <- function(value) eval(value)[[1L]]
+    list(
+        family='gaussian', link='identity',
+        engine=first(fit$engine), backend=first(fit$backend),
+        rescale_predictors=eval(fit$rescale_predictors),
+        center_predictors=eval(fit$center_predictors),
+        rank_action=first(formals(cdrgam::cdrgam.fit)$rank_action),
+        k_l=eval(term$k_l), k_t=eval(term$k_t), k_p=eval(term$k_p),
+        bs_l=eval(term$bs_l), bs_t=eval(term$bs_t), bs_p=eval(term$bs_p)
+    )
+}

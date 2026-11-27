@@ -1,0 +1,4 @@
+project	test	model	identity	state	entry	name	form	effects	null	definition
+kinds-project	shape	a	779b919bee7dfff7	preview	estimand	area	area	curve	0	{"curve":{"terms":"x","axes":{"lag":{"grid":"fitted","n":11},"predictors":{"x":1}},"composition":"term","grouping":"population","n":200}}
+kinds-project	shape	a	779b919bee7dfff7	preview	estimand	peak	peak_lag	curve	0.5	{"curve":{"terms":"x","axes":{"lag":{"grid":"fitted","n":11},"predictors":{"x":1}},"composition":"term","grouping":"population","n":200}}
+kinds-project	terms	a	9d359e4eeff40e78	preview	term	*	term			

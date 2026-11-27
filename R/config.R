@@ -1,3 +1,14 @@
+.cdrgam_cli_dataset_keys <- c('schema', 'sources', 'columns', 'filters', 'preprocess')
+.cdrgam_cli_source_keys <- c('path', 'format', 'separator', 'types')
+.cdrgam_cli_dataset_column_keys <- c(
+    'series', 'impulse_time', 'response_time', 'factors', 'factor_interactions', 'row_id'
+)
+.cdrgam_cli_comparison_keys <- c('schema', 'models', 'evaluation', 'methods')
+.cdrgam_cli_visualization_keys <- c(
+    'schema', 'model', 'kind', 'predictions', 'pages', 'query', 'layers', 'lines',
+    'render', 'preset', 'options'
+)
+
 .cdrgam_cli_definition_files <- function(root, kind) {
     directory <- file.path(root, 'definitions', kind)
     if (!dir.exists(directory)) return(character())
@@ -69,10 +80,7 @@
 }
 
 .cdrgam_cli_validate_source <- function(value, field, root, check_exists=TRUE) {
-    .cdrgam_cli_check_keys(
-        value, c('path', 'format', 'separator', 'types'), field,
-        c('path', 'format')
-    )
+    .cdrgam_cli_check_keys(value, .cdrgam_cli_source_keys, field, c('path', 'format'))
     path_text <- .cdrgam_cli_scalar_character(value$path, paste0(field, '.path'))
     format <- match.arg(
         .cdrgam_cli_scalar_character(value$format, paste0(field, '.format')),
@@ -126,8 +134,7 @@
     .cdrgam_cli_validate_schema(value, path)
     .cdrgam_cli_reject_definition_identity(value, 'dataset', path)
     .cdrgam_cli_check_keys(
-        value, c('schema', 'sources', 'columns', 'filters', 'preprocess'), path,
-        c('schema', 'sources', 'columns')
+        value, .cdrgam_cli_dataset_keys, path, c('schema', 'sources', 'columns')
     )
     .cdrgam_cli_check_keys(
         value$sources, c('impulses', 'responses'), paste0(path, ': sources'),
@@ -143,10 +150,7 @@
     )
     .cdrgam_cli_check_keys(
         value$columns,
-        c(
-            'series', 'impulse_time', 'response_time', 'factors',
-            'factor_interactions', 'row_id'
-        ),
+        .cdrgam_cli_dataset_column_keys,
         paste0(path, ': columns'),
         c('impulse_time', 'response_time')
     )
@@ -286,11 +290,18 @@
     'intercept_only_parameter'
 )
 
+.cdrgam_cli_model_keys <- c(
+    'schema', 'datasets', 'formula', 'window', .cdrgam_cli_irf_default_keys, 'fit',
+    'autosimplify'
+)
+
+.cdrgam_cli_autosimplify_defaults <- function() list(
+    enabled=TRUE, max_steps=5L, conservatism=1,
+    allow=.cdrgam_cli_autosimplify_actions, protect=character()
+)
+
 .cdrgam_cli_validate_autosimplify <- function(value, path) {
-    defaults <- list(
-        enabled=TRUE, max_steps=5L, conservatism=1,
-        allow=.cdrgam_cli_autosimplify_actions, protect=character()
-    )
+    defaults <- .cdrgam_cli_autosimplify_defaults()
     if (is.logical(value) && length(value) == 1L && !is.na(value)) {
         defaults$enabled <- value
         return(defaults)
@@ -407,11 +418,7 @@
     .cdrgam_cli_validate_schema(value, path)
     .cdrgam_cli_reject_definition_identity(value, 'model', path)
     .cdrgam_cli_check_keys(
-        value, c(
-            'schema', 'datasets', 'formula', 'window',
-            .cdrgam_cli_irf_default_keys, 'fit', 'autosimplify'
-        ), path,
-        c('schema', 'datasets', 'formula')
+        value, .cdrgam_cli_model_keys, path, c('schema', 'datasets', 'formula')
     )
     if (!is.list(value$datasets) || is.null(names(value$datasets)) ||
             any(!nzchar(names(value$datasets))) || anyDuplicated(names(value$datasets))) {
@@ -633,10 +640,7 @@
     .cdrgam_cli_validate_schema(value, path)
     .cdrgam_cli_reject_definition_identity(value, 'visualization', path)
     .cdrgam_cli_check_keys(
-        value, c(
-            'schema', 'model', 'kind', 'predictions', 'pages',
-            'query', 'layers', 'lines', 'render', 'preset', 'options'
-        ),
+        value, .cdrgam_cli_visualization_keys,
         path, c('schema', 'model')
     )
     value$model <- .cdrgam_cli_name(value$model, paste0(path, ': model'))
@@ -1123,8 +1127,7 @@
     .cdrgam_cli_validate_schema(value, path)
     .cdrgam_cli_reject_definition_identity(value, 'comparison', path)
     .cdrgam_cli_check_keys(
-        value, c('schema', 'models', 'evaluation', 'methods'),
-        path, c('schema', 'models', 'methods')
+        value, .cdrgam_cli_comparison_keys, path, c('schema', 'models', 'methods')
     )
     if (!is.character(value$models) || length(value$models) < 2L) {
         .cdrgam_cli_abort(paste0(path, ': models must contain at least two names'))

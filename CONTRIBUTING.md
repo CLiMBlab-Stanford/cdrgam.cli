@@ -15,10 +15,16 @@ Use the narrowest applicable test scope while developing:
 ./scripts/test identities
 ./scripts/test effects
 ./scripts/test render
+./scripts/test methods
 ./scripts/test viz
 ./scripts/test integration
 ./scripts/test portability
 ```
+
+The `methods` scope compares the methods report of its fixture projects with
+the files in `tests/methods-golden/`. After an intended change to the report
+text, rerun it with `CDRGAM_UPDATE_GOLDEN=1` to rewrite those files, and review
+their diff.
 
 Development scripts resolve R through the active Conda environment first. If
 none is active, they use the `cdrgam` Conda environment when it exists. Set

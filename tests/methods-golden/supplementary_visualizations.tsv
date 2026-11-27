@@ -1,0 +1,3 @@
+project	name	identity	state	model	kind	queries	intervals	unconditional	simultaneous
+kinds-project	curve	cf233cab718f807d	preview	a	effect	[{"terms":{"predictors":"*"},"composition":"total","axes":{"lag":{"grid":"fitted","n":11},"predictors":{"*":{"at":{"summary":"mean","offset-sd":1}}}},"uncertainty":{"level":0.9,"kind":"simultaneous","unconditional":true,"points":40},"grouping":"population","n":200}]	90% simultaneous intervals	true	true
+kinds-project	pages	00ca750c347fc7d1	preview	a	booklet	[]		false	false

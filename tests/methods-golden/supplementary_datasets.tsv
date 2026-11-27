@@ -1,0 +1,3 @@
+project	name	identity	state	series	factors	interactions	filters	preprocess
+kinds-project	training	2009bd9019f30460	preview				response > -100	scripts/prepare.R::prepare
+methods-project	training	4d68e5d0527bb0bb	preview					

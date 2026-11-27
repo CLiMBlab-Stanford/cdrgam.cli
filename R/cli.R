@@ -339,6 +339,42 @@
         ),
         handler='stop'
     )
+    methods=.cdrgam_cli_command(
+        'methods', 'Write a methods section for selected work items.',
+        description=paste(
+            'Describe the selected work items and their upstream lineage as a',
+            'methods section with citations, and write methods.json, a trace of',
+            'the definitions, artifacts, and templates behind each section.',
+            'Only work items with a complete artifact for their current identity',
+            'contribute; stale and missing work items are omitted and counted.',
+            'With --preview, resolved definitions are described without reading',
+            'artifacts. Several projects are pooled into one report.'
+        ),
+        options=c(selectors, list(
+            .cdrgam_cli_option(
+                'preview', 'Describe resolved definitions without reading artifacts.',
+                arity='flag'
+            ),
+            .cdrgam_cli_option(
+                'format', paste('Output format: rtf (default), md, or tex. tex writes',
+                    'natbib citations and methods.bib.'),
+                metavar='FORMAT'
+            ),
+            .cdrgam_cli_option(
+                'output', paste(
+                    'Output directory. Defaults to results/methods in the selected',
+                    'project; required when several projects are selected.'
+                ),
+                short='-o', metavar='DIR'
+            )
+        )),
+        examples=c(
+            'cdrgam methods -P brown',
+            'cdrgam methods -P brown -m main -t main --preview',
+            'cdrgam methods -P brown brown-replication -o methods'
+        ),
+        handler='methods'
+    )
     status=.cdrgam_cli_command(
         'status', 'Display current work-item state.',
         options=list(
@@ -580,7 +616,8 @@
             'workloads locally or through Slurm, and inspect generated results.'
         ),
         commands=list(
-            def=def, list=list_command, plan=plan, run=run, stop=stop, status=status,
+            def=def, list=list_command, plan=plan, run=run, stop=stop, methods=methods,
+            status=status,
             log=log, purge=purge, rm=rm, publish=publish, fetch=fetch, viz=viz,
             `viz-server`=viz_server, scheduler=scheduler, worker=worker
         )
@@ -1004,6 +1041,14 @@ cli_main <- function(args=commandArgs(trailingOnly=TRUE)) {
         do.call(cdrgam_cli_stop, c(selectors, list(
             force=isTRUE(flags$force), scheduler=isTRUE(flags$scheduler)
         )))
+    } else if (identical(handler, 'methods')) {
+        arguments <- c(selectors, list(
+            preview=isTRUE(flags$preview),
+            output=.cdrgam_cli_one(flags$output, '--output')
+        ))
+        format <- .cdrgam_cli_one(flags$format, '--format')
+        if (!is.null(format)) arguments$format <- format
+        do.call(cdrgam_cli_methods, arguments)
     } else if (identical(handler, 'status')) {
         cdrgam_cli_status(
             flags$project, use_pager=!isTRUE(flags$`no-pager`)

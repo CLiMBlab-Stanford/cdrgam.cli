@@ -14,7 +14,9 @@ work becomes ready.
 The reference manual is at
 [climblab-stanford.github.io/cdrgam.cli](https://climblab-stanford.github.io/cdrgam.cli/),
 and [docs/project-schema.md](docs/project-schema.md) describes the project,
-definition, and visualization schema. Models are fitted by the
+definition, and visualization schema.
+[docs/methods-reports.md](docs/methods-reports.md) describes `cdrgam methods`,
+which writes cited methods sections for selected work items. Models are fitted by the
 [cdrgam](https://github.com/CLiMBlab-Stanford/cdrgam) core package, whose
 documentation is at [climblab-stanford.github.io/cdrgam](https://climblab-stanford.github.io/cdrgam/).
 

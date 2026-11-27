@@ -8,6 +8,10 @@
 # effect_inference(), and tests whole functionals with Wood's statistic,
 # through its test_effect().
 
+.cdrgam_cli_test_keys <- c(
+    'schema', 'model', 'terms', 'effects', 'estimands', 'null', 'uncertainty'
+)
+.cdrgam_cli_test_uncertainty_keys <- c('level', 'unconditional', 'draws', 'seed')
 .cdrgam_cli_test_forms <- c('weights', 'mean', 'area', 'peak_lag', 'peak_value', 'wood')
 .cdrgam_cli_test_linear_forms <- c('weights', 'mean', 'area')
 .cdrgam_cli_test_peak_forms <- c('peak_lag', 'peak_value')
@@ -107,8 +111,7 @@
     .cdrgam_cli_reject_definition_identity(value, 'test', path)
     .cdrgam_cli_check_keys(
         value,
-        c('schema', 'model', 'terms', 'effects', 'estimands', 'null', 'uncertainty'),
-        path, c('schema', 'model')
+        .cdrgam_cli_test_keys, path, c('schema', 'model')
     )
     value$model <- .cdrgam_cli_name(value$model, paste0(path, ': model'))
     if (!is.null(value$terms)) {
@@ -153,7 +156,7 @@
     )
     uncertainty <- .cdrgam_cli_null(value$uncertainty, list())
     .cdrgam_cli_check_keys(
-        uncertainty, c('level', 'unconditional', 'draws', 'seed'),
+        uncertainty, .cdrgam_cli_test_uncertainty_keys,
         paste0(path, ': uncertainty')
     )
     uncertainty$level <- .cdrgam_cli_null(uncertainty$level, 0.95)
@@ -543,6 +546,7 @@
 # def edit would. Patterns, existing tests, and names that are not models are
 # left for the ordinary selector to resolve.
 .cdrgam_cli_create_model_term_tests <- function(projects, tests, checkout=NULL) {
+    if (!length(tests)) return(invisible(character()))
     literal <- tests[!grepl('[*]', tests) & !startsWith(tests, 're:')]
     if (!length(literal)) return(invisible(character()))
     created <- character()

@@ -706,6 +706,9 @@
         height <- sized$height
     }
     dpi <- .cdrgam_cli_null(render$dpi, 300)
+    if ('svg' %in% render$formats && !isTRUE(capabilities('cairo'))) .cdrgam_cli_abort(
+        'SVG output needs an R built with Cairo; choose pdf or png formats'
+    )
     paths <- character()
     for (format in render$formats) {
         path <- file.path(stage, paste0(stem, '.', format))
@@ -719,6 +722,9 @@
             path, plot=plot, device=device,
             width=width, height=height, dpi=dpi, units='in'
         )
+        if (!file.exists(path)) .cdrgam_cli_abort(paste0(
+            'The ', format, ' device did not write ', basename(path)
+        ))
         paths <- c(paths, basename(path))
     }
     paths

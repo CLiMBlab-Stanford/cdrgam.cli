@@ -8,7 +8,8 @@ short_hash <- internal('.cdrgam_cli_short_hash')
 # Render settings are part of visualization identity, so validation must
 # keep producing the same normalized values, in the same field order, for
 # every render it accepted before. The expected hashes were recorded from
-# the validator as it stood before render fields moved into a registry.
+# the validator as it stood before render fields moved into a registry, and
+# re-recorded when the identity hash stopped covering the serialization header.
 render_cases <- list(
     line_minimal=list(geometry='line', mappings=list(x='lag', y='estimate')),
     line_full=list(
@@ -158,16 +159,16 @@ if (nzchar(Sys.getenv('CDRGAM_RECORD_RENDER'))) {
 
 expected <- list(
     render=c(
-        line_minimal='2c53172643d1ee15',
-        line_full='3a01d606ce5e50fb',
-        line_yaml_key='f93cd51f9b56ecfb',
-        line_ordered='ca3cb766ad944179',
-        raster='268e4442f66ca64a',
-        contour='b4da412240b766d6',
-        point='d8fad4d151913560',
-        point_spaced='7e85ac578c65dce4',
-        bar_peak='c97756d53642ebf4',
-        bar_estimate='9fc219441870b5d5'
+        line_minimal='7ff18b54cab1f777',
+        line_full='742d90dd88d7f486',
+        line_yaml_key='6cb03bd139193efe',
+        line_ordered='d49decedf4ed931b',
+        raster='201da199ac95df17',
+        contour='14ca5923a429f4e3',
+        point='23157fa0ce6ba2d6',
+        point_spaced='3d3b977e303dfb12',
+        bar_peak='c1041e0abf0079c9',
+        bar_estimate='7f63c5244e8a221b'
     ),
     order=c(
         line_minimal='geometry,mappings,interval,theme,formats',
@@ -185,10 +186,10 @@ expected <- list(
         bar_estimate='geometry,mappings,spacing,palette,interval,theme,formats'
     ),
     visualization=c(
-        preset_lag='f505e496d0145ea2',
-        preset_predictor='61545e225ad928db',
-        layers='2c53172643d1ee15',
-        point_layers='d8fad4d151913560'
+        preset_lag='01058c27a2e73861',
+        preset_predictor='0ebbdcb330e3fbae',
+        layers='7ff18b54cab1f777',
+        point_layers='23157fa0ce6ba2d6'
     ),
     errors=c(
         missing_geometry='render is missing required field: geometry',

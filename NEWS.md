@@ -1,5 +1,15 @@
 # cdrgam.cli 0.5.0
 
+- Resolved identities no longer depend on the R version. They hashed a
+  serialization header that records the writing R version, so upgrading R
+  made every artifact stale. Identities change once with this release, so
+  artifacts made by earlier releases are stale and are rebuilt by
+  `cdrgam run`.
+
+- SVG visualizations need an R built with Cairo; without it, a run that
+  requests svg output fails with that reason instead of publishing an
+  artifact without the file.
+
 - New `cdrgam methods` command. It writes a cited methods section for the
   selected work items in RTF (the default), Markdown, or LaTeX, together with
   supplementary tables and a `methods.json` trace. Several projects can be

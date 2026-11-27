@@ -347,10 +347,18 @@
     )
 }
 
+# The MD5 of a value's version-3 XDR serialization without its header. The
+# header records the R version that wrote it, so hashing it would change every
+# identity when R is upgraded. The header is "X\n", the format version, the
+# writer and minimum reader R versions, and the length-prefixed native
+# encoding.
 .cdrgam_cli_hash <- function(value) {
+    bytes <- serialize(value, NULL, xdr=TRUE, version=3L)
+    encoding_length <- readBin(bytes[15:18], 'integer', size=4L, endian='big')
+    body <- bytes[-seq_len(18L + encoding_length)]
     temporary <- tempfile('cdrgam-cli-hash-')
     on.exit(unlink(temporary), add=TRUE)
-    saveRDS(value, temporary, version=3, compress=FALSE)
+    writeBin(body, temporary)
     unname(tools::md5sum(temporary))
 }
 

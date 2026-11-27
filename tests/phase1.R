@@ -1916,26 +1916,29 @@ stopifnot(
 
 # A fixed panel size renders the lines and their peak timeline with the file
 # sized to fit; the main panel keeps the given size.
-panel_lines <- lines_definition
-panel_lines$render <- c(lines_definition$render, list(
-    panel_width=3, panel_height=2
-))
-panel_lines$render$formats <- 'svg'
-yaml::write_yaml(panel_lines,
-    file.path(project, 'definitions', 'visualizations', 'lines-panel.yml'))
-cdrgam_cli_run(projects='test-project', visualizations='lines-panel')
-panel_svg <- file.path(project, 'results', 'visualizations', 'lines-panel',
-    'visualization.svg')
-panel_head <- paste(readLines(panel_svg, n=3L), collapse=' ')
-panel_size <- as.numeric(c(
-    sub('.*width="([0-9.]+)pt".*', '\\1', panel_head),
-    sub('.*height="([0-9.]+)pt".*', '\\1', panel_head)
-)) / 72
-stopifnot(
-    file.exists(file.path(dirname(panel_svg), 'plot-peaks.rds')),
-    panel_size[[1L]] > 3, panel_size[[2L]] > 2 * 1.1
-)
-unlink(file.path(project, 'definitions', 'visualizations', 'lines-panel.yml'))
+# SVG output needs Cairo, which some R builds lack.
+if (isTRUE(capabilities('cairo'))) {
+    panel_lines <- lines_definition
+    panel_lines$render <- c(lines_definition$render, list(
+        panel_width=3, panel_height=2
+    ))
+    panel_lines$render$formats <- 'svg'
+    yaml::write_yaml(panel_lines,
+        file.path(project, 'definitions', 'visualizations', 'lines-panel.yml'))
+    cdrgam_cli_run(projects='test-project', visualizations='lines-panel')
+    panel_svg <- file.path(project, 'results', 'visualizations', 'lines-panel',
+        'visualization.svg')
+    panel_head <- paste(readLines(panel_svg, n=3L), collapse=' ')
+    panel_size <- as.numeric(c(
+        sub('.*width="([0-9.]+)pt".*', '\\1', panel_head),
+        sub('.*height="([0-9.]+)pt".*', '\\1', panel_head)
+    )) / 72
+    stopifnot(
+        file.exists(file.path(dirname(panel_svg), 'plot-peaks.rds')),
+        panel_size[[1L]] > 3, panel_size[[2L]] > 2 * 1.1
+    )
+    unlink(file.path(project, 'definitions', 'visualizations', 'lines-panel.yml'))
+}
 
 # A visualization whose definition was removed can still be purged by
 # name: its results, work directory, log, and registry record go together.

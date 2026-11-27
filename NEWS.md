@@ -1,10 +1,10 @@
-# cdrgam.cli (development version)
+# cdrgam.cli 0.5.0
 
 - New `cdrgam methods` command. It writes a cited methods section for the
   selected work items in RTF (the default), Markdown, or LaTeX, together with
   supplementary tables and a `methods.json` trace. Several projects can be
   described in one report. See `docs/methods-reports.md`. Requires cdrgam
-  0.4.0.9000 or later for `methods_facts()`.
+  0.5.0 or later for `methods_facts()`.
 
 - New test definitions, under `definitions/tests/`. `terms` requests the
   whole-function tests that `summary()` reports for native model terms, mgcv

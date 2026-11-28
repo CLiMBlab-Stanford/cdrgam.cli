@@ -108,14 +108,12 @@ if (internal('.cdrgam_cli_core_has_points')()) {
             x=list(values=c('mean - sd', 'mean + sd'))
         ))
     ), training=training), 'pointwise_peaks')
-    if (!isTRUE(all.equal(unname(peaks$lag[match(own$x, peaks$x)]), own$lag))) {
-        print(peaks, digits=17)
-        print(own, digits=17)
-    }
     stopifnot(
         nrow(borrowed) == 6L, all(peaks$source == 'x'), all(by_x == 1L),
         isTRUE(all.equal(
-            unname(peaks$lag[match(own$x, peaks$x)]), own$lag
+            # x is recomputed per term and can differ in the last bits.
+            unname(peaks$lag[match(signif(own$x, 10), signif(peaks$x, 10))]),
+            own$lag
         )),
         all(is.finite(borrowed$se))
     )

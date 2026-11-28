@@ -611,4 +611,13 @@ expect_error(
     "Unsupported methods format"
 )
 
+# Fits with a custom backend record the backend as the engine.
+sparse_facts <- internal('.cdrgam_cli_methods_fit_record_facts')(list(
+    family='gaussian', link='identity', method='REML', engine='sparse',
+    backend='sparse', rescale=TRUE, center=TRUE, rank_action='warn',
+    window=c(0, 1), k_l=5L, bs_l='cr', k_t=5L, bs_t='cr', k_p=5L, bs_p='cr',
+    autosimplify=list(enabled=FALSE)
+))
+stopifnot(identical(sparse_facts$estimator$value, 'sparse'))
+
 cat('methods: ok\n')

@@ -184,7 +184,8 @@
                 # the query, or here for an axis without training summaries.
                 ends <- lapply(1:2, function(end) {
                     text <- options$x_range[[end]]
-                    if (!nzchar(text)) return(c(term$axes[[name]]$min, term$axes[[name]]$max)[[end]])
+                    axis <- term$axes[[name]]
+                    if (!nzchar(text)) return(c(axis$min, axis$max)[[end]])
                     number <- suppressWarnings(as.numeric(text))
                     if (is.finite(number)) return(number)
                     if (summarized(name)) text else .cdrgam_cli_viz_resolve(term, name, text)

@@ -266,7 +266,8 @@ render_text <- function(document) internal('.cdrgam_cli_methods_write_markdown')
 realized <- Filter(function(record) record$state == 'complete', collect(FALSE))
 text <- render_text(fit_document(realized, FALSE))
 stopifnot(
-    grepl('CDR-GAM, an unpublished extension of continuous-time deconvolutional regression (Shain & Schuler, 2021) that estimates',
+    grepl(paste('CDR-GAM, an unpublished extension of continuous-time deconvolutional',
+        'regression (Shain & Schuler, 2021) that estimates'),
         text, fixed=TRUE),
     grepl(paste('IRFs spanned lags from 0 to 1 in the time units of the data. Unless a',
         'term specified otherwise, the lag dimension'), text, fixed=TRUE),

@@ -323,9 +323,10 @@ stopifnot(
     grepl('set together', panel_error(list(panel_width=3))),
     is.list(panel_error(list(panel_width=3, panel_height=2)))
 )
+.data <- ggplot2::.data
 panel_plot <- function(labels) ggplot2::ggplot(
     data.frame(x=rep(1:3, length(labels)), y=seq_along(labels), g=rep(labels, each=3)),
-    ggplot2::aes(x, y, colour=g)
+    ggplot2::aes(.data$x, .data$y, colour=.data$g)
 ) + ggplot2::geom_line()
 panel_inches <- function(figure) {
     grDevices::pdf(NULL)

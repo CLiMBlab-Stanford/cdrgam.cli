@@ -49,7 +49,7 @@
             ')'
         )
         id_clauses <- unlist(lapply(project_ids, function(id) vapply(
-            c('fit', 'prediction', 'effect', 'visualization', 'comparison'),
+            c('fit', 'prediction', 'effect', 'visualization', 'comparison', 'test'),
             function(kind) paste0(
                 'w.work_key LIKE ',
                 .cdrgam_cli_sql_quote(paste0(kind, ':', id, ':%'))
@@ -197,6 +197,18 @@
         records$project == project |
         (!is.na(key_project) & key_project == project_id)
     ]
+}
+
+# The workload names a project has records for, as a list of names by
+# kind; an empty list when there is no registry.
+.cdrgam_cli_registry_project_names <- function(configuration, project) {
+    if (!file.exists(.cdrgam_cli_registry_path(configuration))) return(list())
+    records <- .cdrgam_cli_registry_exec(configuration, paste0(
+        'SELECT kind, name FROM work_items WHERE project=',
+        .cdrgam_cli_sql_quote(project)
+    ), query=TRUE)
+    if (!nrow(records)) return(list())
+    split(records$name, records$kind)
 }
 
 .cdrgam_cli_registry_project_keys <- function(configuration, project) {

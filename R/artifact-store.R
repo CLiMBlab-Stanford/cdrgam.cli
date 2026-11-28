@@ -77,9 +77,7 @@
 
 .cdrgam_cli_publish_directory <- function(stage, destination, definitions, item) {
     parent <- dirname(destination)
-    if (!dir.exists(parent) && !dir.create(parent, recursive=TRUE)) {
-        .cdrgam_cli_abort(paste0('Could not create artifact parent ', sQuote(parent)))
-    }
+    .cdrgam_cli_ensure_directory(parent, 'artifact parent')
     archived <- NULL
     if (file.exists(destination)) {
         archived <- file.path(
@@ -89,7 +87,7 @@
             ),
             format(Sys.time(), '%Y%m%dT%H%M%S')
         )
-        if (!dir.exists(dirname(archived))) dir.create(dirname(archived), recursive=TRUE)
+        .cdrgam_cli_ensure_directory(dirname(archived), 'archive directory')
         if (!.cdrgam_cli_try_move_path(destination, archived)) {
             .cdrgam_cli_abort(paste0('Could not archive previous artifact ', destination))
         }

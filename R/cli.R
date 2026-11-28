@@ -53,6 +53,12 @@
             'Select comparison workloads by exact name, * glob, or re: regex.'
         ),
         short='-c', metavar='COMPARISON', arity=arity
+    ),
+    .cdrgam_cli_option(
+        'test', paste(
+            'Select test workloads by exact name, * glob, or re: regex.'
+        ),
+        short='-t', metavar='TEST', arity=arity
     )
 )
 
@@ -72,6 +78,10 @@
     .cdrgam_cli_option(
         'comparison', 'Select comparison definitions by file name.',
         short='-c', metavar='COMPARISON', arity=arity
+    ),
+    .cdrgam_cli_option(
+        'test', 'Select test definitions by file name.',
+        short='-t', metavar='TEST', arity=arity
     )
 )
 
@@ -119,7 +129,10 @@
                 description=paste(
                     'Create a missing definition or open an existing definition',
                     'in the configured editor. At most one definition type may',
-                    'be selected in one invocation.'
+                    'be selected in one invocation. Names may be * globs or',
+                    're:-prefixed regular expressions, which open every existing',
+                    'definition they match in turn; quote them so the shell does',
+                    'not expand them.'
                 ),
                 options=c(
                     list(project_selector),
@@ -133,7 +146,8 @@
                 examples=c(
                     'cdrgam def edit -P brown',
                     'cdrgam def edit -P brown --model main',
-                    'cdrgam def edit -P brown --model alternative --source main'
+                    'cdrgam def edit -P brown --model alternative --source main',
+                    "cdrgam def edit -P brown --visualization 'main-*'"
                 ),
                 handler='def-edit'
             ),
@@ -217,6 +231,31 @@
                     'cdrgam def val -P brown --model main alternative --deep'
                 ),
                 handler='def-val'
+            ),
+            terms=.cdrgam_cli_command(
+                'terms', 'List the term labels of fitted models.',
+                description=paste(
+                    'Print the smooth-term labels of each selected model, as',
+                    'test definitions accept them under terms, from its latest',
+                    'fit artifact. Without --model, every model is listed. Values',
+                    'accept exact names, * globs, and re: regular expressions.'
+                ),
+                options=list(
+                    project_selector,
+                    .cdrgam_cli_option(
+                        'model', 'Select model definitions by file name.',
+                        short='-m', metavar='MODEL', arity='zero-or-more'
+                    )
+                ),
+                arguments=list(.cdrgam_cli_argument(
+                    'PROJECT', 'Project whose models should be listed.',
+                    required=FALSE
+                )),
+                examples=c(
+                    'cdrgam def terms -P rep',
+                    "cdrgam def terms -P rep -m 'spr-*'"
+                ),
+                handler='def-terms'
             )
         )
     )
@@ -299,6 +338,42 @@
             'cdrgam stop -P brown -m main -p test'
         ),
         handler='stop'
+    )
+    methods=.cdrgam_cli_command(
+        'methods', 'Write a methods section for selected work items.',
+        description=paste(
+            'Describe the selected work items and their upstream lineage as a',
+            'methods section with citations, and write methods.json, a trace of',
+            'the definitions, artifacts, and templates behind each section.',
+            'Only work items with a complete artifact for their current identity',
+            'contribute; stale and missing work items are omitted and counted.',
+            'With --preview, resolved definitions are described without reading',
+            'artifacts. Several projects are pooled into one report.'
+        ),
+        options=c(selectors, list(
+            .cdrgam_cli_option(
+                'preview', 'Describe resolved definitions without reading artifacts.',
+                arity='flag'
+            ),
+            .cdrgam_cli_option(
+                'format', paste('Output format: rtf (default), md, or tex. tex writes',
+                    'natbib citations and methods.bib.'),
+                metavar='FORMAT'
+            ),
+            .cdrgam_cli_option(
+                'output', paste(
+                    'Output directory. Defaults to results/methods in the selected',
+                    'project; required when several projects are selected.'
+                ),
+                short='-o', metavar='DIR'
+            )
+        )),
+        examples=c(
+            'cdrgam methods -P brown',
+            'cdrgam methods -P brown -m main -t main --preview',
+            'cdrgam methods -P brown brown-replication -o methods'
+        ),
+        handler='methods'
     )
     status=.cdrgam_cli_command(
         'status', 'Display current work-item state.',
@@ -541,7 +616,8 @@
             'workloads locally or through Slurm, and inspect generated results.'
         ),
         commands=list(
-            def=def, list=list_command, plan=plan, run=run, stop=stop, status=status,
+            def=def, list=list_command, plan=plan, run=run, stop=stop, methods=methods,
+            status=status,
             log=log, purge=purge, rm=rm, publish=publish, fetch=fetch, viz=viz,
             `viz-server`=viz_server, scheduler=scheduler, worker=worker
         )
@@ -801,12 +877,15 @@
     project <- if (!is.null(selected_project)) {
         selected_project
     } else positional_project
-    supported <- c('dataset', 'model', 'visualization', 'comparison')
+    supported <- c('dataset', 'model', 'visualization', 'comparison', 'test')
     selected <- intersect(names(flags), supported)
     if (identical(operation, 'ls')) {
         return(.cdrgam_cli_list_definitions(
             project, flags[selected]
         ))
+    }
+    if (identical(operation, 'terms')) {
+        return(.cdrgam_cli_model_terms(project, flags$model))
     }
     if (identical(operation, 'init')) {
         if (length(selected)) {
@@ -837,7 +916,8 @@
 
 .cdrgam_cli_selector_arguments <- function(flags) list(
     projects=flags$project, models=flags$model, predictions=flags$prediction,
-    visualizations=flags$visualization, comparisons=flags$comparison
+    visualizations=flags$visualization, comparisons=flags$comparison,
+    tests=flags$test
 )
 
 #' Run the command-line dispatcher
@@ -961,6 +1041,14 @@ cli_main <- function(args=commandArgs(trailingOnly=TRUE)) {
         do.call(cdrgam_cli_stop, c(selectors, list(
             force=isTRUE(flags$force), scheduler=isTRUE(flags$scheduler)
         )))
+    } else if (identical(handler, 'methods')) {
+        arguments <- c(selectors, list(
+            preview=isTRUE(flags$preview),
+            output=.cdrgam_cli_one(flags$output, '--output')
+        ))
+        format <- .cdrgam_cli_one(flags$format, '--format')
+        if (!is.null(format)) arguments$format <- format
+        do.call(cdrgam_cli_methods, arguments)
     } else if (identical(handler, 'status')) {
         cdrgam_cli_status(
             flags$project, use_pager=!isTRUE(flags$`no-pager`)
@@ -976,7 +1064,7 @@ cli_main <- function(args=commandArgs(trailingOnly=TRUE)) {
             projects=flags$project, models=flags$model,
             predictions=flags$prediction,
             visualizations=flags$visualization,
-            comparisons=flags$comparison, datasets=flags$dataset,
+            comparisons=flags$comparison, tests=flags$test, datasets=flags$dataset,
             work=isTRUE(flags$work), logs=isTRUE(flags$logs),
             force=isTRUE(flags$force)
         )

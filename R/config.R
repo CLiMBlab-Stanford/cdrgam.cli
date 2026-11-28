@@ -1,3 +1,14 @@
+.cdrgam_cli_dataset_keys <- c('schema', 'sources', 'columns', 'filters', 'preprocess')
+.cdrgam_cli_source_keys <- c('path', 'format', 'separator', 'types')
+.cdrgam_cli_dataset_column_keys <- c(
+    'series', 'impulse_time', 'response_time', 'factors', 'factor_interactions', 'row_id'
+)
+.cdrgam_cli_comparison_keys <- c('schema', 'models', 'evaluation', 'methods')
+.cdrgam_cli_visualization_keys <- c(
+    'schema', 'model', 'kind', 'predictions', 'pages', 'query', 'layers', 'lines',
+    'render', 'preset', 'options'
+)
+
 .cdrgam_cli_definition_files <- function(root, kind) {
     directory <- file.path(root, 'definitions', kind)
     if (!dir.exists(directory)) return(character())
@@ -11,6 +22,7 @@
         model='model',
         visualization='visualization',
         comparison='comparison',
+        test='test',
         .cdrgam_cli_abort(paste0('Unknown definition type: ', type))
     )
 }
@@ -68,10 +80,7 @@
 }
 
 .cdrgam_cli_validate_source <- function(value, field, root, check_exists=TRUE) {
-    .cdrgam_cli_check_keys(
-        value, c('path', 'format', 'separator', 'types'), field,
-        c('path', 'format')
-    )
+    .cdrgam_cli_check_keys(value, .cdrgam_cli_source_keys, field, c('path', 'format'))
     path_text <- .cdrgam_cli_scalar_character(value$path, paste0(field, '.path'))
     format <- match.arg(
         .cdrgam_cli_scalar_character(value$format, paste0(field, '.format')),
@@ -125,8 +134,7 @@
     .cdrgam_cli_validate_schema(value, path)
     .cdrgam_cli_reject_definition_identity(value, 'dataset', path)
     .cdrgam_cli_check_keys(
-        value, c('schema', 'sources', 'columns', 'filters', 'preprocess'), path,
-        c('schema', 'sources', 'columns')
+        value, .cdrgam_cli_dataset_keys, path, c('schema', 'sources', 'columns')
     )
     .cdrgam_cli_check_keys(
         value$sources, c('impulses', 'responses'), paste0(path, ': sources'),
@@ -142,10 +150,7 @@
     )
     .cdrgam_cli_check_keys(
         value$columns,
-        c(
-            'series', 'impulse_time', 'response_time', 'factors',
-            'factor_interactions', 'row_id'
-        ),
+        .cdrgam_cli_dataset_column_keys,
         paste0(path, ': columns'),
         c('impulse_time', 'response_time')
     )
@@ -285,11 +290,18 @@
     'intercept_only_parameter'
 )
 
+.cdrgam_cli_model_keys <- c(
+    'schema', 'datasets', 'formula', 'window', .cdrgam_cli_irf_default_keys, 'fit',
+    'autosimplify'
+)
+
+.cdrgam_cli_autosimplify_defaults <- function() list(
+    enabled=TRUE, max_steps=5L, conservatism=1,
+    allow=.cdrgam_cli_autosimplify_actions, protect=character()
+)
+
 .cdrgam_cli_validate_autosimplify <- function(value, path) {
-    defaults <- list(
-        enabled=TRUE, max_steps=5L, conservatism=1,
-        allow=.cdrgam_cli_autosimplify_actions, protect=character()
-    )
+    defaults <- .cdrgam_cli_autosimplify_defaults()
     if (is.logical(value) && length(value) == 1L && !is.na(value)) {
         defaults$enabled <- value
         return(defaults)
@@ -406,11 +418,7 @@
     .cdrgam_cli_validate_schema(value, path)
     .cdrgam_cli_reject_definition_identity(value, 'model', path)
     .cdrgam_cli_check_keys(
-        value, c(
-            'schema', 'datasets', 'formula', 'window',
-            .cdrgam_cli_irf_default_keys, 'fit', 'autosimplify'
-        ), path,
-        c('schema', 'datasets', 'formula')
+        value, .cdrgam_cli_model_keys, path, c('schema', 'datasets', 'formula')
     )
     if (!is.list(value$datasets) || is.null(names(value$datasets)) ||
             any(!nzchar(names(value$datasets))) || anyDuplicated(names(value$datasets))) {
@@ -632,10 +640,7 @@
     .cdrgam_cli_validate_schema(value, path)
     .cdrgam_cli_reject_definition_identity(value, 'visualization', path)
     .cdrgam_cli_check_keys(
-        value, c(
-            'schema', 'model', 'kind', 'predictions', 'pages',
-            'query', 'layers', 'render', 'preset', 'options'
-        ),
+        value, .cdrgam_cli_visualization_keys,
         path, c('schema', 'model')
     )
     value$model <- .cdrgam_cli_name(value$model, paste0(path, ': model'))
@@ -652,8 +657,14 @@
             !is.null(value$render))) {
         .cdrgam_cli_abort(paste0(path, ': booklet fields cannot be combined with query or render'))
     }
+    if (legacy && !is.null(value$lines)) {
+        .cdrgam_cli_abort(paste0(path, ': booklet fields cannot be combined with lines'))
+    }
+    if (!is.null(value$lines)) return(.cdrgam_cli_validate_lines_visualization(value, path))
     if (!legacy && (is.null(value$query) || is.null(value$render))) {
-        .cdrgam_cli_abort(paste0(path, ': effect visualizations require query and render'))
+        .cdrgam_cli_abort(paste0(
+            path, ': effect visualizations require render and either query or lines'
+        ))
     }
     if (!legacy && (!is.null(value$predictions) || !is.null(value$pages))) {
         .cdrgam_cli_abort(paste0(
@@ -702,7 +713,7 @@
                     layer$groups <- as.character(unlist(layer$groups, use.names=FALSE))
                 }
                 if (!is.null(layer$interval)) layer$interval <- match.arg(
-                    layer$interval, c('ribbon', 'lines', 'none')
+                    layer$interval, c('ribbon', 'lines', 'errorbar', 'none')
                 )
                 if (!is.null(layer$style)) {
                     .cdrgam_cli_check_keys(
@@ -730,7 +741,123 @@
         value$render <- .cdrgam_cli_validate_render(
             value$render, paste0(path, ': render')
         )
+        # Surfaces have no per-layer interval display, so their layers keep
+        # accepting the line intervals.
+        suitable <- if (value$render$geometry %in% .cdrgam_cli_surface_geometries) {
+            c('ribbon', 'lines', 'none')
+        } else .cdrgam_cli_geometry_intervals(value$render$geometry)
+        for (index in seq_along(value$layers)) {
+            interval <- value$layers[[index]]$interval
+            if (is.null(interval) || interval %in% suitable) next
+            .cdrgam_cli_abort(paste0(
+                path, ': layers[[', index, ']].interval ', interval,
+                ' does not suit ', value$render$geometry, ' geometry'
+            ))
+        }
     }
+    attr(value, 'path') <- path
+    value
+}
+
+# The query fields a line may set, and that the definition's `query` may
+# set for every line to inherit.
+.cdrgam_cli_line_query_fields <- c(
+    'composition', 'grouping', 'groups', 'axes', 'reference', 'test', 'uncertainty', 'n'
+)
+
+# A line's query fields over the inherited defaults. A line's value replaces
+# the default for the same field, except that `axes` and `reference` are
+# merged per axis (axes.predictors per predictor) and `uncertainty` per
+# setting, so a line can change one axis and inherit the others.
+.cdrgam_cli_inherit_query <- function(defaults, line) {
+    merged <- defaults
+    per_key <- function(base, override) {
+        if (is.null(base)) return(override)
+        if (is.null(override)) return(base)
+        for (key in names(override)) base[[key]] <- override[[key]]
+        base
+    }
+    for (name in intersect(.cdrgam_cli_line_query_fields, names(line))) {
+        value <- line[[name]]
+        merged[[name]] <- switch(
+            name,
+            axes={
+                axes <- per_key(merged$axes, value[setdiff(names(value), 'predictors')])
+                if (!is.null(value$predictors)) {
+                    axes$predictors <- per_key(merged$axes$predictors, value$predictors)
+                }
+                axes
+            },
+            reference=, uncertainty=per_key(merged[[name]], value),
+            value
+        )
+    }
+    merged
+}
+
+# A visualization of `lines`: each line is one effect query for one term,
+# drawn on a shared plot. The definition's `model` and `query` give
+# defaults that every line inherits (see .cdrgam_cli_inherit_query()) and
+# may override. Each line has an optional `id` (default line1, line2, ...),
+# `label` (default its term, with its model when that differs from the
+# definition's), and `model`, and a required `term`, the exact term label.
+# `render.mappings` defaults to the line's horizontal axis, the estimate,
+# and color by line; the columns `line` and `.line_x` are available to
+# mappings. Layers are not used: each line sets its own composition and
+# grouping.
+.cdrgam_cli_validate_lines_visualization <- function(value, path) {
+    if (!is.null(value$layers)) .cdrgam_cli_abort(paste0(
+        path, ': lines set their own composition and grouping; remove layers'
+    ))
+    if (is.null(value$render)) .cdrgam_cli_abort(paste0(
+        path, ': effect visualizations require render and either query or lines'
+    ))
+    lines <- value$lines
+    if (!is.list(lines) || !length(lines) || !is.null(names(lines)) ||
+            any(!vapply(lines, is.list, logical(1)))) {
+        .cdrgam_cli_abort(paste0(path, ': lines must be a nonempty list of mappings'))
+    }
+    defaults <- .cdrgam_cli_null(value$query, list())
+    if (!is.list(defaults)) .cdrgam_cli_abort(paste0(path, ': query must be a mapping'))
+    defaults <- .cdrgam_cli_restore_yaml_keys(defaults, c('FALSE'='n'), paste0(path, ': query'))
+    if (!is.null(defaults$terms)) .cdrgam_cli_abort(paste0(
+        path, ': query.terms cannot be combined with lines; give each line its term'
+    ))
+    .cdrgam_cli_check_keys(defaults, .cdrgam_cli_line_query_fields, paste0(path, ': query'))
+    ids <- character(length(lines))
+    for (index in seq_along(lines)) {
+        field <- paste0(path, ': lines[[', index, ']]')
+        line <- .cdrgam_cli_restore_yaml_keys(lines[[index]], c('FALSE'='n'), field)
+        .cdrgam_cli_check_keys(
+            line, c('id', 'label', 'model', 'term', .cdrgam_cli_line_query_fields),
+            field, 'term'
+        )
+        term <- .cdrgam_cli_scalar_character(line$term, paste0(field, '.term'))
+        model <- .cdrgam_cli_name(
+            .cdrgam_cli_null(line$model, value$model), paste0(field, '.model')
+        )
+        id <- .cdrgam_cli_name(
+            .cdrgam_cli_null(line$id, paste0('line', index)), paste0(field, '.id')
+        )
+        label <- if (is.null(line$label)) {
+            if (identical(model, value$model)) term else paste0(model, ': ', term)
+        } else .cdrgam_cli_scalar_character(line$label, paste0(field, '.label'))
+        query <- .cdrgam_cli_inherit_query(defaults, line)
+        query$terms <- list(names=term, match='exact')
+        query <- .cdrgam_cli_validate_effect_query(query, paste0(field, ' query'))
+        lines[[index]] <- list(id=id, label=label, model=model, query=query)
+        ids[[index]] <- id
+    }
+    if (anyDuplicated(ids)) .cdrgam_cli_abort(paste0(path, ': line ids must be unique'))
+    value$query <- NULL
+    value$lines <- lines
+    if (is.list(value$render) && is.null(value$render$mappings)) {
+        value$render$mappings <- .cdrgam_cli_lines_mappings(value$render$statistic)
+    }
+    value$render <- .cdrgam_cli_validate_render(value$render, paste0(path, ': render'))
+    if (value$render$geometry %in% .cdrgam_cli_surface_geometries) .cdrgam_cli_abort(
+        paste0(path, ': lines are drawn with line, point, or bar geometry')
+    )
     attr(value, 'path') <- path
     value
 }
@@ -758,8 +885,13 @@
     trimws(value)
 }
 
-.cdrgam_cli_validate_axis_request <- function(value, field, lag=FALSE) {
+# `pointwise` admits peak-pointwise and peak-pointwise-neg, as a string or
+# as `at`, for a query's fixed lag.
+.cdrgam_cli_validate_axis_request <- function(value, field, lag=FALSE, pointwise=FALSE) {
     if (is.numeric(value)) return(as.numeric(value))
+    if (pointwise && !is.null(.cdrgam_cli_pointwise_direction(value))) {
+        return(if (is.list(value)) list(at=trimws(value$at)) else trimws(value))
+    }
     if (is.character(value) && length(value) == 1L) {
         return(.cdrgam_cli_validate_value(value, field, lag))
     }
@@ -880,7 +1012,8 @@
     .cdrgam_cli_check_keys(value$axes, c('lag', 'time', 'predictors'), paste0(field, '.axes'))
     for (name in intersect(c('lag', 'time'), names(value$axes))) {
         value$axes[[name]] <- .cdrgam_cli_validate_axis_request(
-            value$axes[[name]], paste0(field, '.axes.', name), lag=identical(name, 'lag')
+            value$axes[[name]], paste0(field, '.axes.', name), lag=identical(name, 'lag'),
+            pointwise=identical(name, 'lag')
         )
     }
     if (!is.null(value$axes$predictors)) {
@@ -981,80 +1114,11 @@
     }
     value$n <- .cdrgam_cli_positive_integer(.cdrgam_cli_null(value$n, 200L), paste0(field, '.n'))
     if (value$n < 2L) .cdrgam_cli_abort(paste0(field, '.n must be at least two'))
-    value
-}
-
-.cdrgam_cli_validate_render <- function(value, field) {
-    if (!is.list(value)) .cdrgam_cli_abort(paste0(field, ' must be a mapping'))
-    .cdrgam_cli_check_keys(
-        value,
-        c(
-            'geometry', 'mappings', 'interval', 'theme', 'formats', 'width',
-            'height', 'dpi', 'title', 'xlab', 'ylab', 'palette', 'scales', 'peaks'
-        ),
-        field, c('geometry', 'mappings')
-    )
-    value$geometry <- match.arg(
-        value$geometry, c('line', 'raster', 'contour', 'raster-contour')
-    )
-    if (!is.list(value$mappings) || is.null(names(value$mappings))) {
-        .cdrgam_cli_abort(paste0(field, '.mappings must be a named mapping'))
-    }
-    value$mappings <- .cdrgam_cli_restore_yaml_keys(
-        value$mappings, c('TRUE'='y'), paste0(field, '.mappings')
-    )
-    .cdrgam_cli_check_keys(
-        value$mappings, c('x', 'y', 'color', 'fill', 'linetype', 'group', 'facet'),
-        paste0(field, '.mappings'), c('x')
-    )
-    value$mappings <- lapply(value$mappings, .cdrgam_cli_scalar_character,
-        field=paste0(field, '.mappings value'))
-    value$interval <- match.arg(
-        .cdrgam_cli_null(value$interval, 'ribbon'), c('ribbon', 'lines', 'companion', 'none')
-    )
-    if (is.null(value$mappings$y)) {
-        .cdrgam_cli_abort(paste0(field, '.mappings.y is required'))
-    }
-    if (identical(value$geometry, 'line') && identical(value$interval, 'companion')) {
-        .cdrgam_cli_abort(paste0(field, '.interval companion requires a surface geometry'))
-    }
-    if (!identical(value$geometry, 'line') &&
-            value$interval %in% c('ribbon', 'lines')) {
-        .cdrgam_cli_abort(paste0(
-            field, '.interval ribbon and lines require line geometry'
+    if (!is.null(.cdrgam_cli_pointwise_direction(value$axes$lag))) {
+        lag <- if (is.list(value$axes$lag)) value$axes$lag$at else value$axes$lag
+        if (isTRUE(value$test)) .cdrgam_cli_abort(paste0(
+            field, '.axes.lag ', lag, ' cannot be combined with test'
         ))
-    }
-    if (value$geometry %in% c('raster', 'raster-contour') &&
-            is.null(value$mappings$fill)) {
-        .cdrgam_cli_abort(paste0(field, '.mappings.fill is required for raster geometry'))
-    }
-    value$theme <- match.arg(
-        .cdrgam_cli_null(value$theme, 'paper'), c('paper', 'minimal', 'slides')
-    )
-    if (!is.null(value$palette)) value$palette <- match.arg(
-        .cdrgam_cli_scalar_character(value$palette, paste0(field, '.palette')),
-        c('default', 'rainbow')
-    )
-    if (!is.null(value$peaks)) value$peaks <- match.arg(
-        .cdrgam_cli_scalar_character(value$peaks, paste0(field, '.peaks')),
-        c('auto', 'always', 'never')
-    )
-    if (!is.null(value$scales)) value$scales <- match.arg(
-        .cdrgam_cli_scalar_character(value$scales, paste0(field, '.scales')),
-        c('fixed', 'free', 'free_x', 'free_y')
-    )
-    value$formats <- .cdrgam_cli_null(value$formats, 'pdf')
-    value$formats <- unique(as.character(unlist(value$formats, use.names=FALSE)))
-    if (!length(value$formats) || any(!(value$formats %in% c('pdf', 'png', 'svg')))) {
-        .cdrgam_cli_abort(paste0(field, '.formats supports pdf, png, and svg'))
-    }
-    for (name in c('width', 'height', 'dpi')) if (!is.null(value[[name]]) &&
-            (!is.numeric(value[[name]]) || length(value[[name]]) != 1L ||
-             !is.finite(value[[name]]) || value[[name]] <= 0)) {
-        .cdrgam_cli_abort(paste0(field, '.', name, ' must be positive'))
-    }
-    for (name in c('title', 'xlab', 'ylab')) if (!is.null(value[[name]])) {
-        value[[name]] <- .cdrgam_cli_scalar_character(value[[name]], paste0(field, '.', name))
     }
     value
 }
@@ -1063,8 +1127,7 @@
     .cdrgam_cli_validate_schema(value, path)
     .cdrgam_cli_reject_definition_identity(value, 'comparison', path)
     .cdrgam_cli_check_keys(
-        value, c('schema', 'models', 'evaluation', 'methods'),
-        path, c('schema', 'models', 'methods')
+        value, .cdrgam_cli_comparison_keys, path, c('schema', 'models', 'methods')
     )
     if (!is.character(value$models) || length(value$models) < 2L) {
         .cdrgam_cli_abort(paste0(path, ': models must contain at least two names'))
@@ -1115,7 +1178,8 @@
         type <- switch(
             directory,
             datasets='dataset', models='model',
-            visualizations='visualization', comparisons='comparison'
+            visualizations='visualization', comparisons='comparison',
+            tests='test'
         )
         values <- lapply(files, function(path) {
             value <- validator(.cdrgam_cli_read_yaml(path), path, ...)
@@ -1133,6 +1197,7 @@
     models <- read_kind('models', .cdrgam_cli_validate_model)
     visualizations <- read_kind('visualizations', .cdrgam_cli_validate_visualization)
     comparisons <- read_kind('comparisons', .cdrgam_cli_validate_comparison)
+    tests <- read_kind('tests', .cdrgam_cli_validate_test)
     model_datasets <- unique(unlist(lapply(models, function(value) {
         unlist(value$datasets, use.names=FALSE)
     })))
@@ -1158,9 +1223,18 @@
             'Comparisons reference missing models: ', paste(missing_models, collapse=', ')
         ))
     }
+    missing_test_models <- setdiff(
+        vapply(tests, `[[`, character(1), 'model'), names(models)
+    )
+    if (length(missing_test_models)) {
+        .cdrgam_cli_abort(paste0(
+            'Tests reference missing models: ',
+            paste(unique(missing_test_models), collapse=', ')
+        ))
+    }
     list(
         root=root, project=project, datasets=datasets, models=models,
-        visualizations=visualizations, comparisons=comparisons,
+        visualizations=visualizations, comparisons=comparisons, tests=tests,
         site=.cdrgam_cli_site(checkout)
     )
 }

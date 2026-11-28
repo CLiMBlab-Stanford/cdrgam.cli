@@ -1,0 +1,5 @@
+project	model	identity	state	formula	fitted_formula	family_link	method	estimator	window	lag_basis	time_basis	predictor_basis	rescale	center	rank	autosimplify
+kinds-project	a	7b3acb2ec8aee7c2	preview	response ~ irf(x)		gaussian(identity)	REML	mgcv gam	0,1	cr, k=5	none	linear	true	true	error	disabled
+kinds-project	b	946f95c63b8825ac	preview	response ~ irf(x)		gaussian(identity)	REML	mgcv bam	0,1	cr, k=5	none	linear	true	true	error	disabled
+methods-project	main	6fef0ec4312f18e3	preview	response ~ irf(x)		gaussian(identity)	REML	mgcv gam	0,1	cr, k=5	none	linear	true	true	error	disabled
+methods-project	other	aa40e0d887230c3a	preview	response ~ irf(x)		gaussian(identity)	REML	mgcv gam	0,1	cr, k=6	none	linear	true	true	error	disabled

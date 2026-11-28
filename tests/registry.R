@@ -213,4 +213,47 @@ remaining <- internal('.cdrgam_cli_registry_exec')(
 )$n[[1L]]
 stopifnot(remaining == 0L)
 
+# Parallel jobs sharing a work item: a freshly claimed attempt is marked
+# running, so a second allocation neither prunes it nor starts a duplicate,
+# and an explicit worker path leaves the other claim in place.
+shared <- list(
+    key='prediction:project-registry-test:shared:race-identity',
+    project='example', kind='prediction', name='shared', identity='race-identity',
+    output=file.path(project, 'results', 'models', 'shared', 'predictions', 'race'),
+    dependencies=character()
+)
+first <- internal('.cdrgam_cli_attempt_directory')(definitions, shared)$path
+claim <- yaml::read_yaml(file.path(first, 'attempt.yml'))
+stopifnot(identical(claim$status, 'running'), identical(claim$pid, Sys.getpid()))
+second <- tryCatch(
+    internal('.cdrgam_cli_attempt_directory')(definitions, shared),
+    error=conditionMessage
+)
+stopifnot(is.character(second), grepl('appears active', second), dir.exists(first))
+active <- tryCatch(
+    internal('.cdrgam_cli_attempt_directory')(definitions, shared),
+    cdrgam_cli_attempt_active=function(condition) condition
+)
+stopifnot(inherits(active, 'cdrgam_cli_attempt_active'))
+# A waiting job reuses the artifact once the running job publishes it.
+manifest_path <- internal('.cdrgam_cli_manifest_path')(shared$output)
+dir.create(dirname(manifest_path), recursive=TRUE, showWarnings=FALSE)
+saveRDS(1, file.path(shared$output, 'predictions.rds'))
+internal('.cdrgam_cli_write_yaml')(list(
+    schema=1L, status='complete', kind='prediction', identity=shared$identity,
+    outputs=internal('.cdrgam_cli_output_manifest')(shared$output, 'predictions.rds')
+), manifest_path)
+stopifnot(
+    internal('.cdrgam_cli_complete_artifact')(shared$output, shared$identity),
+    is.null(internal('.cdrgam_cli_await_attempt_directory')(
+        definitions, shared, poll=0
+    ))
+)
+unlink(shared$output, recursive=TRUE)
+other <- file.path(dirname(first), 'explicit')
+dir.create(other)
+invisible(internal('.cdrgam_cli_attempt_directory')(definitions, shared, explicit=other))
+stopifnot(dir.exists(first), dir.exists(other))
+unlink(dirname(first), recursive=TRUE)
+
 cat('registry: ok\n')

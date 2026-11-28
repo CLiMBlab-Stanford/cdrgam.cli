@@ -5,6 +5,7 @@
         model='models',
         visualization='visualizations',
         comparison='comparisons',
+        test='tests',
         analysis='analyses'
     )
     file.path(root, 'definitions', directory, paste0(name, '.yml'))
@@ -71,6 +72,21 @@
             schema=1L,
             models=selected,
             methods='mse'
+        ))
+    }
+    if (identical(type, 'test')) {
+        models <- names(definitions$models)
+        return(list(
+            schema=1L,
+            model=if (length(models)) models[[1L]] else 'choose-model',
+            terms=list('*'),
+            effects=list(response=list(
+                terms='choose-term', axes=list(lag=list(grid='fitted', n=50L))
+            )),
+            estimands=list(
+                whole=list(wood='response'), area=list(area='response'),
+                peak=list(peak_lag='response')
+            )
         ))
     }
     .cdrgam_cli_abort(paste0('No starter definition is available for ', type))
@@ -187,7 +203,8 @@
         ),
         model=.cdrgam_cli_validate_model(value, path),
         visualization=.cdrgam_cli_validate_visualization(value, path),
-        comparison=.cdrgam_cli_validate_comparison(value, path)
+        comparison=.cdrgam_cli_validate_comparison(value, path),
+        test=.cdrgam_cli_validate_test(value, path)
     )
     validated <- .cdrgam_cli_assign_definition_identity(
         validated, type, name, path
@@ -199,10 +216,10 @@
             path, ': model references missing datasets: ',
             paste(missing, collapse=', ')
         ))
-    } else if (identical(type, 'visualization') &&
+    } else if (type %in% c('visualization', 'test') &&
             !(validated$model %in% names(definitions$models))) {
         .cdrgam_cli_abort(paste0(
-            path, ': visualization references missing model ', validated$model
+            path, ': ', type, ' references missing model ', validated$model
         ))
     } else if (identical(type, 'comparison')) {
         missing <- setdiff(validated$models, names(definitions$models))
@@ -375,7 +392,11 @@
         comparisons <- names(Filter(function(comparison) {
             name %in% as.character(unlist(comparison$models, use.names=FALSE))
         }, comparisons))
+        tests <- names(Filter(function(test) {
+            name %in% as.character(unlist(test$model, use.names=FALSE))
+        }, .cdrgam_cli_reference_definitions(root, 'tests', paste('model', name))))
         return(c(
+            if (length(tests)) paste0('test ', tests) else character(),
             if (length(visualizations)) {
                 paste0('visualization ', visualizations)
             } else character(),
@@ -407,7 +428,8 @@
                 )
             }, character(1))
         },
-        comparison=.cdrgam_cli_path(definitions, 'comparison', name)
+        comparison=.cdrgam_cli_path(definitions, 'comparison', name),
+        test=.cdrgam_cli_path(definitions, 'test', name)
     )
 }
 
@@ -417,7 +439,8 @@
         dataset=paste('--dataset', name),
         model=paste('-m', name),
         visualization=paste('-v', name),
-        comparison=paste('-c', name)
+        comparison=paste('-c', name),
+        test=paste('-t', name)
     )
     paste('cdrgam purge -P', project, selector)
 }
@@ -450,7 +473,7 @@
     directory <- switch(
         type,
         dataset='datasets', model='models', visualization='visualizations',
-        comparison='comparisons',
+        comparison='comparisons', test='tests',
         .cdrgam_cli_abort(paste0('Unsupported definition type: ', type))
     )
     patterns <- if (identical(operation, 'mv')) {
@@ -468,7 +491,7 @@
             )
         )
         all(vapply(patterns, function(pattern) {
-            if (literal) {
+            if (literal && !.cdrgam_cli_is_name_pattern(pattern)) {
                 pattern %in% available
             } else {
                 length(.cdrgam_cli_match_name_pattern(
@@ -494,7 +517,7 @@
 .cdrgam_cli_list_definitions <- function(
         project, selectors=list(), checkout=NULL
 ) {
-    supported <- c('dataset', 'model', 'visualization', 'comparison')
+    supported <- c('dataset', 'model', 'visualization', 'comparison', 'test')
     unexpected <- setdiff(names(selectors), supported)
     if (length(unexpected)) {
         .cdrgam_cli_abort(paste0(
@@ -575,7 +598,7 @@
     }
     directories <- c(
         dataset='datasets', model='models',
-        visualization='visualizations', comparison='comparisons'
+        visualization='visualizations', comparison='comparisons', test='tests'
     )
     for (type in selected_types) {
         files <- .cdrgam_cli_definition_files(root, directories[[type]])
@@ -610,7 +633,7 @@
     directory <- switch(
         type,
         dataset='datasets', model='models',
-        visualization='visualizations', comparison='comparisons'
+        visualization='visualizations', comparison='comparisons', test='tests'
     )
     files <- .cdrgam_cli_definition_files(root, directory)
     available <- sub('\\.ya?ml$', '', basename(files))
@@ -947,7 +970,7 @@ cdrgam_cli_def <- function(
             anyNA(name) || any(!nzchar(name)))) {
         .cdrgam_cli_abort('Definition names must be a nonempty string list')
     }
-    supported <- c('dataset', 'model', 'visualization', 'comparison')
+    supported <- c('dataset', 'model', 'visualization', 'comparison', 'test')
     if (!is.null(type) && !(type %in% supported)) {
         .cdrgam_cli_abort(paste0(
             'Unsupported definition type: ', type, '. Expected: ',
@@ -1035,13 +1058,45 @@ cdrgam_cli_def <- function(
             project, type, name, cdrgam_root
         ))
     }
-    names <- vapply(
-        name, .cdrgam_cli_name, character(1), field=paste0(type, ' name')
-    )
+    names <- .cdrgam_cli_edit_names(project, type, name, source, cdrgam_root)
     paths <- vapply(names, function(name) {
         .cdrgam_cli_define_definition(
             project, type, name, source, cdrgam_root, editor
         )
     }, character(1))
     invisible(stats::setNames(paths, names))
+}
+
+# Whether a selector value is a pattern, a `*` glob or an `re:` regular
+# expression, rather than a literal name.
+.cdrgam_cli_is_name_pattern <- function(value) {
+    startsWith(value, 're:') || grepl('*', value, fixed=TRUE)
+}
+
+# The names def edit opens, in order: a literal name as given, which may
+# create the definition, and each pattern expanded to the existing
+# definitions it matches. A pattern that matches nothing is an error, and
+# patterns cannot be combined with a source, which creates definitions.
+.cdrgam_cli_edit_names <- function(project, type, values, source=NULL, checkout=NULL) {
+    patterns <- vapply(values, .cdrgam_cli_is_name_pattern, logical(1))
+    if (any(patterns) && !is.null(source)) .cdrgam_cli_abort(paste0(
+        'def edit --source creates definitions, so its ', type,
+        ' names must be literal, not patterns: ',
+        paste(values[patterns], collapse=', ')
+    ))
+    available <- if (any(patterns)) {
+        root <- find_cdrgam_project(project, checkout)
+        directory <- switch(
+            type,
+            dataset='datasets', model='models',
+            visualization='visualizations', comparison='comparisons', test='tests'
+        )
+        sub('\\.ya?ml$', '', basename(.cdrgam_cli_definition_files(root, directory)))
+    } else character()
+    names <- unlist(lapply(seq_along(values), function(index) {
+        if (patterns[[index]]) {
+            .cdrgam_cli_match_names(values[[index]], available, type)
+        } else .cdrgam_cli_name(values[[index]], paste0(type, ' name'))
+    }), use.names=FALSE)
+    unique(names)
 }

@@ -127,100 +127,115 @@
     )
 }
 
-.cdrgam_cli_viz_peak <- function(fit, term, cache=new.env(), n=200L) {
-    if (is.null(fit) || is.null(term$catalog)) return(NULL)
-    .cdrgam_cli_peak_function(fit, term$catalog, n=n, cache=cache)
-}
-
-# Build an estimate_effect() axis request. Varying axes span the fitted domain
-# unless `ranges` gives explicit limits; every other axis is fixed at the value
-# in `fixed`, which may be an expression, or at lag 0 and the training mean of
-# other axes when no value is given. `fit` is needed only to resolve peaks;
-# `peak` may instead supply a lookup from .cdrgam_cli_viz_peak().
-.cdrgam_cli_viz_axes <- function(
-        term, varying, fixed=list(), n=200L, ranges=list(), fit=NULL,
-        peak=.cdrgam_cli_viz_peak(fit, term)
-) {
+# A viewer line or surface as an effect query, in the form a visualization
+# definition writes. `spec` holds term, varying, fixed, composition,
+# grouping, group, and optional reference values and `ranges`; `options`
+# holds n, level, unconditional, interval, and optional `ticks`, the x
+# values of a line, and optional `x_range`, the low and high ends of a
+# line's x axis as numbers or value expressions, "" for the fitted end.
+# Varying axes span the fitted domain, or `ranges` gives their limits, or
+# `ticks` their values, or `x_range` the range of a line's one varying
+# axis. Every other axis is fixed at its
+# value in `fixed`, which may be an expression, or at lag 0 and the training
+# mean. An axis with no stored training summary is held at the midpoint of
+# its fitted domain instead, and its expressions are resolved here, since a
+# definition's query could not resolve them. A NA reference is the model
+# default. Returns the validated query.
+.cdrgam_cli_viz_line_query <- function(term, spec, options=list()) {
+    varying <- as.character(spec$varying)
     unknown <- setdiff(varying, names(term$axes))
-    if (length(unknown)) {
-        .cdrgam_cli_abort(paste0(
-            'Term ', term$label, ' has no axis ', paste(unknown, collapse=', ')
-        ))
-    }
-    output <- lapply(term$axes, function(axis) {
-        name <- axis$name
-        if (name %in% varying) {
-            limits <- ranges[[name]]
-            if (length(limits) == 2L && all(is.finite(as.numeric(limits)))) {
-                limits <- sort(as.numeric(limits))
-                return(list(values=seq(limits[[1L]], limits[[2L]], length.out=n)))
-            }
-            return(list(grid='fitted', n=as.integer(n)))
-        }
-        value <- fixed[[name]]
-        if (is.null(value) || (length(value) == 1L && is.na(value))) {
+    if (length(unknown)) .cdrgam_cli_abort(paste0(
+        'Term ', term$label, ' has no axis ', paste(unknown, collapse=', ')
+    ))
+    n <- as.integer(.cdrgam_cli_null(options$n, 200L))
+    ticks <- options$ticks
+    fixed <- .cdrgam_cli_null(spec$fixed, list())
+    ranges <- .cdrgam_cli_null(spec$ranges, list())
+    roles <- .cdrgam_cli_term_axes(.cdrgam_cli_null(term$catalog, list(
+        label=term$label, axes=names(term$axes), predictors=setdiff(names(term$axes),
+            c('lag', 'time'))
+    )))
+    summarized <- function(name) is.finite(term$axes[[name]]$mean)
+    value_of <- function(name, value) {
+        if (is.null(value) || (length(value) == 1L && !is.character(value) && is.na(value))) {
             value <- .cdrgam_cli_viz_default(name)
-            if (identical(value, 'mean') && !is.finite(axis$mean)) value <- 'median'
         }
-        value <- .cdrgam_cli_viz_resolve(term, name, value, peak)
-        if (!is.finite(value)) {
-            .cdrgam_cli_abort(paste0('Set a value for axis ', name))
+        if (identical(name, 'lag') || summarized(name) || is.numeric(value)) return(value)
+        if (identical(value, 'mean')) value <- 'median'
+        .cdrgam_cli_viz_resolve(term, name, value)
+    }
+    axes <- list()
+    place <- function(name, request) {
+        if (identical(name, 'lag')) axes$lag <<- request
+        else if (name %in% roles$time) axes$time <<- request
+        else axes$predictors[[name]] <<- request
+    }
+    for (name in names(term$axes)) {
+        request <- if (name %in% varying) {
+            limits <- ranges[[name]]
+            if (length(ticks) && length(varying) == 1L) {
+                list(values=ticks)
+            } else if (length(limits) == 2L && all(is.finite(as.numeric(limits)))) {
+                limits <- sort(as.numeric(limits))
+                list(values=seq(limits[[1L]], limits[[2L]], length.out=n))
+            } else if (length(options$x_range) == 2L && length(varying) == 1L &&
+                    any(nzchar(options$x_range))) {
+                # An empty end is the fitted end; expressions are resolved by
+                # the query, or here for an axis without training summaries.
+                ends <- lapply(1:2, function(end) {
+                    text <- options$x_range[[end]]
+                    axis <- term$axes[[name]]
+                    if (!nzchar(text)) return(c(axis$min, axis$max)[[end]])
+                    number <- suppressWarnings(as.numeric(text))
+                    if (is.finite(number)) return(number)
+                    if (summarized(name)) text else .cdrgam_cli_viz_resolve(term, name, text)
+                })
+                list(range=ends, n=n)
+            } else list(grid='fitted', n=n)
+        } else value_of(name, fixed[[name]])
+        place(name, request)
+    }
+    query <- list(
+        terms=list(names=term$label, match='exact'),
+        composition=.cdrgam_cli_null(spec$composition, 'term'),
+        grouping=.cdrgam_cli_null(spec$grouping, 'population'),
+        axes=axes,
+        uncertainty=list(
+            level=.cdrgam_cli_null(options$level, 0.95),
+            kind=.cdrgam_cli_null(options$interval, 'pointwise'),
+            unconditional=isTRUE(options$unconditional)
+        ),
+        n=n
+    )
+    if (!identical(query$grouping, 'population')) {
+        if (isTRUE(term$grouped)) query$groups <- spec[['group']] else {
+            query$grouping <- 'population'
         }
-        list(at=value)
-    })
-    names(output) <- names(term$axes)
-    output
+    }
+    if (length(spec$reference)) {
+        query$reference <- stats::setNames(lapply(names(spec$reference), function(name) {
+            value <- spec$reference[[name]]
+            if (length(value) == 1L && !is.character(value) && is.na(value)) return('default')
+            if (identical(name, 'lag') || summarized(name) || is.numeric(value)) return(value)
+            .cdrgam_cli_viz_resolve(term, name, value)
+        }), names(spec$reference))
+    }
+    .cdrgam_cli_validate_effect_query(query, paste0(term$label, ' line'))
 }
 
-# Evaluate one line or surface specification. `spec` holds term, varying,
-# fixed, composition, grouping, group, and optional reference values, where NA
-# leaves a predictor at the model default; fixed and reference values may be
-# expressions. `options` holds n, level, unconditional, and interval
-# (pointwise or simultaneous). Attribute `peaks` holds the peaks the line
-# used, from .cdrgam_cli_peak_summary(), or NULL.
-.cdrgam_cli_viz_estimate <- function(fit, term, spec, options=list()) {
-    n <- as.integer(.cdrgam_cli_null(options$n, 200L))
-    level <- .cdrgam_cli_null(options$level, 0.95)
-    grouping <- .cdrgam_cli_null(spec$grouping, 'population')
-    groups <- if (identical(grouping, 'population')) NULL else spec[['group']]
-    if (!identical(grouping, 'population') && !isTRUE(term$grouped)) {
-        grouping <- 'population'
-        groups <- NULL
-    }
-    peaks <- new.env()
-    peak <- .cdrgam_cli_viz_peak(fit, term, peaks, n)
-    # Pass reference only when set, so that older cores without the argument
-    # still evaluate ordinary lines.
-    resolved <- if (length(spec$reference)) stats::setNames(lapply(
-        names(spec$reference), function(name) {
-            .cdrgam_cli_viz_resolve(term, name, spec$reference[[name]], peak)
-        }
-    ), names(spec$reference)) else NULL
-    reference <- if (length(resolved)) list(reference=resolved) else list()
-    composition <- .cdrgam_cli_null(spec$composition, 'term')
-    unconditional <- isTRUE(options$unconditional)
-    value <- do.call(.cdrgam_cli_core_estimate_effect, c(list(
-        fit,
-        terms=term$label,
-        axes=.cdrgam_cli_viz_axes(
-            term, spec$varying, .cdrgam_cli_null(spec$fixed, list()), n,
-            .cdrgam_cli_null(spec$ranges, list()), fit, peak
-        ),
-        composition=composition,
-        grouping=grouping, groups=groups, se=TRUE,
-        unconditional=unconditional, level=level, n=n
-    ), reference))
-    if (identical(options$interval, 'simultaneous')) {
-        value <- .cdrgam_cli_simultaneous_band(fit, value, list(
-            term=term$label, axes_names=names(term$axes), reference=resolved,
-            composition=composition, grouping=grouping, groups=groups,
-            unconditional=unconditional
-        ), level)
-    }
-    attr(value, 'peaks') <- if (!is.null(peak)) .cdrgam_cli_peak_summary(
-        fit, peaks, n=n, draws=.cdrgam_cli_peak_draws, level=level,
-        unconditional=unconditional
-    ) else NULL
+# Evaluate one viewer line or surface (see .cdrgam_cli_viz_line_query()) as
+# `cdrgam run` evaluates a query. The grid carries attributes `peaks` and
+# `pointwise_peaks` as from .cdrgam_cli_compute_effect(). `catalog` is the
+# fit's effect catalog, computed when not given.
+.cdrgam_cli_viz_estimate <- function(fit, term, spec, options=list(), catalog=NULL) {
+    query <- .cdrgam_cli_viz_line_query(term, spec, options)
+    training <- list(
+        impulses=NULL, responses=NULL,
+        catalog=.cdrgam_cli_null(catalog, .cdrgam_cli_core_effect_catalog(fit))
+    )
+    value <- .cdrgam_cli_compute_effect(fit, query, NULL, training)
+    attr(value, 'tests') <- NULL
+    attr(value, 'query') <- query
     value
 }
 

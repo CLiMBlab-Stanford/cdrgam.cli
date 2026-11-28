@@ -152,6 +152,24 @@ stopifnot(
 bad <- base
 bad$axes$predictors$wlen <- 'peak'
 expect_error(validate(bad, 'query'), 'only lag values')
+# peak-pointwise is accepted only as the whole fixed lag of a query with
+# pointwise intervals and no test.
+pointwise <- base
+pointwise$axes <- list(lag='peak-pointwise-neg')
+stopifnot(identical(validate(pointwise, 'query')$axes$lag, 'peak-pointwise-neg'))
+pointwise$axes <- list(lag=list(at='peak-pointwise'))
+stopifnot(identical(validate(pointwise, 'query')$axes$lag, list(at='peak-pointwise')))
+for (lag in list('peak-pointwise + 0.1', list(values=list('peak-pointwise')))) {
+    bad <- base
+    bad$axes <- list(lag=lag)
+    expect_error(validate(bad, 'query'), 'may only be the whole value of a fixed lag')
+}
+bad <- base
+bad$reference <- list(lag='peak-pointwise')
+expect_error(validate(bad, 'query'), 'may only be the whole value of a fixed lag')
+bad <- pointwise
+bad$test <- TRUE
+expect_error(validate(bad, 'query'), 'cannot be combined with test')
 bad <- base
 bad$reference <- list(wlen=list(range=list('mean', 'mean + sd')))
 expect_error(validate(bad, 'query'), 'must resolve to one value')
@@ -160,6 +178,12 @@ bad$uncertainty <- list(points=10L)
 expect_error(validate(bad, 'query'), 'requires kind simultaneous')
 bad$uncertainty <- list(kind='joint')
 expect_error(validate(bad, 'query'), 'pointwise or simultaneous')
+# A pointwise peak may take a simultaneous band.
+stopifnot(identical(
+    validate(modifyList(pointwise, list(uncertainty=list(kind='simultaneous'))),
+        'query')$uncertainty$kind,
+    'simultaneous'
+))
 
 # Presets expand into an ordinary query and render.
 visualization <- getFromNamespace('.cdrgam_cli_validate_visualization', 'cdrgam.cli')
@@ -262,6 +286,213 @@ stopifnot(
     length(unique(lines$group)) == 3L,
     all(table(lines$group) == 4L),
     'black' %in% lines$colour
+)
+
+validate_render <- getFromNamespace('.cdrgam_cli_validate_render', 'cdrgam.cli')
+
+# Point and bar geometries default to error bars; spacing, statistic, and
+# palette are checked and stay absent unless given.
+point_render <- validate_render(
+    list(geometry='point', mappings=list(x='lag', y='estimate')), 'render'
+)
+stopifnot(
+    identical(point_render$interval, 'errorbar'),
+    is.null(point_render$spacing), is.null(point_render$statistic),
+    is.null(point_render$palette)
+)
+line_render <- validate_render(
+    list(geometry='line', mappings=list(x='lag', y='estimate'), statistic='estimate'),
+    'render'
+)
+stopifnot(identical(line_render$interval, 'ribbon'), is.null(line_render$statistic))
+expect_error(validate_render(list(
+    geometry='line', mappings=list(x='lag', y='estimate'), interval='errorbar'
+), 'render'), 'requires point, connected-point, or bar')
+expect_error(validate_render(list(
+    geometry='bar', mappings=list(x='term', y='estimate'), interval='ribbon'
+), 'render'), 'requires line geometry')
+expect_error(validate_render(list(
+    geometry='line', mappings=list(x='lag', y='estimate'), statistic='peak-lag'
+), 'render'), 'requires point, connected-point, or bar')
+expect_error(validate_render(list(
+    geometry='raster', mappings=list(x='lag', y='x', fill='estimate'),
+    interval='none', spacing='uniform'
+), 'render'), 'spacing requires')
+stopifnot(
+    identical(validate_render(list(
+        geometry='line', mappings=list(x='lag', y='estimate'), palette='set1'
+    ), 'render')$palette, 'Set1'),
+    identical(validate_render(list(
+        geometry='line', mappings=list(x='lag', y='estimate'), palette='Magma'
+    ), 'render')$palette, 'magma'),
+    identical(validate_render(list(
+        geometry='line', mappings=list(x='lag', y='estimate'), palette='hue'
+    ), 'render')$palette, 'default')
+)
+expect_error(validate_render(list(
+    geometry='line', mappings=list(x='lag', y='estimate'), palette='nope'
+), 'render'), 'ColorBrewer')
+
+# A gradient lists two or more colors, normalized to hex, and colors the
+# levels at equal steps from the first color to the last.
+gradient <- validate_render(list(
+    geometry='line', mappings=list(x='lag', y='estimate'),
+    palette=list('#00f', 'rgb(255, 0, 0)', 'white')
+), 'render')$palette
+stopifnot(identical(gradient, c('#0000FF', '#FF0000', '#FFFFFF')))
+expect_error(validate_render(list(
+    geometry='line', mappings=list(x='lag', y='estimate'),
+    palette=list('#0000FF', 'rgb(300, 0, 0)')
+), 'render'), 'rgb\\(300, 0, 0\\)')
+palette_colors <- getFromNamespace('.cdrgam_cli_palette_colors', 'cdrgam.cli')
+stepped <- palette_colors(c('#000000', '#FFFFFF'), c('a', 'b', 'c'))
+stopifnot(
+    identical(unname(stepped), c('#000000', '#7F7F7F', '#FFFFFF')),
+    identical(names(stepped), c('a', 'b', 'c'))
+)
+
+# Points over a few lag ticks: uniform spacing puts them at 1, 2, 3 with the
+# lag values as labels; linear spacing at the lags themselves. Series sharing
+# an x position are dodged.
+ticks <- expand.grid(lag=c(0, 0.1, 1), term=c('x', 'y'), stringsAsFactors=FALSE)
+ticks <- transform(
+    ticks, term_id=paste0('irf-', term), group=NA_character_, composition='term',
+    grouping='population', estimate=lag + (term == 'y'), se=0.1,
+    lower=lag - 0.2, upper=lag + 0.2, layer='estimate'
+)
+point_definition <- list(
+    query=validate(list(terms=c('x', 'y')), 'query'),
+    render=validate_render(list(
+        geometry='point', mappings=list(x='lag', y='estimate', color='term'),
+        spacing='uniform', palette='Dark2'
+    ), 'render')
+)
+built <- ggplot2::ggplot_build(plot_effect(ticks, point_definition))
+points <- built$data[[length(built$data)]]
+bars <- built$data[[length(built$data) - 1L]]
+stopifnot(
+    nrow(points) == 6L, all(abs(round(points$x) - points$x) > 0),
+    identical(sort(unique(round(points$x))), c(1, 2, 3)),
+    all(is.finite(bars$ymin)),
+    identical(
+        sort(unique(points$colour)),
+        sort(unname(ggplot2::scale_colour_brewer(palette='Dark2')$palette(3)[1:2]))
+    ),
+    identical(built$layout$panel_params[[1]]$x$get_labels(), c('0', '0.1', '1'))
+)
+point_definition$render$spacing <- 'linear'
+built <- ggplot2::ggplot_build(plot_effect(ticks, point_definition))
+stopifnot(identical(built$layout$panel_params[[1]]$x$get_labels(), c('0', '0.1', '1')))
+points <- built$data[[length(built$data)]]
+stopifnot(all(vapply(points$x, function(x) min(abs(x - c(0, 0.1, 1))), numeric(1)) < 0.05))
+
+# Bars over a categorical x: one bar per term with an error bar, filled by
+# the color palette.
+single <- ticks[ticks$lag == 0, ]
+bar_definition <- list(
+    query=validate(list(terms=c('x', 'y')), 'query'),
+    render=validate_render(list(
+        geometry='bar', mappings=list(x='term', y='estimate', color='term'),
+        palette='viridis'
+    ), 'render')
+)
+built <- ggplot2::ggplot_build(plot_effect(single, bar_definition))
+stopifnot(
+    nrow(built$data[[1]]) == 2L, 'fill' %in% names(built$data[[1]]),
+    identical(
+        built$data[[1]]$fill,
+        unname(ggplot2::scale_colour_viridis_d()$palette(2))
+    ),
+    nrow(built$data[[2]]) == 2L
+)
+# A Brewer palette with too few colors fails clearly.
+many <- transform(
+    data.frame(term=sprintf('t%02d', 1:10), lag=0), term_id=term,
+    group=NA_character_, layer='estimate', estimate=1, se=0.1, lower=0.8, upper=1.2
+)
+bar_definition$render$palette <- 'Dark2'
+expect_error(
+    ggplot2::ggplot_build(plot_effect(many, bar_definition)), 'has 8 colors'
+)
+
+# Peak lags as a summary statistic: one bar per peak, labeled as the strip
+# labels it.
+peak_data <- getFromNamespace('.cdrgam_cli_peak_data', 'cdrgam.cli')
+peaks <- data.frame(
+    term=c('x', 'y', 'y'), source=c('x', 'y', 'y'), direction=c('pos', 'pos', 'neg'),
+    lag=c(0.2, 0.4, 0.9), lower=c(0.1, 0.3, 0.7), upper=c(0.3, 0.5, 1.1),
+    stringsAsFactors=FALSE
+)
+summary <- peak_data(peaks)
+stopifnot(
+    identical(summary$estimate, peaks$lag),
+    identical(summary$peak[[3]], 'y · peak-neg')
+)
+expect_error(peak_data(NULL), 'needs a query whose lag values use a peak')
+peak_definition <- list(
+    query=validate(list(terms=c('x', 'y')), 'query'),
+    render=validate_render(list(
+        geometry='bar', mappings=list(x='peak', y='estimate', color='term'),
+        statistic='peak-lag'
+    ), 'render')
+)
+peak_plot <- plot_effect(summary, peak_definition)
+built <- ggplot2::ggplot_build(peak_plot)
+stopifnot(nrow(built$data[[1]]) == 3L, identical(peak_plot$labels$y, 'Peak lag'))
+
+# Lines inherit the definition's model and query and may override them:
+# a line's axes and reference merge per axis, its uncertainty per setting,
+# and other fields replace the default. Ids and labels have defaults.
+lines <- visualization(list(
+    schema=1L, model='main',
+    query=list(
+        n=9L, composition='total',
+        axes=list(lag=0.5, predictors=list(x=list(grid='fitted'), z='mean')),
+        uncertainty=list(level=0.9)
+    ),
+    lines=list(
+        list(term='x'),
+        list(term='x:z', model='other', label='Interaction', composition='term',
+            axes=list(predictors=list(z=1)), uncertainty=list(kind='simultaneous'))
+    ),
+    render=list(geometry='line')
+), 'lines.yml')
+first <- lines$lines[[1L]]
+second <- lines$lines[[2L]]
+stopifnot(
+    identical(vapply(lines$lines, `[[`, character(1), 'id'), c('line1', 'line2')),
+    identical(first$label, 'x'), identical(first$model, 'main'),
+    identical(second$label, 'Interaction'), identical(second$model, 'other'),
+    identical(first$query$terms, list(names='x', match='exact')),
+    identical(first$query$composition, 'total'),
+    identical(second$query$composition, 'term'),
+    identical(second$query$axes$lag, 0.5),
+    identical(second$query$axes$predictors$z, 1),
+    identical(second$query$axes$predictors$x, list(grid='fitted')),
+    identical(second$query$uncertainty$level, 0.9),
+    identical(second$query$uncertainty$kind, 'simultaneous'),
+    identical(first$query$uncertainty$kind, 'pointwise'),
+    is.null(lines$query),
+    identical(lines$render$mappings,
+        list(x='.line_x', y='estimate', color='line', group='line'))
+)
+lines_case <- function(...) {
+    value <- list(schema=1L, model='main', lines=list(list(term='x')),
+        render=list(geometry='line'))
+    changes <- list(...)
+    for (name in names(changes)) value[[name]] <- changes[[name]]
+    tryCatch(visualization(value, 'lines.yml'), error=conditionMessage)
+}
+stopifnot(
+    grepl('query.terms cannot be combined with lines',
+        lines_case(query=list(terms='x')), fixed=TRUE),
+    grepl('remove layers', lines_case(layers=list(list(id='a'))), fixed=TRUE),
+    grepl('missing required field: term', lines_case(lines=list(list(label='a'))),
+        fixed=TRUE),
+    grepl('line ids must be unique',
+        lines_case(lines=list(list(term='x', id='a'), list(term='y', id='a'))), fixed=TRUE),
+    grepl('line, point, or bar geometry', lines_case(render=list(geometry='raster',
+        mappings=list(x='x', y='lag', fill='estimate'), interval='none')), fixed=TRUE)
 )
 
 cat('Effect query tests passed\n')

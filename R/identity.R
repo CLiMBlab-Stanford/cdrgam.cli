@@ -18,7 +18,9 @@
 }
 
 .cdrgam_cli_artifact_contract <- function(kind, definition=NULL, inputs=list()) {
-    kinds <- c('dataset', 'fit', 'prediction', 'effect', 'visualization', 'comparison')
+    kinds <- c(
+        'dataset', 'fit', 'prediction', 'effect', 'visualization', 'comparison', 'test'
+    )
     if (!(kind %in% kinds)) {
         .cdrgam_cli_abort(paste0('No artifact contract is defined for ', kind))
     }
@@ -196,12 +198,21 @@
             definitions, value$model, selector, fit, fingerprints
         )
     })
-    effect <- if (is.null(value$kind)) {
-        .cdrgam_cli_effect_item(
-            definitions, value$model, value, fit, fingerprints
-        )
+    lines <- value$lines
+    # Each line, or a single-effect visualization, is an effect request that
+    # the visualization evaluates from its fit when it runs.
+    effects <- if (!is.null(lines)) lapply(lines, function(line) {
+        line_fit <- if (identical(line$model, value$model)) fit else {
+            .cdrgam_cli_fit_item(definitions, line$model, fingerprints)
+        }
+        .cdrgam_cli_effect_request(list(query=line$query), line_fit)
+    })
+    effect <- if (is.null(value$kind) && is.null(lines)) {
+        .cdrgam_cli_effect_request(value, fit)
     } else NULL
-    inputs <- if (is.null(effect)) c(
+    inputs <- if (!is.null(effects)) {
+        list(effects=lapply(effects, function(item) item$resolved_identity$resolved))
+    } else if (is.null(effect)) c(
         list(model=fit$resolved_identity$resolved),
         lapply(predictions, function(item) item$resolved_identity$resolved)
     ) else list(effect=effect$resolved_identity$resolved)
@@ -209,6 +220,9 @@
     if (!is.null(effect)) {
         presentation$query <- NULL
         presentation$layers <- NULL
+    }
+    if (!is.null(effects)) {
+        presentation$lines <- lapply(lines, function(line) line[c('id', 'label')])
     }
     identity <- .cdrgam_cli_visualization_identity(presentation, inputs)
     key <- paste(
@@ -219,41 +233,31 @@
         key=key, kind='visualization', project=definitions$project$project$name,
         name=name, model_name=value$model, identity=identity$identity,
         resolved_identity=identity,
-        dependencies=if (is.null(effect)) {
+        dependencies=if (!is.null(effects)) {
+            unique(vapply(effects, function(request) request$fit$key, character(1)))
+        } else if (is.null(effect)) {
             c(fit$key, vapply(predictions, `[[`, character(1), 'key'))
-        } else effect$key,
-        definition=value, fit=fit, effect=effect, predictions=predictions,
+        } else fit$key,
+        definition=value, fit=fit, effect=effect, effects=effects,
+        predictions=predictions,
         output=.cdrgam_cli_path(
-            definitions, 'visualization', value$model, dataset=name
+            definitions, 'visualization', name
         )
     )
 }
 
-.cdrgam_cli_effect_item <- function(
-        definitions, model_name, value, fit=NULL, fingerprints=NULL
-) {
-    fit <- .cdrgam_cli_null(
-        fit, .cdrgam_cli_fit_item(definitions, model_name, fingerprints)
-    )
+# An effect query against one fit. It is not a work item: the
+# visualization that holds it evaluates it from the fit on every run, so
+# its plot data cannot go stale. Its identity is part of the
+# visualization's identity.
+.cdrgam_cli_effect_request <- function(value, fit) {
     identity <- .cdrgam_cli_effect_identity(
         value$query, value$layers, fit$resolved_identity$resolved
     )
-    request_identity <- .cdrgam_cli_short_hash(list(
-        query=value$query, layers=value$layers
-    ))
     list(
-        key=paste(
-            'effect', definitions$project$project$id, model_name,
-            identity$identity, sep=':'
-        ),
-        kind='effect', project=definitions$project$project$name,
-        name=paste(model_name, request_identity, sep='_'),
-        model_name=model_name, identity=identity$identity,
-        resolved_identity=identity, dependencies=fit$key,
-        query=value$query, layers=value$layers, fit=fit,
-        output=.cdrgam_cli_path(
-            definitions, 'effect', model_name, identity=identity$identity
-        )
+        model_name=fit$name, identity=identity$identity,
+        resolved_identity=identity, query=value$query, layers=value$layers,
+        fit=fit
     )
 }
 
@@ -299,11 +303,12 @@
     children <- switch(
         item$kind,
         prediction=list(item$fit),
-        effect=list(item$fit),
-        visualization=if (is.null(item$effect)) {
-            c(list(item$fit), item$predictions)
-        } else list(item$effect),
+        visualization=if (!is.null(item$effects)) {
+            fits <- lapply(item$effects, `[[`, 'fit')
+            fits[!duplicated(vapply(fits, `[[`, character(1), 'key'))]
+        } else c(list(item$fit), item$predictions),
         comparison=item$predictions,
+        test=list(item$fit),
         list()
     )
     for (child in children) graph <- .cdrgam_cli_add_item(graph, child)
@@ -327,10 +332,11 @@
 .cdrgam_cli_resolve_graph <- function(
         definitions, models=NULL, predictions=NULL, visualizations=NULL,
         comparisons=NULL, all=FALSE, fingerprints=NULL,
-        strict_selectors=TRUE
+        strict_selectors=TRUE, tests=NULL
 ) {
     explicit <- any(c(
-        length(models), length(predictions), length(visualizations), length(comparisons)
+        length(models), length(predictions), length(visualizations), length(comparisons),
+        length(tests)
     ) > 0L)
     if (!explicit) all <- TRUE
     model_names <- if (length(models)) {
@@ -340,7 +346,7 @@
     } else names(definitions$models)
     terminals <- list()
     if (isTRUE(all) || (length(models) && !length(predictions) &&
-            !length(visualizations) && !length(comparisons))) {
+            !length(visualizations) && !length(comparisons) && !length(tests))) {
         terminals <- c(terminals, lapply(model_names, function(name) {
             .cdrgam_cli_fit_item(definitions, name, fingerprints)
         }))
@@ -398,6 +404,22 @@
     }
     terminals <- c(terminals, lapply(comparison_names, function(name) {
         .cdrgam_cli_comparison_item(definitions, name, fingerprints)
+    }))
+    test_names <- if (isTRUE(all)) names(definitions$tests) else
+        if (length(tests)) .cdrgam_cli_match_names(
+            tests, names(definitions$tests), 'test', strict_selectors
+        ) else character()
+    if (length(models) && length(test_names)) {
+        test_names <- test_names[vapply(
+            definitions$tests[test_names],
+            function(value) value$model %in% model_names, logical(1)
+        )]
+        if (!length(test_names) && isTRUE(strict_selectors)) {
+            .cdrgam_cli_abort('Combined model and test selectors matched nothing')
+        }
+    }
+    terminals <- c(terminals, lapply(test_names, function(name) {
+        .cdrgam_cli_test_item(definitions, name, fingerprints)
     }))
     graph <- list()
     for (item in terminals) graph <- .cdrgam_cli_add_item(graph, item)

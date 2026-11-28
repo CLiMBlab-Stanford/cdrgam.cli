@@ -393,12 +393,26 @@
                     response <- list(ok=FALSE, error='Scheduler does not recognize this worker')
                 } else {
                     candidates <- ready_keys(message$resource_key)
-                    if (length(candidates)) {
-                        key <- candidates[[1L]]
+                    # Skip items another job is already running; they stay
+                    # queued and are offered again once that job finishes.
+                    attempt <- NULL
+                    for (key in candidates) {
                         item <- items[[key]]
                         attempt <- tryCatch(.cdrgam_cli_attempt_directory(
                             contexts[[key]]$graph$definitions[[item$project]], item
-                        )$path, error=identity)
+                        )$path, cdrgam_cli_attempt_active=function(condition) NULL,
+                        error=identity)
+                        if (!is.null(attempt)) break
+                    }
+                    if (length(candidates) && is.null(attempt)) {
+                        response$action <- 'wait'
+                        response$seconds <- 10
+                        worker$status <- 'idle'
+                        worker$current_work_key <- NULL
+                        worker$updated_at <- .cdrgam_cli_timestamp()
+                        workers[[message$worker_id]] <- worker
+                        .cdrgam_cli_registry_worker(configuration, worker)
+                    } else if (length(candidates)) {
                         if (inherits(attempt, 'error')) {
                             # A stale or malformed attempt must fail its work
                             # item, not the root scheduler that owns every

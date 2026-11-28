@@ -837,6 +837,33 @@ stopifnot(
 )
 unlink(cancelled_path)
 
+# Edit selectors may be globs or regular expressions over the existing
+# definitions; each match opens in turn, and a literal name keeps creating.
+opened <- character()
+record_editor <- function(path) {
+    opened <<- c(opened, paste(readLines(path), collapse='\n'))
+    invisible(path)
+}
+model_texts <- vapply(list.files(
+    file.path(project, 'definitions', 'models'), pattern='[.]ya?ml$', full.names=TRUE
+), function(path) paste(readLines(path), collapse='\n'), character(1))
+cdrgam_cli_def('test-project', type='model', name='*', editor=record_editor)
+stopifnot(length(opened) == length(model_texts), setequal(opened, model_texts))
+opened <- character()
+cdrgam_cli_def('test-project', type='model', name='re:^decay$', editor=record_editor)
+stopifnot(identical(opened, paste(readLines(file.path(
+    project, 'definitions', 'models', 'decay.yml'
+)), collapse='\n')))
+stopifnot(
+    grepl('matched nothing', tryCatch(cdrgam_cli_def(
+        'test-project', type='model', name='nothing-*', editor=record_editor
+    ), error=conditionMessage)),
+    grepl('must be literal', tryCatch(cdrgam_cli_def(
+        'test-project', type='model', name='decay-*', source='decay',
+        editor=record_editor
+    ), error=conditionMessage))
+)
+
 # Invalid edits do not replace the published definition. Their draft is
 # reopened by the next edit and removed after successful publication.
 model_path <- file.path(project, 'definitions', 'models', 'decay.yml')
@@ -1611,7 +1638,7 @@ cdrgam_cli_run(
     projects='test-project', models='decay', visualizations='diagnostics'
 )
 stopifnot(file.exists(file.path(
-    project, 'results', 'models', 'decay', 'visualizations',
+    project, 'results', 'visualizations',
     'diagnostics', 'booklet.pdf'
 )))
 
@@ -1641,15 +1668,20 @@ effect_plan <- cdrgam_cli_plan(
     projects='test-project', visualizations='effects'
 )
 stopifnot(
-    identical(effect_plan$kind, c('fit', 'effect', 'visualization')),
+    identical(effect_plan$kind, c('fit', 'visualization')),
     effect_plan$target[effect_plan$kind == 'visualization']
 )
 cdrgam_cli_run(projects='test-project', visualizations='effects')
-effect_artifact <- effect_plan$path[effect_plan$kind == 'effect']
+# The visualization evaluates its effect from the fit and writes the
+# plotted numbers beside the figure.
 visualization_artifact <- file.path(
-    project, 'results', 'models', 'decay', 'visualizations', 'effects'
+    project, 'results', 'visualizations', 'effects'
 )
-effect_grid <- readRDS(file.path(effect_artifact, 'effect-grid.rds'))
+effect_artifact <- visualization_artifact
+read_grid <- function(path, name='effect-grid.csv') {
+    utils::read.csv(file.path(path, name))
+}
+effect_grid <- read_grid(effect_artifact)
 stopifnot(
     nrow(effect_grid) == 31L,
     all(c('lag', 'x', 'estimate', 'se', 'lower', 'upper') %in% names(effect_grid)),
@@ -1658,22 +1690,14 @@ stopifnot(
     file.exists(file.path(visualization_artifact, 'plot.rds'))
 )
 
-# Presentation changes create a new visualization while retaining the same
-# deduplicated statistical effect-grid dependency.
-alternate_effect <- effect_definition
-alternate_effect$render$theme <- 'minimal'
-alternate_effect_path <- file.path(
-    project, 'definitions', 'visualizations', 'effects-minimal.yml'
-)
-yaml::write_yaml(alternate_effect, alternate_effect_path)
-shared_graph <- getFromNamespace(
-    '.cdrgam_cli_combined_graph', 'cdrgam.cli'
-)(projects='test-project', visualizations=c('effects', 'effects-minimal'))
+# Effect grids are not cached: a fresh visualization plans nothing else,
+# and no effect directory exists in the work tree.
+fresh_plan <- cdrgam_cli_plan(projects='test-project', visualizations='effects')
 stopifnot(
-    sum(vapply(shared_graph$items, `[[`, character(1), 'kind') == 'effect') == 1L,
-    sum(vapply(shared_graph$items, `[[`, character(1), 'kind') == 'visualization') == 2L
+    identical(fresh_plan$kind, c('fit', 'visualization')),
+    all(fresh_plan$state[fresh_plan$kind == 'visualization'] == 'complete'),
+    !length(Sys.glob(file.path(project, '.cdrgam', 'work', 'effect_*')))
 )
-unlink(alternate_effect_path)
 
 # A reference subtracts the functional at reference axis values, and a test
 # request writes joint Wald tests beside the effect grid.
@@ -1684,13 +1708,11 @@ contrast_definition_path <- file.path(
     project, 'definitions', 'visualizations', 'effect-contrast.yml'
 )
 yaml::write_yaml(contrast_definition, contrast_definition_path)
-contrast_plan <- cdrgam_cli_plan(
-    projects='test-project', visualizations='effect-contrast'
-)
 cdrgam_cli_run(projects='test-project', visualizations='effect-contrast')
-contrast_artifact <- contrast_plan$path[contrast_plan$kind == 'effect']
-stopifnot(!identical(contrast_artifact, effect_artifact))
-contrast_grid <- readRDS(file.path(contrast_artifact, 'effect-grid.rds'))
+contrast_artifact <- file.path(
+    project, 'results', 'visualizations', 'effect-contrast'
+)
+contrast_grid <- read_grid(contrast_artifact)
 contrast_tests <- utils::read.csv(file.path(contrast_artifact, 'effect-tests.csv'))
 stopifnot(
     nrow(contrast_grid) == 31L,
@@ -1717,7 +1739,7 @@ yaml::write_yaml(surface_definition, file.path(
 ))
 cdrgam_cli_run(projects='test-project', visualizations='effect-surface')
 surface_artifact <- file.path(
-    project, 'results', 'models', 'decay', 'visualizations', 'effect-surface'
+    project, 'results', 'visualizations', 'effect-surface'
 )
 stopifnot(
     file.exists(file.path(surface_artifact, 'visualization.pdf')),
@@ -1737,13 +1759,12 @@ yaml::write_yaml(list(
     schema=1L, model='decay', preset='irf-predictor',
     options=list(n=11L, hold=list(lag='peak'), values=list(range=c('mean - sd', 'mean + sd')))
 ), file.path(project, 'definitions', 'visualizations', 'irf-predictor.yml'))
-preset_plan <- cdrgam_cli_plan(
-    projects='test-project', visualizations=c('irf-lag', 'irf-predictor')
-)
 cdrgam_cli_run(projects='test-project', visualizations=c('irf-lag', 'irf-predictor'))
-preset_effects <- preset_plan$path[preset_plan$kind == 'effect']
-lag_grid <- readRDS(file.path(preset_effects[[1L]], 'effect-grid.rds'))
-predictor_grid <- readRDS(file.path(preset_effects[[2L]], 'effect-grid.rds'))
+preset_effects <- file.path(
+    project, 'results', 'visualizations', c('irf-lag', 'irf-predictor')
+)
+lag_grid <- read_grid(preset_effects[[1L]])
+predictor_grid <- read_grid(preset_effects[[2L]])
 stopifnot(
     nrow(lag_grid) == 21L, identical(unique(lag_grid$term), 'x'),
     all(lag_grid$critical_value >= stats::qnorm(0.975)),
@@ -1753,34 +1774,197 @@ stopifnot(
     nrow(predictor_grid) == 11L, length(unique(predictor_grid$lag)) == 1L,
     identical(predictor_grid$predictor_value, predictor_grid$x),
     file.exists(file.path(
-        project, 'results', 'models', 'decay', 'visualizations', 'irf-lag',
+        project, 'results', 'visualizations', 'irf-lag',
         'visualization.pdf'
     )),
     file.exists(file.path(
-        project, 'results', 'models', 'decay', 'visualizations', 'irf-predictor',
+        project, 'results', 'visualizations', 'irf-predictor',
         'visualization.pdf'
     ))
 )
 
 # An effect whose values use a peak records it, with posterior draws when the
 # core can simulate effects; one peak gives no strip under render.peaks auto.
-predictor_peaks <- readRDS(file.path(preset_effects[[2L]], 'effect-peaks.rds'))
+predictor_peaks <- read_grid(preset_effects[[2L]], 'effect-peaks.csv')
 simulating <- 'simulate_effect' %in% getNamespaceExports('cdrgam')
 stopifnot(
     identical(predictor_peaks$term, 'x'), identical(predictor_peaks$source, 'x'),
     identical(predictor_peaks$direction, 'pos'),
     isTRUE(all.equal(predictor_peaks$lag, unique(predictor_grid$lag))),
-    !file.exists(file.path(preset_effects[[1L]], 'effect-peaks.rds')),
+    !file.exists(file.path(preset_effects[[1L]], 'effect-peaks.csv')),
     !simulating || (
         predictor_peaks$lower <= predictor_peaks$lag &&
             predictor_peaks$lag <= predictor_peaks$upper &&
-            nrow(attr(predictor_peaks, 'draws')) == 1000L &&
-            file.exists(file.path(preset_effects[[2L]], 'effect-peak-draws.csv'))
+            file.exists(file.path(preset_effects[[2L]], 'effect-peak-draws.csv')) &&
+            nrow(read_grid(preset_effects[[2L]], 'effect-peak-draws.csv')) == 1000L
     ),
     !file.exists(file.path(
-        project, 'results', 'models', 'decay', 'visualizations', 'irf-predictor',
+        project, 'results', 'visualizations', 'irf-predictor',
         'plot-peaks.rds'
     ))
+)
+
+# lag: peak-pointwise holds each predictor value at its own peak lag and
+# records those lags with posterior intervals; the rendered figure adds a
+# panel of the peak lag over the predictor.
+yaml::write_yaml(list(
+    schema=1L, model='decay',
+    query=list(
+        terms='x', axes=list(lag='peak-pointwise', predictors=list(
+            x=list(grid='fitted', n=7L)
+        )),
+        uncertainty=list(peak_draws=50L), n=9L
+    ),
+    render=list(
+        geometry='line', mappings=list(x='x', y='estimate', color='term'),
+        formats='pdf'
+    )
+), file.path(project, 'definitions', 'visualizations', 'pointwise.yml'))
+cdrgam_cli_run(projects='test-project', visualizations='pointwise')
+pointwise_output <- file.path(
+    project, 'results', 'visualizations', 'pointwise'
+)
+pointwise_effect <- pointwise_output
+pointwise_grid <- read_grid(pointwise_effect)
+pointwise_peaks <- read_grid(pointwise_effect, 'effect-pointwise-peaks.csv')
+stopifnot(
+    nrow(pointwise_grid) == 7L, nrow(pointwise_peaks) == 7L,
+    isTRUE(all.equal(pointwise_grid$lag, pointwise_peaks$lag)),
+    isTRUE(all.equal(pointwise_grid$x, pointwise_peaks$x)),
+    all(is.finite(pointwise_grid$se)),
+    !file.exists(file.path(pointwise_effect, 'effect-peaks.csv')),
+    !simulating || all(
+        pointwise_peaks$lower <= pointwise_peaks$lag &
+            pointwise_peaks$lag <= pointwise_peaks$upper
+    ),
+    file.exists(file.path(pointwise_output, 'visualization.pdf')),
+    file.exists(file.path(pointwise_output, 'plot-pointwise.rds'))
+)
+
+# uncertainty.kind simultaneous at lag: peak: each draw re-finds the peak,
+# so the band includes the peak's uncertainty.
+if ('sample_effect_coefficients' %in% getNamespaceExports('cdrgam')) {
+    yaml::write_yaml(list(
+        schema=1L, model='decay',
+        query=list(
+            terms='x', axes=list(lag='peak', predictors=list(
+                x=list(grid='fitted', n=7L)
+            )),
+            uncertainty=list(kind='simultaneous', peak_draws=50L), n=9L
+        ),
+        render=list(
+            geometry='line', mappings=list(x='x', y='estimate', color='term'),
+            formats='pdf'
+        )
+    ), file.path(project, 'definitions', 'visualizations', 'posterior.yml'))
+    cdrgam_cli_run(projects='test-project', visualizations='posterior')
+    posterior_grid <- read_grid(file.path(
+        project, 'results', 'visualizations', 'posterior'
+    ))
+    stopifnot(
+        nrow(posterior_grid) == 7L,
+        all(posterior_grid$lower <= posterior_grid$upper),
+        all(is.finite(posterior_grid$critical_value)),
+        all(is.finite(posterior_grid$lower)),
+        file.exists(file.path(
+            project, 'results', 'visualizations', 'posterior',
+            'visualization.pdf'
+        ))
+    )
+}
+
+# A lines visualization: each line is its own effect, inheriting the
+# definition's query, and the figure draws them together with their peak
+# timeline, writing each line's plot data beside the figure.
+lines_definition <- list(
+    schema=1L, model='decay',
+    query=list(n=9L, uncertainty=list(level=0.9), axes=list(lag='peak')),
+    lines=list(
+        list(term='x', id='by-x', axes=list(predictors=list(x=list(grid='fitted', n=5L)))),
+        list(term='x', id='by-lag', label='x over lag',
+            axes=list(lag=list(grid='fitted', n=6L)))
+    ),
+    render=list(geometry='line', formats='pdf')
+)
+yaml::write_yaml(lines_definition,
+    file.path(project, 'definitions', 'visualizations', 'lines.yml'))
+lines_one <- lines_definition
+lines_one$lines <- lines_definition$lines[1L]
+yaml::write_yaml(lines_one,
+    file.path(project, 'definitions', 'visualizations', 'lines-one.yml'))
+lines_plan <- cdrgam_cli_plan(projects='test-project', visualizations=c('lines', 'lines-one'))
+stopifnot(
+    identical(sort(lines_plan$kind), c('fit', 'visualization', 'visualization'))
+)
+cdrgam_cli_run(projects='test-project', visualizations=c('lines', 'lines-one'))
+lines_output <- file.path(project, 'results', 'visualizations', 'lines')
+lines_plot <- readRDS(file.path(lines_output, 'plot.rds'))
+stopifnot(
+    file.exists(file.path(lines_output, 'visualization.pdf')),
+    file.exists(file.path(lines_output, 'plot-peaks.rds')),
+    file.exists(file.path(lines_output, 'line-by-x-grid.csv')),
+    file.exists(file.path(lines_output, 'line-by-lag-grid.csv')),
+    identical(lines_plot$labels$x, 'x / lag'),
+    is.null(lines_plot$scales$get_scales('colour')$name),
+    setequal(unique(unlist(lapply(lines_plot$layers, function(layer) {
+        if (is.data.frame(layer$data)) as.character(layer$data$line)
+    }))), c('by-x', 'by-lag')),
+    # The x axis crosses zero effect, so the zero line is drawn.
+    any(vapply(lines_plot$layers, function(layer) inherits(layer$geom, 'GeomHline'),
+        logical(1)))
+)
+
+# A fixed panel size renders the lines and their peak timeline with the file
+# sized to fit; the main panel keeps the given size.
+# SVG output needs a working Cairo device, which some R builds lack.
+if (internal('.cdrgam_cli_svg_available')()) {
+    panel_lines <- lines_definition
+    panel_lines$render <- c(lines_definition$render, list(
+        panel_width=3, panel_height=2
+    ))
+    panel_lines$render$formats <- 'svg'
+    yaml::write_yaml(panel_lines,
+        file.path(project, 'definitions', 'visualizations', 'lines-panel.yml'))
+    cdrgam_cli_run(projects='test-project', visualizations='lines-panel')
+    panel_svg <- file.path(project, 'results', 'visualizations', 'lines-panel',
+        'visualization.svg')
+    panel_head <- paste(readLines(panel_svg, n=3L), collapse=' ')
+    panel_size <- as.numeric(c(
+        sub('.*width="([0-9.]+)pt".*', '\\1', panel_head),
+        sub('.*height="([0-9.]+)pt".*', '\\1', panel_head)
+    )) / 72
+    stopifnot(
+        file.exists(file.path(dirname(panel_svg), 'plot-peaks.rds')),
+        panel_size[[1L]] > 3, panel_size[[2L]] > 2 * 1.1
+    )
+    unlink(file.path(project, 'definitions', 'visualizations', 'lines-panel.yml'))
+}
+
+# A visualization whose definition was removed can still be purged by
+# name: its results, work directory, log, and registry record go together.
+unlink(file.path(project, 'definitions', 'visualizations', 'lines-one.yml'))
+orphan_output <- file.path(project, 'results', 'visualizations', 'lines-one')
+orphan_work <- file.path(project, '.cdrgam', 'work', 'visualization_lines-one')
+stopifnot(dir.exists(orphan_output), dir.exists(orphan_work))
+orphan_preview <- cdrgam_cli_purge(
+    projects='test-project', visualizations='lines-one', work=TRUE, logs=TRUE,
+    force=FALSE
+)
+stopifnot(
+    dir.exists(orphan_output),
+    any(vapply(orphan_preview, same_path, logical(1), right=orphan_output)),
+    any(vapply(orphan_preview, same_path, logical(1), right=orphan_work))
+)
+cdrgam_cli_purge(
+    projects='test-project', visualizations='lines-one', work=TRUE, logs=TRUE,
+    force=TRUE
+)
+stopifnot(
+    !dir.exists(orphan_output), !dir.exists(orphan_work),
+    dir.exists(lines_output),
+    grepl('matched nothing: lines-one', tryCatch(cdrgam_cli_purge(
+        projects='test-project', visualizations='lines-one', force=TRUE
+    ), error=conditionMessage))
 )
 
 comparison_plan <- cdrgam_cli_plan(
@@ -2095,7 +2279,7 @@ visualization_preview <- cdrgam_cli_purge(
 )
 stopifnot(same_path(
     visualization_preview[!under_path(visualization_preview, work_root)],
-    file.path(project, 'results', 'models', 'decay', 'visualizations', 'diagnostics')
+    file.path(project, 'results', 'visualizations', 'diagnostics')
 ))
 comparison_preview <- cdrgam_cli_purge(
     projects='test-project', comparisons='alternatives', force=FALSE
@@ -2111,6 +2295,40 @@ stopifnot(
     any(vapply(work_preview, same_path, logical(1), right=work_root)),
     any(under_path(work_preview, file.path(project, 'results')))
 )
+# With a model selector, --work and --logs select only that model's archived
+# artifacts and logs, never the whole work or log directory or files that
+# belong to another model, including one whose name extends the selected name.
+log_root <- file.path(project, '.cdrgam', 'logs')
+scoped_files <- c(
+    file.path(work_root, 'archive', 'fit_decay_0123abcd'),
+    file.path(work_root, 'archive', 'fit_decay-two_0123abcd'),
+    file.path(log_root, 'fit', 'decay.log'),
+    file.path(log_root, 'fit', 'decay-two.log')
+)
+scoped_created <- scoped_files[!file.exists(scoped_files)]
+for (path in scoped_created[!endsWith(scoped_created, '.log')]) {
+    dir.create(path, recursive=TRUE)
+}
+for (path in scoped_created[endsWith(scoped_created, '.log')]) {
+    dir.create(dirname(path), recursive=TRUE, showWarnings=FALSE)
+    writeLines('log', path)
+}
+scoped_preview <- cdrgam_cli_purge(
+    projects='test-project', models='decay', work=TRUE, logs=TRUE, force=FALSE
+)
+scoped_has <- function(path) {
+    any(vapply(scoped_preview, same_path, logical(1), right=path))
+}
+stopifnot(
+    !scoped_has(work_root),
+    !scoped_has(log_root),
+    !scoped_has(file.path(work_root, 'archive')),
+    scoped_has(scoped_files[[1L]]),
+    !scoped_has(scoped_files[[2L]]),
+    scoped_has(scoped_files[[3L]]),
+    !scoped_has(scoped_files[[4L]])
+)
+unlink(scoped_created, recursive=TRUE)
 
 model_definition$formula <- paste0(model_definition$formula, ' + 0')
 yaml::write_yaml(

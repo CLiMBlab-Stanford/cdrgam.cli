@@ -10,11 +10,12 @@ cdrgam_cli_stop(
   comparisons = NULL,
   force = FALSE,
   scheduler = FALSE,
-  cdrgam_root = NULL
+  cdrgam_root = NULL,
+  tests = NULL
 )
 }
 \arguments{
-\item{projects, models, predictions, visualizations, comparisons}{Selector
+\item{projects, models, predictions, visualizations, comparisons, tests}{Selector
 dimensions are conjunctive; repeated values within a dimension are
 combined. With multiple projects, definition selectors match their union
 rather than being required to match inside every project. Repeated

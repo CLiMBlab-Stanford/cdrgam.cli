@@ -140,6 +140,14 @@
     cdrgam::estimate_effect(fit, ...)
 }
 
+# The fit's summary, whose smooth table holds the whole-term tests. A fit
+# read with readRDS() dispatches to the core's summary methods only once
+# the core namespace is loaded.
+.cdrgam_cli_core_summary <- function(fit) {
+    loadNamespace('cdrgam')
+    summary(fit)
+}
+
 .cdrgam_cli_core_test_effect <- function(fit, ...) {
     cdrgam::test_effect(fit, ...)
 }
@@ -150,6 +158,70 @@
     'simulate_effect' %in% getNamespaceExports('cdrgam')
 }
 
+# estimate_effect(points=) is new after cdrgam 0.4.0; peak-pointwise needs it.
+.cdrgam_cli_core_has_points <- function() {
+    'points' %in% names(formals(cdrgam::estimate_effect))
+}
+
+# simultaneous_critical_value() and estimate_effect(covariance=) are new
+# after cdrgam 0.4.0; simultaneous bands need them.
+.cdrgam_cli_core_has_simultaneous <- function() {
+    'simultaneous_critical_value' %in% getNamespaceExports('cdrgam')
+}
+
+.cdrgam_cli_core_require_simultaneous <- function() {
+    if (!.cdrgam_cli_core_has_simultaneous()) .cdrgam_cli_abort(paste(
+        'Simultaneous intervals need a cdrgam release with',
+        'simultaneous_critical_value(); update cdrgam'
+    ))
+}
+
+# effect_inference() is new after cdrgam 0.4.0; test definitions need it.
+.cdrgam_cli_core_has_effect_inference <- function() {
+    'effect_inference' %in% getNamespaceExports('cdrgam')
+}
+
+.cdrgam_cli_core_effect_inference <- function(fit, ...) {
+    getExportedValue('cdrgam', 'effect_inference')(fit, ...)
+}
+
+.cdrgam_cli_core_simultaneous_critical_value <- function(...) {
+    getExportedValue('cdrgam', 'simultaneous_critical_value')(...)
+}
+
+# sample_effect_coefficients() and simulate_effect(coefficients=) are new
+# after cdrgam 0.4.0; posterior intervals need them.
+.cdrgam_cli_core_has_shared_draws <- function() {
+    'sample_effect_coefficients' %in% getNamespaceExports('cdrgam')
+}
+
+.cdrgam_cli_core_sample_coefficients <- function(fit, ...) {
+    getExportedValue('cdrgam', 'sample_effect_coefficients')(fit, ...)
+}
+
 .cdrgam_cli_core_simulate_effect <- function(fit, ...) {
     getExportedValue('cdrgam', 'simulate_effect')(fit, ...)
+}
+
+# Defaults of the installed core for settings a model definition may omit.
+# method is absent because its default depends on the backend and engine.
+# Estimation facts for methods reports: the resolved smoothing criterion, the
+# estimator, and the term tests, each with reference keys.
+.cdrgam_cli_core_methods_facts <- function(backend, engine, method, family) {
+    cdrgam::methods_facts(backend=backend, engine=engine, method=method, family=family)
+}
+
+.cdrgam_cli_core_fit_defaults <- function() {
+    fit <- formals(cdrgam::cdrgam)
+    term <- formals(cdrgam::irf)
+    first <- function(value) eval(value)[[1L]]
+    list(
+        family='gaussian', link='identity',
+        engine=first(fit$engine), backend=first(fit$backend),
+        rescale_predictors=eval(fit$rescale_predictors),
+        center_predictors=eval(fit$center_predictors),
+        rank_action=first(formals(cdrgam::cdrgam.fit)$rank_action),
+        k_l=eval(term$k_l), k_t=eval(term$k_t), k_p=eval(term$k_p),
+        bs_l=eval(term$bs_l), bs_t=eval(term$bs_t), bs_p=eval(term$bs_p)
+    )
 }

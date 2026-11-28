@@ -97,6 +97,7 @@ projects/PROJECT/
     models/
     visualizations/
     comparisons/
+    tests/
     analyses/
   results/
     datasets/
@@ -111,6 +112,8 @@ projects/PROJECT/
           VISUALIZATION/
     comparisons/
       COMPARISON/
+    tests/
+      TEST/
     analyses/
       ANALYSIS/
   .cdrgam/
@@ -176,12 +179,12 @@ validation. Staging copies the source bytes directly, preserving comments and
 formatting unless the editor changes them. The source and target must belong
 to the same project and the target must not exist.
 
-The filename stem is the sole name of a dataset, model, visualization, or
-comparison definition. For example, `definitions/models/main.yml` defines the
+The filename stem is the sole name of a dataset, model, visualization,
+comparison, or test definition. For example, `definitions/models/main.yml` defines the
 model named `main`; subordinate definitions must omit redundant `dataset`,
-`model`, `visualization`, and `comparison` identity fields. A `model` field in
-a visualization remains an upstream model reference, rather than the
-visualization's own name.
+`model`, `visualization`, `comparison`, and `test` identity fields. A `model`
+field in a visualization or test remains an upstream model reference, rather
+than the definition's own name.
 
 `cdrgam def rm PROJECT --TYPE NAME` removes one subordinate definition. It
 does not remove site or project definitions, generated results, or referenced
@@ -195,7 +198,7 @@ removal because dependency safety cannot be established.
 
 Bare `cdrgam def ls` lists every available project in the root.
 `cdrgam def ls PROJECT` lists the project definition and every subordinate
-definition. Dataset, model, visualization, and comparison selectors accept
+definition. Dataset, model, visualization, comparison, and test selectors accept
 multiple names, `*` globs, and `re:`-prefixed Perl-compatible regular
 expressions. Regular expressions use substring matching unless explicitly
 anchored with `^` or `$`. Multiple selector types may be combined; the result
@@ -434,11 +437,15 @@ render:
 ```
 
 A visualization separates statistical evaluation in `query` from ggplot2
-presentation in `render`. The scheduler inserts an internal effect-grid work
-item between the fit and the rendered visualization. Identical queries share
-that work item even when their render settings differ. The effect-grid RDS and
-CSV live under `models/MODEL/effects/EFFECT-IDENTITY/`; rendered files live
-under `models/MODEL/visualizations/VISUALIZATION/`.
+presentation in `render`. A visualization evaluates its query from the fit
+each time it renders; effect grids are not cached between runs. The plotted
+numbers are written beside the figure: `effect-grid.csv`, with
+`effect-peaks.csv`, `effect-peak-draws.csv`, `effect-pointwise-peaks.csv`,
+and `effect-tests.csv` when the query produces them. A visualization with
+`lines` writes the same files for each line, named `line-ID-grid.csv` and so
+on. Rendered
+files live under `visualizations/VISUALIZATION/`, beside `models/`, because
+a visualization may draw lines from several models.
 
 `terms` may be a list of exact fitted term labels or a selector mapping. A
 selector accepts `names`, `predictors`, `match` (`contains` or `exact`),
@@ -494,9 +501,12 @@ reference:
 
 Lag values may also use `peak` or `peak-pos`, the lag at which a term's
 response is largest, and `peak-neg`, the lag at which it is smallest, over
-the fitted lag domain. The response used is the term alone with each of its
-predictors at the mean plus one SD, minus the term at the means, and with
-other axes at their training means; for `irf(1)` it is `irf(1)` itself.
+the fitted lag domain. The response used is the effect, under the layer's
+`composition`, with each of the term's predictors at the mean plus one SD,
+minus the effect at the means, and with other axes at their training means.
+Under `term` it is the term alone, and for `irf(1)` it is `irf(1)` itself.
+Under `total` the lower-order terms count too, so an interaction's peak is
+that of the total response its lines show.
 Expressions are resolved separately for each selected term, so `"*"` entries
 use each predictor's own summaries and each term's own peak. To hold every
 term at the same lag, name the term whose peak to use: `peak(irf(1))`,
@@ -506,6 +516,33 @@ named term must have a lag axis. A `"*"`
 reference applies to every predictor of a term that has no reference of its
 own; a term without predictors, such as `irf(1)`, gets no reference.
 Expressions fail at evaluation when the fit stores no summary for the axis.
+
+`lag: peak-pointwise` instead holds each evaluation point at its own lag: the
+lag where the evaluated effect, after the `reference` subtraction and under the
+layer's `composition`, is largest at that point's other axis values.
+`peak-pointwise-neg` takes the smallest. Without a reference, the effect itself
+is used. Unlike `peak`, the lag can change along a line, and it follows the
+query's own fixed and reference values rather than a one-SD contrast. The peak
+at each point is found on a lag grid of `n` points; estimates and intervals are
+then evaluated at each point's (value, lag) pair. Either keyword must be the
+whole lag value, as a string or as `at`. It cannot appear in an expression, in
+a range or list of values, or in a reference, and it requires
+`uncertainty.kind: pointwise` and no `test`. It needs a cdrgam release whose
+`estimate_effect()` accepts `points`.
+
+`peak-pointwise(LABEL)` and `peak-pointwise-neg(LABEL)` take each point's lag
+from another term instead. For each plotted point, the named term is evaluated
+over lag at that point's values of its own predictors, with the query's
+`reference` for those predictors, and the point is held at that term's peak
+lag. Plotting `surp:rep` with `lag: peak-pointwise(surp)` reads the
+interaction at the lag where the `surp` main effect peaks for each `surp`
+value; points that share a `surp` value share a lag. The named term must have
+a lag axis and at least one predictor, and its predictors must all be
+predictors of the plotted term. Peak intervals come from posterior draws of
+the named term. Under `uncertainty.kind: simultaneous`, both terms use the same
+coefficient draws: each draw re-finds the named term's peak lags and evaluates
+the plotted term at them, and the band covers those draws jointly. This needs
+a cdrgam release with `sample_effect_coefficients()`.
 
 `reference` subtracts the same effect evaluated at reference values of some
 axes. Axes not named in `reference` keep their evaluated values. Each entry
@@ -557,6 +594,24 @@ core evaluation per covariance point and reference value, for example 81 for
 a 40-point lag curve with a predictor reference. Reference predictors must
 have values; `default` is not supported.
 
+When a value of the query uses a peak, such as `lag: peak`,
+`lag: peak-pointwise`, or a reference at a peak, simultaneous limits also
+cover the uncertainty about where the peak lies. They then come from
+`uncertainty.peak_draws` posterior draws (default 1000, with a fixed seed).
+Each draw re-locates the peaks on the same coefficient draw and evaluates the
+effect at the values those peaks give. The band is the estimate plus or minus
+`critical_value` times each point's draw standard deviation. `critical_value`
+is the `level` quantile over draws of the largest absolute standardized
+deviation within the term and group. Under `peak-pointwise`, each draw takes
+the effect at its own peak for each point. Pointwise limits treat peak lags as
+known. Simultaneous limits at a peak need a `cdrgam` release with
+`sample_effect_coefficients()`.
+
+With `peak-pointwise`, the effect artifact has `effect-pointwise-peaks.csv`
+(and `.rds`), with one row per evaluated point: its term, layer, group, axis
+values, direction, peak `lag`, and the central `level` interval of the peak
+lags of `uncertainty.peak_draws` posterior draws of the search grid.
+
 When any value uses a peak, the effect artifact also has `effect-peaks.csv`
 (and `.rds`). It has one row per term, peak term, and direction, with the
 peak lag in `lag`. `lower` and `upper` give the central `level` interval of
@@ -574,20 +629,135 @@ and value, so terms with different predictors can share an axis.
 
 Line renderings draw one curve per term, group, layer, and value of every
 other varying axis. A numeric `color` or `linetype` mapping with at most 12
-values uses a discrete legend. `palette: rainbow` colors lines from red to
-violet and draws `irf(1)` in black. `scales` (`fixed`, `free`, `free_x`, or
+values uses a discrete legend. `scales` (`fixed`, `free`, `free_x`, or
 `free_y`) sets the facet scales.
 
-`peaks` controls a timeline of peak lags drawn below a line plot: `auto`
+`palette` colors the `color` mapping of line, point, and bar renderings, and
+the bar fill. It accepts `default` (ggplot2's hue palette; `hue` is an alias),
+`rainbow`, `grey`, `okabe-ito`, a viridis option (`magma`, `inferno`,
+`plasma`, `viridis`, `cividis`, `rocket`, `mako`, or `turbo`), or a
+ColorBrewer palette such as `Set1`, `Dark2`, or `RdBu`. Names are matched
+without regard to case. `rainbow` colors lines from red to violet and draws
+`irf(1)` in black. `okabe-ito` gives the viewer's line colors: the
+colorblind-safe Okabe-Ito colors except yellow, then grey and black, eight
+in all. `okabe-ito` or a ColorBrewer palette with fewer colors than the plot
+has color levels fails at rendering; numeric color mappings use the palette's continuous form.
+
+`palette` may instead list two or more colors, each as hex (`#RRGGBB` or
+`#RGB`), `rgb(R, G, B)` with channels from 0 to 255, or an R color name. The
+plot then colors its levels at equal steps along the listed colors, from the
+first to the last, and a numeric mapping uses the same colors as a continuous
+gradient. Colors are stored in hex, so spellings of the same color give the
+same visualization identity:
+
+```yaml
+render:
+  geometry: line
+  mappings: {x: lag, y: estimate, color: "predictor:frequency"}
+  palette: ["#2166AC", "rgb(178, 24, 43)"]
+```
+
+`geometry: point` draws each estimate as a point with an error bar, and
+`geometry: bar` as a bar from zero with an error bar. `geometry:
+connected-point` draws points as `point` does and joins each series' points
+in x order with a thin line, which has no interval band of its own. Their
+`interval` is
+`errorbar` (default) or `none`. Series that share an x position, such as
+several terms at one lag, are placed side by side. Bars suit estimates at a
+few values: an x mapping to a categorical column such as `term` or `group`,
+including an effect where no axis varies, or a numeric axis requested with
+`values`. For example, the effect of each term at its peak lag:
+
+```yaml
+query:
+  terms: {predictors: "*", interacting: false}
+  axes:
+    lag: peak
+    predictors: {"*": mean + sd}
+  reference: {"*": mean}
+render:
+  geometry: bar
+  mappings: {x: term, y: estimate, color: term}
+  palette: Dark2
+```
+
+`spacing` draws a numeric x at its evaluated values, with one tick per
+value. `uniform` places the ticks equally far apart in sorted order and
+`linear` in proportion to their values. Bars over a numeric x use `uniform`
+unless `spacing` is set; lines and points otherwise keep a continuous x-axis.
+`spacing` has no effect on a categorical x and is not accepted for surfaces.
+
+`breaks` lists the x values to label on a continuous axis, such as
+`breaks: [0, 5, 10]`. It changes only the ticks, not where the effect is
+evaluated, and cannot be combined with `spacing: uniform`. The viewer's **X
+tick values** option sets it for lines. For points and bars, the viewer
+evaluates the effect at those values instead of the grid and hides **Grid
+points per axis**.
+
+`tick_labels` replaces the tick labels with text. With `breaks`, it gives one
+label per break, in the order the breaks are written:
+
+```yaml
+render:
+  geometry: line
+  breaks: [0, 0.25, 0.5]
+  tick_labels: [onset, 250 ms, 500 ms]
+```
+
+Without `breaks`, it labels each distinct x value in increasing order, and
+the number of labels must match the number of values. An x-axis that would
+otherwise be continuous then gets a tick at each value. An empty label
+leaves its tick unlabelled. In the viewer, **X tick labels** appears once X
+tick values are typed and takes one label per value, in the order typed,
+separated by commas.
+
+`statistic: peak-lag` plots the peak lags that the query used instead of the
+effect estimates, with their posterior intervals as error bars. It requires
+point, connected-point, or bar geometry and a query whose lag values use a
+peak. The plotted
+rows have the columns `term`, `source`, `direction`, `peak` (the label the
+peak timeline uses), `estimate` (the peak lag), `lower`, and `upper`:
+
+```yaml
+render:
+  geometry: bar
+  mappings: {x: peak, y: estimate, color: term}
+  statistic: peak-lag
+```
+
+`peaks` controls a timeline of peak lags drawn below a line or point plot: `auto`
 (default) draws it when the terms were held at different peak lags, `always`
 whenever a peak was used, and `never` not at all. Each row shows one term's
 peak lag as a long tick, its posterior interval as a bar, and the draws as
 faint ticks, in the term's line color when `color` maps to `term`. The
 timeline shares the plot's x-axis when that axis is `lag` and the plot has
-no facets; otherwise it has its own lag axis. The viewer draws the same
+no facets and uniform spacing is not set; otherwise it has its own lag
+axis. The viewer draws the same
 timeline under its line plots.
 
-Line renderings support ribbon, boundary-line, or no interval display. Raster,
+When the query uses `peak-pointwise`, a line or point plot also gets a panel
+below the main plot with each line's peak lag over the main x-axis and its
+interval band, in the line's color. `peaks: never` removes it. The panel is
+not drawn for faceted plots or a categorical x-axis. The viewer draws the same
+panel, saved separately as `plot-pointwise.rds` in rendered visualizations.
+
+The `cdrgam viz` viewer draws from the same plot description as rendered
+files, so a render setting looks the same in both. Its **Appearance** panel
+has a control for `geometry`, `interval`, `theme`, `title`, `xlab`, `ylab`,
+`palette`, `peaks`, `spacing`, and `statistic`, checked as in a definition.
+The viewer sets `mappings` itself: x is each line's horizontal axis and
+color is the line. It draws no facets, so `scales` does not apply, and
+`formats`, `width`, `height`, `panel_width`, `panel_height`, and `dpi`
+affect only rendered files. The
+viewer's palette defaults to `okabe-ito` and switches every line to
+`viridis` when there are more than eight; rendered files use `default` and
+fail past a palette's last color. Its 3D surface has no render geometry.
+**Show render YAML** prints the panel's settings as a `render` block; add
+`mappings` for the definition's query before using it.
+
+Line renderings support ribbon, boundary-line, or no interval display.
+Layer `interval` settings must suit the geometry: `errorbar` or `none` for
+points, connected points, and bars, and `ribbon`, `lines`, or `none` for lines. Raster,
 contour, and combined raster-contour geometries support predictor-by-lag,
 time-by-lag, and predictor-by-predictor surfaces. For example:
 
@@ -601,8 +771,52 @@ render:
 
 `predictor:` is an optional disambiguating prefix in mappings. A `companion`
 interval produces a second surface showing pointwise standard errors. Mapping
-fields are `x`, `y`, `color`, `fill`, `linetype`, `group`, and `facet`; themes are
-`paper`, `minimal`, and `slides`.
+fields are `x`, `y`, `color`, `fill`, `linetype`, `group`, and `facet`. Themes are
+`paper` (ggplot2's bw), `slides` (minimal at a larger base size), and the native
+ggplot2 themes `grey`, `gray`, `bw`, `linedraw`, `light`, `dark`, `minimal`,
+`classic`, `void`, and `test`. `y_zero: true` extends the vertical axis of a
+line, point, or bar plot to include zero. `reverse_palette: true` reads the
+palette from its last color: a palette with a fixed list of colors, such as
+`okabe-ito` or `Set1`, gives the first level its last color, the next level
+the color before it, and so on. Palettes that spread over the levels, such as
+viridis or a gradient, and continuous color scales are reversed end to end.
+The viewer's **Reverse palette order** box sets it.
+
+`zero_line` draws a thin grey line at zero effect beneath the data, in each
+panel whose vertical axis includes zero: the range of `ylim` when it is set,
+and otherwise that of the panel's estimates and intervals with the usual 5%
+padding. It never extends an
+axis to reach zero; use `y_zero` for that. It is on unless set to `false`, and
+bars draw their own baseline instead. The viewer's **Line at zero** box sets
+it.
+
+`width` and `height` set the size of a rendered file in inches, 8 by 5 by
+default; the plot panel takes whatever the axes, titles, and legend leave.
+`panel_width` and `panel_height` instead fix the size of the plot panel, so
+figures with legends of different sizes keep identical panels:
+
+```yaml
+render:
+  geometry: line
+  panel_width: 3
+  panel_height: 3
+```
+
+The file is then sized to fit the panel with its axes, titles, and legend.
+Each facet panel takes the given size, and a peak timeline or pointwise-peak
+panel below the plot keeps the panel's width and is aligned with it. The two
+are set together and cannot be combined with `width` or `height`. They need
+ggplot2 4.0.0 or later.
+
+`ylim: [low, high]` sets the vertical display range of a line, point, or bar
+plot; `null` keeps that end automatic, as in `ylim: [null, 0.5]`. It only
+zooms the view: estimates and intervals outside it are drawn to the edge, not
+removed, and nothing is evaluated differently. To change where an effect is
+evaluated instead, give the varying axis a range in the query, such as
+`axes: {predictors: {surprisal: {range: [mean - 2 * sd, mean + 2 * sd]}}}` or
+`axes: {lag: {range: [0, 0.5]}}`. In the viewer, **Vertical axis range** under
+**Appearance** sets `ylim`, and **X range** under **Options** sets each line's
+evaluation range, which the exported definition YAML records.
 
 Multiple layers can superimpose related estimands without repeating the axis
 query. Each layer has an `id` and may override `composition`, `grouping`,
@@ -624,6 +838,62 @@ For this overlay, select the corresponding grouped term with
 ungrouped counterpart, and the conditional layer adds each requested
 deviation. The renderer keeps term, group, and layer series separate unless an
 explicit `group` mapping is supplied.
+
+### Lines
+
+A visualization can instead list `lines`, each one effect of one term with
+its own model, axes, reference, composition, and grouping, drawn on one
+plot. This is the form the viewer exports under **Definition YAML**, and
+`cdrgam run` renders it with the figure the viewer draws:
+
+```yaml
+schema: 1
+model: main
+query:
+  composition: total
+  n: 200
+  axes:
+    lag: peak
+    predictors: {z: mean}
+  uncertainty: {kind: simultaneous}
+lines:
+  - term: x
+    axes:
+      predictors: {x: {grid: fitted}}
+  - id: interaction
+    term: "x:z"
+    label: x by z at z = 1
+    axes:
+      predictors: {x: {grid: fitted}, z: 1}
+    reference: {z: 0}
+  - term: y
+    model: other
+    axes:
+      lag: {grid: fitted}
+render:
+  geometry: line
+  palette: okabe-ito
+```
+
+`query` here holds defaults that every line inherits; it takes the query
+fields other than `terms`. A line overrides any of them. `axes` and
+`reference` merge axis by axis (`axes.predictors` predictor by predictor) and
+`uncertainty` setting by setting, so a line can change one axis and keep
+the rest. Other fields replace the default. Each line needs `term`, the
+exact label of one term. `model` defaults to the definition's, and outputs
+live under the definition's model. `id` defaults to `line1`, `line2`, and so
+on; `label`, the legend entry, defaults to the term, with the model when it
+differs from the definition's.
+
+Each line's query must vary exactly one axis, its horizontal axis. Lines over
+different axes share the horizontal axis, titled with their axis names
+unless `xlab` is set. `render.mappings` defaults to that axis, the estimate,
+and color by line; mappings may also use the `line` column (the line id) and
+`.line_x` (the horizontal value). Line, point, and bar geometries are
+supported. `layers` do not apply, since each line sets its own composition
+and grouping. Each line is its own effect work item, so a line that two
+visualizations share is evaluated once. As in the viewer, the peak timeline
+appears whenever a line uses a peak, unless `render.peaks` is `never`.
 
 Two presets give common CDR plots without writing a query:
 
@@ -683,12 +953,111 @@ The evaluation selector is resolved independently through each model's dataset
 mapping. Every model must resolve it to the same dataset. Comparisons depend on
 the corresponding prediction artifacts.
 
+## Test definition
+
+A test definition tests native model terms and estimates and tests summary
+statistics of fitted effects. `terms` requests tests of terms of the model:
+parametric terms, mgcv smooths, and IRF terms:
+
+```yaml
+schema: 1
+model: main
+terms: ['s(time)', 'unigramsurp:repetition_index', 're:\|subject$']
+```
+
+Terms are selected by their `summary()` labels, from its parametric-term and
+smooth tables, by exact label, `*` glob, or `re:` regular expression; `['*']`
+selects every term except the intercept. An unmatched selector fails and lists
+the available labels. `cdrgam def terms -P PROJECT [-m MODEL ...]` prints the
+labels of each selected model, or of every model, from its latest fit
+artifact, as a YAML list to paste under `terms`. For a fit written before
+fits recorded `parametric-terms.csv`, it lists parametric coefficient names
+instead, which differ from the term label for a factor.
+
+`cdrgam run -t MODEL`, where `MODEL` names a model and no test, first creates
+`definitions/tests/MODEL.yml` with `model: MODEL` and `terms: ['*']`, stages
+it in the project repository, and runs it. Only literal names do this;
+patterns and `--dry-run` never create definitions.
+
+A parametric term gets the Wald test of its coefficients that mgcv's
+`summary.gam()` reports in `pTerms.table`: one degree of freedom for a numeric
+term and one per contrast for a factor, with an F reference when the scale is
+estimated. Each smooth term gets the test that `summary()` reports for it: Wood's (2013) test, or Wood's
+(2013b) random-effect test for fully penalized terms, with the same `edf`,
+reference degrees of freedom (`df`), statistic, and p-value. The `method`
+column records which test was used, or why none could be computed.
+
+Derived statistics use `effects` and `estimands`, which must be given
+together. A definition may combine them with `terms`:
+
+```yaml
+schema: 1
+model: main
+effects:
+  response:
+    terms: x
+    axes:
+      lag: {grid: fitted, n: 50}
+      predictors: {x: 1}
+  contrast:
+    terms: x
+    axes:
+      lag: {values: [0.2, 0.8]}
+      predictors: {x: 1}
+estimands:
+  early_minus_late: {weights: {contrast: [1, -1]}}
+  area: {area: response}
+  peak: {peak_lag: response}
+  trough_size: {peak_value: response, direction: neg}
+  whole: {wood: response}
+null: 0
+uncertainty: {level: 0.95, unconditional: false, draws: 2000, seed: 1}
+```
+
+Each effect is an effect query, as in a visualization `query`, that selects
+exactly one term. It accepts `terms`, `composition`, `grouping`, `groups`,
+`axes`, `reference`, and `n`, with the same value language. Pointwise peak
+lags (`peak-pointwise`) are not available; `peak` and `peak(TERM)` are.
+
+Each estimand uses one form:
+
+| Form | Value | Inference |
+| --- | --- | --- |
+| `weights` | Weights by effect name, one per effect row or one recycled weight | Wald |
+| `mean` | An effect name: the mean over its rows | Wald |
+| `area` | An effect name: the trapezoidal area over lag | Wald |
+| `peak_lag` | An effect name: the lag of its maximum, or minimum with `direction: neg` | Simulation |
+| `peak_value` | An effect name: the value at that lag | Simulation |
+| `wood` | An effect name: Wood's whole-functional test of its terms | Wood (2013) |
+
+`area`, `peak_lag`, and `peak_value` need an effect that varies over lag
+only, for one group. `null` gives the value of every estimand under the null
+hypothesis; an estimand's own `null` overrides it. A `wood` estimand tests that
+the effect's whole function is zero, as `summary()` tests smooth terms, and
+uses only the effect's `terms`, `composition`, `grouping`, and `groups`.
+
+All effects are evaluated on one joint distribution of their coefficients, so
+contrasts between effects that share coefficients have the right variance.
+Linear estimands use exact Wald inference; peak estimands apply the summary to
+`draws` coefficient draws and report quantile intervals and posterior tail
+areas, whose resolution is `1 / draws`. Simultaneous intervals and adjusted
+p-values cover the linear estimands together and the peak estimands together.
+
+`draws` and `seed` are execution settings. They are excluded from the
+resolved identity, so changing them alone does not make the test stale. The
+other fields, including `level`, are part of it. A test depends on its model's
+fit and writes `tests.tsv` (one row per selected term, then one per estimand,
+or per group for a `wood` estimand of a conditional effect), `effects-grid.tsv` (the evaluated effects),
+and `request.yml` (the resolved effect requests and the joint Wald test of the
+linear estimands). Both tables are tab-separated and unquoted, so
+`column -t -s $'\t' tests.tsv` aligns them.
+
 ## Selection and dependencies
 
-`run` and `plan` accept project, model, prediction, visualization, and
-comparison selectors. Supplied dimensions are conjunctive. Repeating
+`run` and `plan` accept project, model, prediction, visualization, comparison,
+and test selectors. Supplied dimensions are conjunctive. Repeating
 `--prediction` requests multiple partitions of the same selected model.
-Project, model, visualization, and comparison selectors accept exact names,
+Project, model, visualization, comparison, and test selectors accept exact names,
 `*` globs, and `re:`-prefixed Perl-compatible regular expressions. Regexes use
 substring matching unless anchored. Prediction selectors remain exact because
 each value resolves first as a model-local partition and then as a dataset
@@ -698,6 +1067,7 @@ definition.
 cdrgam run -P brown -m main -p val -p test
 cdrgam run -P brown -m main -v main-effects
 cdrgam run -P brown -c alternatives
+cdrgam run -P brown -t effect-shape
 cdrgam run -P val -m 're:^natstor-(raw|log)-l[01]s[01]h[01]$'
 ```
 

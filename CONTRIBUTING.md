@@ -13,9 +13,18 @@ Use the narrowest applicable test scope while developing:
 ./scripts/test paths
 ./scripts/test registry
 ./scripts/test identities
+./scripts/test effects
+./scripts/test render
+./scripts/test methods
+./scripts/test viz
 ./scripts/test integration
 ./scripts/test portability
 ```
+
+The `methods` scope compares the methods report of its fixture projects with
+the files in `tests/methods-golden/`. After an intended change to the report
+text, rerun it with `CDRGAM_UPDATE_GOLDEN=1` to rewrite those files, and review
+their diff.
 
 Development scripts resolve R through the active Conda environment first. If
 none is active, they use the `cdrgam` Conda environment when it exists. Set
@@ -53,6 +62,26 @@ Keep calls to `cdrgam` and knowledge of fitted-object representation in
 enforces these boundaries. Add a public core API when the adapter lacks a
 required operation; do not inspect an additional core implementation field in
 another CLI module.
+
+Rendered visualizations and the `cdrgam viz` viewer share render settings.
+To add a render field:
+
+1. Add an entry to `.cdrgam_cli_render_fields` in `R/render-fields.R`. Its
+   validation, default, and geometry constraints apply to definitions and to
+   the viewer. A field without a default stays absent from existing renders,
+   which keeps their visualization identities; a field with a default must be
+   listed after `formats`.
+2. Resolve what the field changes in `.cdrgam_cli_plot_spec()` in
+   `R/plot-spec.R`, not in a renderer, and draw it in both
+   `R/visualization.R` (ggplot2) and `R/viz-plotly.R` (plotly).
+3. Set its `viewer` status. A `control` field needs an input in
+   `.cdrgam_cli_viz_appearance()` and handling in `.cdrgam_cli_viz_render()`;
+   a `derived` or `file` field needs a `reason`.
+4. Add the field's values to the backend parity cases in `tests/render.R`.
+
+The `render` scope fails when validation changes the identity of an existing
+render, when the two renderers draw a specification differently, and the
+`viz` scope fails when a `control` field has no viewer input.
 
 Before proposing a release, update `Version` in `DESCRIPTION` and document
 intentional schema or command-line incompatibilities and their migration path.

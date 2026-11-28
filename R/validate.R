@@ -33,6 +33,7 @@ cdrgam_cli_validate <- function(projects=NULL, deep=FALSE, cdrgam_root=NULL) {
             datasets=length(definitions$datasets), models=length(definitions$models),
             visualizations=length(definitions$visualizations),
             comparisons=length(definitions$comparisons),
+            tests=length(definitions$tests),
             external_sources=length(external), deep=isTRUE(deep)
         )
     })
@@ -40,7 +41,8 @@ cdrgam_cli_validate <- function(projects=NULL, deep=FALSE, cdrgam_root=NULL) {
         'Valid CDR-GAM project ', project, ': ', reports[[project]]$datasets,
         ' dataset(s), ', reports[[project]]$models, ' model(s), ',
         reports[[project]]$visualizations, ' visualization(s), ',
-        reports[[project]]$comparisons, ' comparison(s)'
+        reports[[project]]$comparisons, ' comparison(s), ',
+        reports[[project]]$tests, ' test(s)'
     )
     invisible(reports)
 }
@@ -72,7 +74,8 @@ cdrgam_cli_validate <- function(projects=NULL, deep=FALSE, cdrgam_root=NULL) {
             ),
             model=.cdrgam_cli_validate_model(value, path),
             visualization=.cdrgam_cli_validate_visualization(value, path),
-            comparison=.cdrgam_cli_validate_comparison(value, path)
+            comparison=.cdrgam_cli_validate_comparison(value, path),
+            test=.cdrgam_cli_validate_test(value, path)
         )
         .cdrgam_cli_assign_definition_identity(
             validated, kind, definition_name, path
@@ -142,6 +145,11 @@ cdrgam_cli_validate <- function(projects=NULL, deep=FALSE, cdrgam_root=NULL) {
                 }
             }
             comparison
+        },
+        test={
+            test <- read_definition('test', name)
+            read_model(test$model)
+            test
         }
     )
     report <- list(
@@ -163,7 +171,7 @@ cdrgam_cli_validate <- function(projects=NULL, deep=FALSE, cdrgam_root=NULL) {
     directory <- switch(
         type,
         dataset='datasets', model='models',
-        visualization='visualizations', comparison='comparisons'
+        visualization='visualizations', comparison='comparisons', test='tests'
     )
     files <- .cdrgam_cli_definition_files(root, directory)
     available <- sub('\\.ya?ml$', '', basename(files))

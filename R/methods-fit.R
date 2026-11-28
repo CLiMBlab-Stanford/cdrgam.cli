@@ -155,8 +155,10 @@
                 ' link')),
         paste0(settings$family, '(', settings$link, ')')
     )
+    # Fits record the backend as the engine when the backend is not mgcv.
+    engine <- if (identical(settings$backend, 'mgcv')) settings$engine else 'bam'
     core <- .cdrgam_cli_core_methods_facts(
-        settings$backend, settings$engine, settings$method,
+        settings$backend, engine, settings$method,
         if (identical(settings$family, 'gaulss')) 'gaulss' else
             get(settings$family, asNamespace('stats'))(link=settings$link)
     )

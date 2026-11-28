@@ -1,3 +1,9 @@
+# cdrgam.cli 0.5.1
+
+- `cdrgam methods` no longer fails on fits that use the sparse or block
+  backend. These fits record the backend as the engine, which the report
+  passed to `cdrgam::methods_facts()`.
+
 # cdrgam.cli 0.5.0
 
 - Resolved identities no longer depend on the R version. They hashed a

@@ -9,6 +9,22 @@ work through a shared Slurm scheduler and generic worker pool. A Slurm
 worker exits after five consecutive minutes without ready work; the
 scheduler submits another worker when later work becomes ready.
 
+## Documentation
+
+The reference manual is at
+[climblab-stanford.github.io/cdrgam.cli](https://climblab-stanford.github.io/cdrgam.cli/),
+and
+[docs/project-schema.md](https://climblab-stanford.github.io/cdrgam.cli/docs/project-schema.md)
+describes the project, definition, and visualization schema.
+[docs/methods-reports.md](https://climblab-stanford.github.io/cdrgam.cli/docs/methods-reports.md)
+describes `cdrgam methods`, which writes cited methods sections for
+selected work items. Models are fitted by the
+[cdrgam](https://github.com/CLiMBlab-Stanford/cdrgam) core package,
+whose documentation is at
+[climblab-stanford.github.io/cdrgam](https://climblab-stanford.github.io/cdrgam/).
+
+## Installation
+
 Install from the checkout:
 
 ``` sh
@@ -152,11 +168,13 @@ unique project containing a match is inferred. A selector without values
 lists every definition of that type. Once any type selector is supplied,
 unselected types are omitted.
 
-Definition selectors accept multiple values. `edit` processes literal
-names in order; `ls`, `val`, and `rm` also accept `*` globs and
-`re:`-prefixed Perl-compatible regular expressions and operate on every
-match. Regular expressions use ordinary substring matching unless you
-include `^` or `$`. Quote patterns so the shell does not interpret them.
+Definition selectors accept multiple values, processed in order. `edit`,
+`ls`, `val`, and `rm` accept `*` globs and `re:`-prefixed
+Perl-compatible regular expressions and operate on every existing match;
+`edit` opens the matches one after another, and a literal name it does
+not find creates that definition. Regular expressions use ordinary
+substring matching unless you include `^` or `$`. Quote patterns so the
+shell does not interpret them.
 
 A model declares its training and prediction datasets:
 
@@ -217,18 +235,46 @@ cdrgam fetch SOURCE --results brown-results.tar.gz
 root. It draws effect lines, with several lines per plot drawn from any
 fits, and two-axis effect surfaces. For each line or surface you choose
 the term, the axes that vary, and fixed values for the remaining axes of
-tensor terms. A reference can be subtracted from each line; an empty
-reference field leaves that predictor at the model default, so terms
+tensor terms. A reference can be subtracted from each line by giving
+reference values for its fixed axes; plotted axes keep their values. An
+empty reference field keeps the line’s fixed value for that axis. A
+predictor’s reference set to `default` takes the model default, so terms
 involving it drop out. With the Total composition, fixing `wlen` at one
-value, leaving its reference empty, and giving `repetition_index` the
-same reference as its fixed value gives the word-length effect at that
+value, setting its reference to `default`, and leaving
+`repetition_index` empty gives the word-length effect at that
 repetition. Axes that are not varied start at lag 0 and at their
 training means. Fixed and reference fields accept numbers or expressions
 such as `mean + 2 * sd`, and lag fields also accept `peak`, `peak-pos`,
-and `peak-neg`, as in visualization definitions. Effects are on the
-linear-predictor scale with pointwise or, under **Options**,
-simultaneous intervals. The viewer needs the optional R packages
-`shiny`, `bslib`, `plotly`, `jsonlite`, and `later`.
+and `peak-neg`, as in visualization definitions. A fixed lag of
+`peak-pointwise` or `peak-pointwise-neg` holds each point of the line at
+its own peak lag for the line’s contrast, and adds a panel of those lags
+below the plot. **Show peak lags**, under the plot, turns the peak
+timeline and this panel on and off. Effects are on the linear-predictor
+scale with pointwise or, under **Options**, simultaneous intervals. For
+a line at a peak, simultaneous intervals come from posterior draws that
+each re-find the peak, so they include uncertainty about where the peak
+lies. **X tick values** under **Options** puts a tick at each listed x
+value; points and bars are evaluated at those values instead of the
+grid, and **X tick labels** replaces the tick text. In the viewer the
+peak timeline appears whenever a line uses a peak, unless **Show peak
+lags** is off.
+
+**Definition YAML**, in the lines list, shows the plot as a
+visualization definition with `lines` (see the project schema): its
+lines, options, and appearance. Saved in a project, `cdrgam run` renders
+the same figure.
+
+**Appearance** holds the viewer’s counterparts of a visualization’s
+`render` settings, with the same meanings and checks: geometry (lines,
+points, connected points, or bars; for surfaces a 3D surface, heatmap,
+or contours), effect estimates or peak lags, intervals, tick spacing,
+palette, titles, and theme. The palette menu shows each palette’s
+colors. Lines use `okabe-ito` colors in list order, and the arrows in
+the lines list move a line up or down; with more than eight lines under
+that palette, every line switches to viridis. The standard-error
+interval of a surface adds a second heatmap, or bounding surfaces around
+a 3D surface. The viewer needs the optional R packages `shiny`, `bslib`,
+`plotly`, `jsonlite`, and `later`.
 
 On a Slurm-configured root the server runs in a Slurm job owned by the
 calling user, and later `cdrgam viz` calls reuse it. The command prints
@@ -246,8 +292,8 @@ it with Ctrl+C; `--stop` and `--restart` apply only to a Slurm viewer.
 In a Slurm viewer, **Refresh data** rescans for completed fits and
 reloads any fit whose results changed, and **Restart server** restarts
 the server inside the same job so that newly installed code takes
-effect, for example after `./scripts/install-dev`. Plotted lines are
-kept across a restart in the browser tab.
+effect, for example after `./scripts/install-dev`. Plotted lines and
+appearance settings are kept across a restart in the browser tab.
 
 ``` sh
 cdrgam viz
@@ -271,6 +317,8 @@ for orchestration invariants and implementation structure.
   : Project Harness for CDR-GAM Analyses
 - [`cdrgam_cli_configure()`](https://climblab-stanford.github.io/cdrgam.cli/reference/cdrgam_cli_configure.md)
   : Configure a CDR-GAM Root
+- [`cdrgam_cli_methods()`](https://climblab-stanford.github.io/cdrgam.cli/reference/cdrgam_cli_methods.md)
+  : Write a methods section
 - [`cdrgam_cli_stop()`](https://climblab-stanford.github.io/cdrgam.cli/reference/cdrgam_cli_stop.md)
   : Stop selected Slurm work
 - [`cdrgam_cli_viz()`](https://climblab-stanford.github.io/cdrgam.cli/reference/cdrgam_cli_viz.md)

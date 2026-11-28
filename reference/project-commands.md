@@ -50,15 +50,17 @@ cdrgam_cli_list(projects = NULL, cdrgam_root = NULL)
 
 cdrgam_cli_log(projects = NULL, models = NULL, predictions = NULL,
   visualizations = NULL, comparisons = NULL, lines = NULL,
-  cdrgam_root = NULL, pager = NULL, worker = FALSE, running = FALSE)
+  cdrgam_root = NULL, pager = NULL, worker = FALSE, running = FALSE,
+  tests = NULL)
 
 cdrgam_cli_plan(projects = NULL, models = NULL, predictions = NULL,
-  visualizations = NULL, comparisons = NULL, cdrgam_root = NULL)
+  visualizations = NULL, comparisons = NULL, cdrgam_root = NULL,
+  tests = NULL)
 
 cdrgam_cli_run(projects = NULL, models = NULL, predictions = NULL,
   visualizations = NULL, comparisons = NULL, dry_run = FALSE,
   cpus = NULL, partition = NULL, memory = NULL, time = NULL,
-  scheduler_time = NULL, qos = NULL, cdrgam_root = NULL)
+  scheduler_time = NULL, qos = NULL, cdrgam_root = NULL, tests = NULL)
 
 cdrgam_cli_status(projects = NULL, cdrgam_root = NULL, pager = NULL,
   use_pager = TRUE)
@@ -66,7 +68,7 @@ cdrgam_cli_status(projects = NULL, cdrgam_root = NULL, pager = NULL,
 cdrgam_cli_purge(projects = NULL, models = NULL, predictions = NULL,
   visualizations = NULL, comparisons = NULL, datasets = NULL,
   work = FALSE, logs = FALSE, force = FALSE, cdrgam_root = NULL,
-  confirm = NULL, pager = NULL, use_pager = TRUE)
+  confirm = NULL, pager = NULL, use_pager = TRUE, tests = NULL)
 
 find_cdrgam_project(project = NULL, cdrgam_root = NULL)
 ```
@@ -81,8 +83,8 @@ find_cdrgam_project(project = NULL, cdrgam_root = NULL)
 
 - type:
 
-  Optional definition type: `dataset`, `model`, `visualization`, or
-  `comparison`.
+  Optional definition type: `dataset`, `model`, `visualization`,
+  `comparison`, or `test`.
 
 - source:
 
@@ -134,6 +136,10 @@ find_cdrgam_project(project = NULL, cdrgam_root = NULL)
 - comparisons:
 
   Comparison selectors.
+
+- tests:
+
+  Test selectors.
 
 - datasets:
 

@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="index.html">cdrgam.cli</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.4.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.5.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -41,8 +41,13 @@
 <span id="cb1-3"><a href="#cb1-3" tabindex="-1"></a><span class="ex">./scripts/test</span> paths</span>
 <span id="cb1-4"><a href="#cb1-4" tabindex="-1"></a><span class="ex">./scripts/test</span> registry</span>
 <span id="cb1-5"><a href="#cb1-5" tabindex="-1"></a><span class="ex">./scripts/test</span> identities</span>
-<span id="cb1-6"><a href="#cb1-6" tabindex="-1"></a><span class="ex">./scripts/test</span> integration</span>
-<span id="cb1-7"><a href="#cb1-7" tabindex="-1"></a><span class="ex">./scripts/test</span> portability</span></code></pre></div>
+<span id="cb1-6"><a href="#cb1-6" tabindex="-1"></a><span class="ex">./scripts/test</span> effects</span>
+<span id="cb1-7"><a href="#cb1-7" tabindex="-1"></a><span class="ex">./scripts/test</span> render</span>
+<span id="cb1-8"><a href="#cb1-8" tabindex="-1"></a><span class="ex">./scripts/test</span> methods</span>
+<span id="cb1-9"><a href="#cb1-9" tabindex="-1"></a><span class="ex">./scripts/test</span> viz</span>
+<span id="cb1-10"><a href="#cb1-10" tabindex="-1"></a><span class="ex">./scripts/test</span> integration</span>
+<span id="cb1-11"><a href="#cb1-11" tabindex="-1"></a><span class="ex">./scripts/test</span> portability</span></code></pre></div>
+<p>The <code>methods</code> scope compares the methods report of its fixture projects with the files in <code>tests/methods-golden/</code>. After an intended change to the report text, rerun it with <code>CDRGAM_UPDATE_GOLDEN=1</code> to rewrite those files, and review their diff.</p>
 <p>Development scripts resolve R through the active Conda environment first. If none is active, they use the <code>cdrgam</code> Conda environment when it exists. Set <code>CDRGAM_CONDA_ENV</code> to choose a different environment or <code>R_BIN</code> to select an exact executable. Local scripts otherwise fail rather than silently choosing a system R; <code>CDRGAM_ALLOW_SYSTEM_R=1</code> is an explicit override. Hosted checks continue to use their provisioned R.</p>
 <p><code>./scripts/test all</code> runs every scope. Each invocation installs the current CLI source into a temporary library. The integration scope covers the complete project lifecycle and is reserved for changes that cross component boundaries. The portability scope also checks the cross-platform preflight selection policy and is appropriate after changes to paths, launchers, process handling, or scheduler integration.</p>
 <p>Development branches are not release-gated. Before opening a release pull request, run the manual cross-platform preflight when changes may affect paths, file I/O, launchers, process handling, scheduler integration, or runtime configuration:</p>
@@ -50,6 +55,12 @@
 <span id="cb2-2"><a href="#cb2-2" tabindex="-1"></a><span class="ex">gh</span> run watch</span></code></pre></div>
 <p>The preflight compares the selected commit with the newest successful automatic or full preflight ancestor on that branch. If no such run exists, it uses the merge base with <code>main</code>. It runs the Windows, macOS, and Linux portability profile only when the cumulative un-preflighted changes match the policy. Use <code>scope=full</code> to force complete package checks. A narrow manual scope does not advance the automatic baseline.</p>
 <p>Keep calls to <code>cdrgam</code> and knowledge of fitted-object representation in <code>R/core-adapter.R</code>. Keep SQLite access in <code>R/registry.R</code>. The architecture test enforces these boundaries. Add a public core API when the adapter lacks a required operation; do not inspect an additional core implementation field in another CLI module.</p>
+<p>Rendered visualizations and the <code>cdrgam viz</code> viewer share render settings. To add a render field:</p>
+<ol style="list-style-type: decimal"><li>Add an entry to <code>.cdrgam_cli_render_fields</code> in <code>R/render-fields.R</code>. Its validation, default, and geometry constraints apply to definitions and to the viewer. A field without a default stays absent from existing renders, which keeps their visualization identities; a field with a default must be listed after <code>formats</code>.</li>
+<li>Resolve what the field changes in <code>.cdrgam_cli_plot_spec()</code> in <code>R/plot-spec.R</code>, not in a renderer, and draw it in both <code>R/visualization.R</code> (ggplot2) and <code>R/viz-plotly.R</code> (plotly).</li>
+<li>Set its <code>viewer</code> status. A <code>control</code> field needs an input in <code>.cdrgam_cli_viz_appearance()</code> and handling in <code>.cdrgam_cli_viz_render()</code>; a <code>derived</code> or <code>file</code> field needs a <code>reason</code>.</li>
+<li>Add the field’s values to the backend parity cases in <code>tests/render.R</code>.</li>
+</ol><p>The <code>render</code> scope fails when validation changes the identity of an existing render, when the two renderers draw a specification differently, and the <code>viz</code> scope fails when a <code>control</code> field has no viewer input.</p>
 <p>Before proposing a release, update <code>Version</code> in <code>DESCRIPTION</code> and document intentional schema or command-line incompatibilities and their migration path. The hosted release gate is the authoritative clean-environment check.</p>
 <p>Run the repository’s correctness-focused R lint profile after installing the package and its dependencies:</p>
 <div class="sourceCode" id="cb3"><pre class="sourceCode sh"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a><span class="st">"</span><span class="va">$(</span><span class="ex">./scripts/r-bin</span><span class="va">)</span><span class="st">"</span> <span class="at">-e</span> <span class="st">'lintr::lint_package(".")'</span></span></code></pre></div>

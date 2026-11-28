@@ -13,13 +13,14 @@ cdrgam_cli_stop(
   comparisons = NULL,
   force = FALSE,
   scheduler = FALSE,
-  cdrgam_root = NULL
+  cdrgam_root = NULL,
+  tests = NULL
 )
 ```
 
 ## Arguments
 
-- projects, models, predictions, visualizations, comparisons:
+- projects, models, predictions, visualizations, comparisons, tests:
 
   Selector dimensions are conjunctive; repeated values within a
   dimension are combined. With multiple projects, definition selectors

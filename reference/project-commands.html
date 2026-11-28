@@ -77,7 +77,7 @@ worker logs when worker = TRUE.'></head><body>
 
     <a class="navbar-brand me-2" href="../index.html">cdrgam.cli</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.4.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.5.0</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -154,15 +154,17 @@ worker logs when <code>worker = TRUE</code>.</p>
 <span></span>
 <span><span class="fu">cdrgam_cli_log</span><span class="op">(</span>projects <span class="op">=</span> <span class="cn">NULL</span>, models <span class="op">=</span> <span class="cn">NULL</span>, predictions <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  visualizations <span class="op">=</span> <span class="cn">NULL</span>, comparisons <span class="op">=</span> <span class="cn">NULL</span>, lines <span class="op">=</span> <span class="cn">NULL</span>,</span>
-<span>  cdrgam_root <span class="op">=</span> <span class="cn">NULL</span>, pager <span class="op">=</span> <span class="cn">NULL</span>, worker <span class="op">=</span> <span class="cn">FALSE</span>, running <span class="op">=</span> <span class="cn">FALSE</span><span class="op">)</span></span>
+<span>  cdrgam_root <span class="op">=</span> <span class="cn">NULL</span>, pager <span class="op">=</span> <span class="cn">NULL</span>, worker <span class="op">=</span> <span class="cn">FALSE</span>, running <span class="op">=</span> <span class="cn">FALSE</span>,</span>
+<span>  tests <span class="op">=</span> <span class="cn">NULL</span><span class="op">)</span></span>
 <span></span>
 <span><span class="fu">cdrgam_cli_plan</span><span class="op">(</span>projects <span class="op">=</span> <span class="cn">NULL</span>, models <span class="op">=</span> <span class="cn">NULL</span>, predictions <span class="op">=</span> <span class="cn">NULL</span>,</span>
-<span>  visualizations <span class="op">=</span> <span class="cn">NULL</span>, comparisons <span class="op">=</span> <span class="cn">NULL</span>, cdrgam_root <span class="op">=</span> <span class="cn">NULL</span><span class="op">)</span></span>
+<span>  visualizations <span class="op">=</span> <span class="cn">NULL</span>, comparisons <span class="op">=</span> <span class="cn">NULL</span>, cdrgam_root <span class="op">=</span> <span class="cn">NULL</span>,</span>
+<span>  tests <span class="op">=</span> <span class="cn">NULL</span><span class="op">)</span></span>
 <span></span>
 <span><span class="fu">cdrgam_cli_run</span><span class="op">(</span>projects <span class="op">=</span> <span class="cn">NULL</span>, models <span class="op">=</span> <span class="cn">NULL</span>, predictions <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  visualizations <span class="op">=</span> <span class="cn">NULL</span>, comparisons <span class="op">=</span> <span class="cn">NULL</span>, dry_run <span class="op">=</span> <span class="cn">FALSE</span>,</span>
 <span>  cpus <span class="op">=</span> <span class="cn">NULL</span>, partition <span class="op">=</span> <span class="cn">NULL</span>, memory <span class="op">=</span> <span class="cn">NULL</span>, time <span class="op">=</span> <span class="cn">NULL</span>,</span>
-<span>  scheduler_time <span class="op">=</span> <span class="cn">NULL</span>, qos <span class="op">=</span> <span class="cn">NULL</span>, cdrgam_root <span class="op">=</span> <span class="cn">NULL</span><span class="op">)</span></span>
+<span>  scheduler_time <span class="op">=</span> <span class="cn">NULL</span>, qos <span class="op">=</span> <span class="cn">NULL</span>, cdrgam_root <span class="op">=</span> <span class="cn">NULL</span>, tests <span class="op">=</span> <span class="cn">NULL</span><span class="op">)</span></span>
 <span></span>
 <span><span class="fu">cdrgam_cli_status</span><span class="op">(</span>projects <span class="op">=</span> <span class="cn">NULL</span>, cdrgam_root <span class="op">=</span> <span class="cn">NULL</span>, pager <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  use_pager <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span>
@@ -170,7 +172,7 @@ worker logs when <code>worker = TRUE</code>.</p>
 <span><span class="fu">cdrgam_cli_purge</span><span class="op">(</span>projects <span class="op">=</span> <span class="cn">NULL</span>, models <span class="op">=</span> <span class="cn">NULL</span>, predictions <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  visualizations <span class="op">=</span> <span class="cn">NULL</span>, comparisons <span class="op">=</span> <span class="cn">NULL</span>, datasets <span class="op">=</span> <span class="cn">NULL</span>,</span>
 <span>  work <span class="op">=</span> <span class="cn">FALSE</span>, logs <span class="op">=</span> <span class="cn">FALSE</span>, force <span class="op">=</span> <span class="cn">FALSE</span>, cdrgam_root <span class="op">=</span> <span class="cn">NULL</span>,</span>
-<span>  confirm <span class="op">=</span> <span class="cn">NULL</span>, pager <span class="op">=</span> <span class="cn">NULL</span>, use_pager <span class="op">=</span> <span class="cn">TRUE</span><span class="op">)</span></span>
+<span>  confirm <span class="op">=</span> <span class="cn">NULL</span>, pager <span class="op">=</span> <span class="cn">NULL</span>, use_pager <span class="op">=</span> <span class="cn">TRUE</span>, tests <span class="op">=</span> <span class="cn">NULL</span><span class="op">)</span></span>
 <span></span>
 <span><span class="fu">find_cdrgam_project</span><span class="op">(</span>project <span class="op">=</span> <span class="cn">NULL</span>, cdrgam_root <span class="op">=</span> <span class="cn">NULL</span><span class="op">)</span></span></code></pre></div>
     </div>
@@ -185,7 +187,7 @@ worker logs when <code>worker = TRUE</code>.</p>
 
   <dt id="arg-type">type<a class="anchor" aria-label="anchor" href="#arg-type"></a></dt>
 <dd><p>Optional definition type: <code>dataset</code>, <code>model</code>,
-  <code>visualization</code>, or <code>comparison</code>.</p></dd>
+  <code>visualization</code>, <code>comparison</code>, or <code>test</code>.</p></dd>
 
   <dt id="arg-source">source<a class="anchor" aria-label="anchor" href="#arg-source"></a></dt>
 <dd><p>Optional source project or subordinate definition name. The
@@ -228,6 +230,9 @@ worker logs when <code>worker = TRUE</code>.</p>
 
   <dt id="arg-comparisons">comparisons<a class="anchor" aria-label="anchor" href="#arg-comparisons"></a></dt>
 <dd><p>Comparison selectors.</p></dd>
+
+  <dt id="arg-tests">tests<a class="anchor" aria-label="anchor" href="#arg-tests"></a></dt>
+<dd><p>Test selectors.</p></dd>
 
   <dt id="arg-datasets">datasets<a class="anchor" aria-label="anchor" href="#arg-datasets"></a></dt>
 <dd><p>Dataset artifact selectors used by
